@@ -12,3 +12,6 @@ assets/wisprlite.png
 
 # local design docs (kept out of the app-only public repo)
 /docs/
+
+# review-gate output artifact — never commit
+.review-verdict.md
