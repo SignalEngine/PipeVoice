@@ -105,12 +105,12 @@ def transcribe_file_deepgram(path: str, *, api_key: str, model: str = "nova-2",
             "paragraphs": True, "diarize": diarize}
     if language:
         opts["language"] = language
-    # ponytail: whole file into RAM (~110 MB for an hour of WAV, ~10 MB for the
-    # compressed formats recordings actually use). The SDK also accepts
-    # {"stream": fh} for a chunked upload — switch if raw WAV sizes bite.
+    # {"stream": fh}, NOT {"buffer": fh.read()} — measured on a 315 MB file, the
+    # buffer form peaks ~900 MB RSS (the bytes object is copied again downstream)
+    # vs ~5 MB streaming. A 90-min stereo WAV would OOM. See the e2e test.
     with open(path, "rb") as fh:
         resp = rest.transcribe_file(
-            {"buffer": fh.read()}, PrerecordedOptions(**opts),
+            {"stream": fh}, PrerecordedOptions(**opts),
             timeout=httpx.Timeout(timeout_s, connect=15.0),
         )
 

@@ -19,13 +19,18 @@ import threading
 
 from . import config
 from .history import _copy_to_clipboard
+from .winui import PALETTE  # import-safe: winui only needs ctypes at module scope
 
-BG = "#13151d"
-CARD = "#1b1e29"
-FG = "#e5e7eb"
-MUTED = "#94a3b8"
-ACCENT = "#e06c75"
-GOOD = "#98c379"
+BG = PALETTE["bg"]
+CARD = PALETTE["card"]
+FG = PALETTE["fg"]
+MUTED = PALETTE["muted"]
+ACCENT = PALETTE["accent"]
+ACCENT_HI = PALETTE["accent_hi"]
+GOOD = "#98c379"        # success green — not a themed role, so not in PALETTE
+ON_ACCENT = "#1a0c0d"   # near-black text on the coral button (matches history.py)
+SCROLL = "#2a2f3d"      # same greys winui gives Pick.TButton
+SCROLL_HI = "#333a4a"
 
 # faster-whisper decodes whatever PyAV/ffmpeg handles, so video containers work too.
 FILETYPES = [
@@ -93,10 +98,10 @@ def main() -> None:
     style = winui.apply_theme(root)
     # apply_theme doesn't style Scrollbar; without the light/dark/border trio
     # clam draws its white 3D bevel on the thumb (same fix as TEntry there).
-    style.configure("Vertical.TScrollbar", background="#2a2f3d", troughcolor=BG,
-                    bordercolor=BG, lightcolor="#2a2f3d", darkcolor="#2a2f3d",
+    style.configure("Vertical.TScrollbar", background=SCROLL, troughcolor=BG,
+                    bordercolor=BG, lightcolor=SCROLL, darkcolor=SCROLL,
                     borderwidth=0, arrowcolor=MUTED)
-    style.map("Vertical.TScrollbar", background=[("active", "#333a4a")])
+    style.map("Vertical.TScrollbar", background=[("active", SCROLL_HI)])
 
     state = {"path": "", "text": "", "busy": False}
 
@@ -161,8 +166,8 @@ def main() -> None:
     copy_btn.pack(side="left")
     save_btn = ttk.Button(foot, text="Save as .txt", state="disabled")
     save_btn.pack(side="left", padx=(8, 0))
-    tk.Button(foot, text="Close", command=root.destroy, bg=ACCENT, fg="#1a0c0d",
-              activebackground="#e8838b", relief="flat", padx=18, pady=6,
+    tk.Button(foot, text="Close", command=root.destroy, bg=ACCENT, fg=ON_ACCENT,
+              activebackground=ACCENT_HI, relief="flat", padx=18, pady=6,
               font=("Segoe UI", 9, "bold")).pack(side="right")
 
     # ---- behaviour ----------------------------------------------------
