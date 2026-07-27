@@ -709,7 +709,13 @@ def build(container, root, wheel=None) -> None:
                     pass
             dialog.destroy()
             try:
-                root.unbind_all("<Button-1>", outside_binding["id"])
+                # Misc.unbind_all takes ONE argument. Passing the funcid raised
+                # TypeError straight into this except, so the binding was never
+                # removed and every popover leaked a permanent all-tag <Button-1>
+                # handler pinning a destroyed dialog and its whole closure.
+                if outside_binding["id"] is not None:
+                    root.unbind_all("<Button-1>")
+                    outside_binding["id"] = None
             except Exception:
                 pass
 
@@ -731,7 +737,12 @@ def build(container, root, wheel=None) -> None:
                 return
             outside_binding["id"] = root.bind_all("<Button-1>", outside_click, add="+")
 
-        root.after_idle(arm_outside_click)
+        # after(0), NOT after_idle: dialog.update_idletasks() further down runs
+        # inside this same <Button-1> handler and SERVICES the idle queue, so an
+        # idle callback fires before the handler even returns — reproducing the
+        # exact bug it was meant to fix. Timer events are not serviced by
+        # update_idletasks, so this genuinely lands after the click is dispatched.
+        root.after(0, arm_outside_click)
 
         def play_sample() -> None:
             sample = temp_path["value"]
