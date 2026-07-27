@@ -167,18 +167,23 @@ def provider_ready(provider: str) -> bool:
     return bool(os.getenv(key_env, "").strip())
 
 
-def clean(text: str, provider: str = "openai", model: str = "",
-          language: str = "", notes: str = "",
-          style: str = "tidy", custom_instruction: str = "") -> Optional[str]:
-    text = (text or "").strip()
-    if not text:
-        return None
+def chat_completion(
+    messages: list[dict[str, str]],
+    provider: str = "openai",
+    model: str = "",
+    *,
+    allow_empty: bool = False,
+    raise_errors: bool = False,
+) -> Optional[str]:
+    """Run one OpenAI-compatible chat completion using the shared providers."""
     base_url, key_env, default_model = PROVIDERS.get(provider, PROVIDERS["openai"])
     model = (model or "").strip() or default_model
     if key_env:
         api_key = os.getenv(key_env, "").strip()
         if not api_key:
-            log.warning("AI cleanup: no API key for provider %s", provider)
+            log.warning("AI request: no API key for provider %s", provider)
+            if raise_errors:
+                raise RuntimeError(f"no API key for provider {provider}")
             return None
     else:
         api_key = "ollama"  # local Ollama ignores it, but the client needs something
@@ -192,13 +197,35 @@ def clean(text: str, provider: str = "openai", model: str = "",
         resp = client.chat.completions.create(
             model=model,
             temperature=0,
-            messages=[
-                {"role": "system", "content": _style_system(style, custom_instruction) + _accent_clause(language) + _notes_clause(notes)},
-                {"role": "user", "content": text},
-            ],
+            messages=messages,
         )
         out = (resp.choices[0].message.content or "").strip()
-        return out or None
+        return out if allow_empty else (out or None)
     except Exception as exc:
-        log.warning("AI cleanup failed (%s), using raw text: %s", provider, exc)
+        log.warning("AI request failed (%s): %s", provider, exc)
+        if raise_errors:
+            raise RuntimeError(f"{provider} request failed: {exc}") from exc
         return None
+
+
+def clean(text: str, provider: str = "openai", model: str = "",
+          language: str = "", notes: str = "",
+          style: str = "tidy", custom_instruction: str = "") -> Optional[str]:
+    text = (text or "").strip()
+    if not text:
+        return None
+    return chat_completion(
+        [
+            {
+                "role": "system",
+                "content": (
+                    _style_system(style, custom_instruction)
+                    + _accent_clause(language)
+                    + _notes_clause(notes)
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        provider,
+        model,
+    )

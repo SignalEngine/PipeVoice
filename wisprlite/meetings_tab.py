@@ -19,6 +19,7 @@ from pathlib import Path
 from . import config
 from .history import _copy_to_clipboard
 from .meeting import meetings_dir, render_transcript, transcribe_session
+from .summarise import provider_ready, read_summaries, summarise
 from .winui import PALETTE, tooltip
 
 BG = PALETTE["bg"]
@@ -292,6 +293,9 @@ def build(container, root, wheel=None) -> None:
         "signature": (),
         "poll_after": None,
         "destroyed": False,
+        "summaries": {},
+        "summary_expanded": True,
+        "summary_ready": False,
     }
 
     head = tk.Frame(container, bg=BG, padx=18, pady=14)
@@ -398,6 +402,79 @@ def build(container, root, wheel=None) -> None:
     )
     match_label.pack(side="left", padx=(7, 0))
 
+    summarise_controls = tk.Frame(right, bg=BG)
+    tk.Label(
+        summarise_controls,
+        text="Summarise",
+        bg=BG,
+        fg=FG,
+        font=("Segoe UI", 9, "bold"),
+    ).pack(side="left")
+    summary_mode_var = tk.StringVar(value="Bullets")
+    summary_mode = ttk.Combobox(
+        summarise_controls,
+        textvariable=summary_mode_var,
+        values=("Bullets", "To-dos", "Actions"),
+        state="readonly",
+        width=10,
+    )
+    summary_mode.pack(side="left", padx=(8, 0))
+    summarise_btn = ttk.Button(
+        summarise_controls,
+        text="Summarise",
+        state="disabled",
+    )
+    summarise_btn.pack(side="left", padx=(7, 0))
+
+    summary_panel = tk.Frame(right, bg=CARD)
+    summary_head = tk.Frame(summary_panel, bg=CARD)
+    summary_head.pack(fill="x")
+    summary_toggle = tk.Button(
+        summary_head,
+        text="▾ Summary",
+        command=lambda: toggle_summary(),
+        bg=CARD,
+        fg=FG,
+        activebackground=ROW_HOVER,
+        activeforeground=FG,
+        relief="flat",
+        borderwidth=0,
+        cursor="hand2",
+        font=("Segoe UI", 9, "bold"),
+        padx=10,
+        pady=7,
+    )
+    summary_toggle.pack(side="left")
+    summary_copy_btn = ttk.Button(summary_head, text="Copy", state="disabled")
+    summary_copy_btn.pack(side="right", padx=(0, 7), pady=(5, 5))
+    summary_body = tk.Frame(summary_panel, bg=CARD)
+    summary_body.pack(fill="x")
+    summary_text = tk.Text(
+        summary_body,
+        bg=CARD,
+        fg=FG,
+        selectbackground=ACCENT,
+        selectforeground=ON_ACCENT,
+        relief="flat",
+        borderwidth=0,
+        highlightthickness=0,
+        wrap="word",
+        font=("Segoe UI", 9),
+        height=7,
+        padx=12,
+        pady=8,
+        state="disabled",
+    )
+    summary_bar = ttk.Scrollbar(
+        summary_body,
+        orient="vertical",
+        command=summary_text.yview,
+    )
+    summary_text.configure(yscrollcommand=summary_bar.set)
+    summary_bar.pack(side="right", fill="y")
+    summary_text.pack(side="left", fill="both", expand=True)
+    wheel(summary_text)
+
     transcript_wrap = tk.Frame(right, bg=CARD)
     transcript_wrap.pack(fill="both", expand=True)
     transcript = tk.Text(
@@ -477,6 +554,39 @@ def build(container, root, wheel=None) -> None:
     def selected_path() -> Path | None:
         selected = state["selected"]
         return selected["path"] if selected else None
+
+    def selected_summary_mode() -> str:
+        return {
+            "Bullets": "bullets",
+            "To-dos": "todos",
+            "Actions": "actions",
+        }.get(summary_mode_var.get(), "bullets")
+
+    def toggle_summary() -> None:
+        state["summary_expanded"] = not state["summary_expanded"]
+        if state["summary_expanded"]:
+            summary_body.pack(fill="x")
+            summary_toggle.config(text="▾ Summary")
+        else:
+            summary_body.pack_forget()
+            summary_toggle.config(text="▸ Summary")
+
+    def display_summary(*_args) -> None:
+        value = state["summaries"].get(selected_summary_mode(), "")
+        summary_text.config(state="normal")
+        summary_text.delete("1.0", "end")
+        if value:
+            summary_text.insert("1.0", value)
+        summary_text.config(state="disabled")
+        summary_copy_btn.config(state="normal" if value else "disabled")
+        if value:
+            summary_panel.pack(
+                fill="x",
+                pady=(0, 8),
+                before=transcript_wrap,
+            )
+        else:
+            summary_panel.pack_forget()
 
     def set_transcript(
         value: str,
@@ -641,6 +751,17 @@ def build(container, root, wheel=None) -> None:
             segments if isinstance(segments, list) else None,
             placeholder=not bool(body_text),
         )
+        state["summaries"] = read_summaries(session["path"])
+        # Point the chooser at a mode that actually HAS a saved summary. The pane
+        # only renders summaries[selected_mode], so without this a session
+        # summarised as Actions looks empty on reopen (the chooser defaults to
+        # Bullets) and the user's saved work appears lost.
+        if state["summaries"] and selected_summary_mode() not in state["summaries"]:
+            for mode, label in (("bullets", "Bullets"), ("todos", "To-dos"),
+                                ("actions", "Actions")):
+                if mode in state["summaries"]:
+                    summary_mode_var.set(label)
+                    break
         search_var.set("")
         can_transcribe = session["can_transcribe"] and not state["busy"]
         transcribe_btn.config(state="normal" if can_transcribe else "disabled")
@@ -649,10 +770,43 @@ def build(container, root, wheel=None) -> None:
         folder_btn.config(state="normal")
         can_delete = session["status"] != "recording" and not state["busy"]
         delete_btn.config(state="normal" if can_delete else "disabled")
-        status_label.config(
-            text=session["error"] or "",
-            fg=ACCENT if session["error"] else MUTED,
-        )
+        if body_text:
+            cfg = config.Config.load()
+            state["summary_ready"] = provider_ready(cfg.cleanup_provider)
+            summarise_controls.pack(
+                fill="x",
+                pady=(0, 8),
+                before=transcript_wrap,
+            )
+            summary_mode.config(
+                state="readonly" if state["summary_ready"] and not state["busy"]
+                else "disabled"
+            )
+            summarise_btn.config(
+                state="normal" if state["summary_ready"] and not state["busy"]
+                else "disabled"
+            )
+            if not state["summary_ready"]:
+                status_label.config(
+                    text=(
+                        "Summarising unavailable: configure an API key or "
+                        "choose local Ollama."
+                    ),
+                    fg=ACCENT,
+                )
+            else:
+                status_label.config(
+                    text=session["error"] or "",
+                    fg=ACCENT if session["error"] else MUTED,
+                )
+        else:
+            state["summary_ready"] = False
+            summarise_controls.pack_forget()
+            status_label.config(
+                text=session["error"] or "",
+                fg=ACCENT if session["error"] else MUTED,
+            )
+        display_summary()
 
     def add_session_row(session: dict, index: int) -> None:
         row = tk.Frame(session_rows, bg=CARD, padx=12, pady=10, cursor="hand2")
@@ -767,7 +921,9 @@ def build(container, root, wheel=None) -> None:
             )
             for button in (
                 transcribe_btn,
+                summarise_btn,
                 copy_btn,
+                summary_copy_btn,
                 save_btn,
                 folder_btn,
                 delete_btn,
@@ -777,6 +933,8 @@ def build(container, root, wheel=None) -> None:
                 button.config(state="disabled")
             match_label.config(text="0/0")
             status_label.config(text="")
+            summarise_controls.pack_forget()
+            summary_panel.pack_forget()
             return
         target = preferred or state["sessions"][0]["path"]
         target_index = next(
@@ -851,8 +1009,9 @@ def build(container, root, wheel=None) -> None:
 
     def set_busy(busy: bool) -> None:
         state["busy"] = busy
-        for button in (transcribe_btn, delete_btn):
+        for button in (transcribe_btn, summarise_btn, delete_btn):
             button.config(state="disabled")
+        summary_mode.config(state="disabled")
 
     def move_session(step: int) -> str:
         if not state["sessions"] or state["busy"]:
@@ -911,11 +1070,85 @@ def build(container, root, wheel=None) -> None:
 
         threading.Thread(target=work, daemon=True).start()
 
+    def do_summarise() -> None:
+        path = selected_path()
+        if (
+            path is None
+            or state["busy"]
+            or not state["summary_ready"]
+        ):
+            return
+        transcript_data = _read_json(path / "transcript.json")
+        segments = transcript_data.get("segments")
+        if not isinstance(segments, list) or not segments:
+            return
+        mode = selected_summary_mode()
+        cfg = config.Config.load()
+        set_busy(True)
+        status_label.config(text="Summarising…", fg=MUTED)
+
+        def back_on_ui(callback, value) -> None:
+            try:
+                root.after(0, lambda: callback(value))
+            except Exception:
+                pass
+
+        def succeeded(result: str) -> None:
+            set_busy(False)
+            state["summaries"][mode] = result
+            state["summary_expanded"] = True
+            summary_body.pack(fill="x")
+            summary_toggle.config(text="▾ Summary")
+            display_summary()
+            summary_mode.config(state="readonly")
+            summarise_btn.config(state="normal")
+            selected = state["selected"]
+            can_delete = bool(selected and selected["status"] != "recording")
+            delete_btn.config(state="normal" if can_delete else "disabled")
+            status_label.config(text="Summary complete.", fg=GOOD)
+
+        def failed(message: str) -> None:
+            set_busy(False)
+            summary_mode.config(state="readonly")
+            summarise_btn.config(state="normal")
+            selected = state["selected"]
+            can_delete = bool(selected and selected["status"] != "recording")
+            delete_btn.config(state="normal" if can_delete else "disabled")
+            status_label.config(
+                text=f"Summarising failed: {message}",
+                fg=ACCENT,
+            )
+
+        def work() -> None:
+            try:
+                result = summarise(
+                    segments,
+                    mode,
+                    cfg.cleanup_provider,
+                    cfg.cleanup_model,
+                    session_dir=path,
+                )
+            except Exception as exc:
+                back_on_ui(failed, str(exc))
+                return
+            if not result:
+                back_on_ui(failed, "the provider returned no summary")
+                return
+            back_on_ui(succeeded, result)
+
+        threading.Thread(target=work, daemon=True).start()
+
     def do_copy() -> None:
         value = _transcript_text(selected_path()) if selected_path() else ""
         ok = _copy_to_clipboard(root, value)
         copy_btn.config(text="Copied ✓" if ok else "Copy failed")
         root.after(1100, lambda: copy_btn.config(text="Copy"))
+
+    def do_summary_copy() -> None:
+        value = state["summaries"].get(selected_summary_mode(), "")
+        ok = _copy_to_clipboard(root, value)
+        summary_copy_btn.config(text="Copied ✓" if ok else "Copy failed")
+        root.after(1100, lambda: summary_copy_btn.config(text="Copy"))
 
     def do_save() -> None:
         path = selected_path()
@@ -1006,6 +1239,9 @@ def build(container, root, wheel=None) -> None:
     prev_btn.config(command=lambda: move_match(-1))
     next_btn.config(command=lambda: move_match(1))
     transcribe_btn.config(command=do_transcribe)
+    summarise_btn.config(command=do_summarise)
+    summary_copy_btn.config(command=do_summary_copy)
+    summary_mode_var.trace_add("write", display_summary)
     copy_btn.config(command=do_copy)
     save_btn.config(command=do_save)
     folder_btn.config(command=do_open_folder)

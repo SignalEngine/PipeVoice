@@ -103,9 +103,23 @@ def merge_transcripts(
     return merged
 
 
-def render_transcript(segments: list[dict]) -> str:
+def _format_elapsed(value: object) -> str:
+    try:
+        elapsed = max(0, int(float(value or 0)))
+    except (TypeError, ValueError, OverflowError):
+        elapsed = 0
+    if elapsed >= 3600:
+        return (
+            f"{elapsed // 3600}:"
+            f"{(elapsed % 3600) // 60:02d}:"
+            f"{elapsed % 60:02d}"
+        )
+    return f"{elapsed // 60}:{elapsed % 60:02d}"
+
+
+def render_transcript(segments: list[dict], *, timestamps: bool = False) -> str:
     """Render consecutive same-speaker segments as plain-text blocks."""
-    blocks: list[dict[str, str]] = []
+    blocks: list[dict] = []
     for segment in segments:
         text = str(segment.get("text") or "").strip()
         if not text:
@@ -114,9 +128,21 @@ def render_transcript(segments: list[dict]) -> str:
         if blocks and blocks[-1]["speaker"] == speaker:
             blocks[-1]["text"] += " " + text
         else:
-            blocks.append({"speaker": speaker, "text": text})
+            blocks.append(
+                {
+                    "speaker": speaker,
+                    "text": text,
+                    "time": segment.get("t", segment.get("start", 0)),
+                }
+            )
     return "\n\n".join(
-        f"{block['speaker']}: {block['text']}" for block in blocks
+        (
+            f"[{_format_elapsed(block['time'])}] "
+            if timestamps
+            else ""
+        )
+        + f"{block['speaker']}: {block['text']}"
+        for block in blocks
     )
 
 
