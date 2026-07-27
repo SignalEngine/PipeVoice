@@ -14,20 +14,23 @@ import threading
 import time
 from typing import Callable, Optional
 
+from .winui import PALETTE
+
 FRAME_MS = 33          # ~30 fps
 METER_N = 16           # number of VU bars
 METER_BW = 4           # bar width
 METER_GAP = 3          # gap between bars
 WIN_W, WIN_H = 380, 68
-TRANSPARENT = "#010203"  # color key punched out to give rounded corners
+TRANSPARENT = "#010203"  # Windows color key punched out for rounded corners
 
 ACCENT = {
-    "listening": "#e06c75",
-    "transcribing": "#fbbf24",
-    "error": "#f87171",
-    "done": "#60a5fa",
-    "idle": "#64748b",
-    "picker": "#a78bfa",
+    "listening": PALETTE["accent"],
+    "transcribing": PALETTE["amber"],
+    "error": PALETTE["error"],
+    "done": PALETTE["done"],
+    "idle": PALETTE["muted"],
+    "picker": PALETTE["picker"],
+    "meeting": PALETTE["meeting"],
 }
 
 
@@ -36,8 +39,10 @@ class Overlay:
         self,
         level_provider: Optional[Callable[[], float]] = None,
         enabled: bool = True,
+        meeting_provider: Optional[Callable[[], dict]] = None,
     ) -> None:
         self.level_provider = level_provider or (lambda: 0.0)
+        self.meeting_provider = meeting_provider or (lambda: {})
         self.enabled = enabled
         self._q: "queue.Queue[tuple]" = queue.Queue()
         self._thread: Optional[threading.Thread] = None
@@ -69,6 +74,9 @@ class Overlay:
     def show_picker(self, items: list, title: str = "Pick a voice") -> None:
         self._q.put(("picker", title, list(items or [])))
 
+    def show_meeting(self) -> None:
+        self._q.put(("meeting", None, ""))
+
     # ---- tkinter thread ---------------------------------------------------
     def _run(self) -> None:
         try:
@@ -87,7 +95,7 @@ class Overlay:
             root.configure(bg=bg)
             root.attributes("-transparentcolor", bg)  # Windows: rounded pill
         except Exception:
-            bg = "#13151d"
+            bg = PALETTE["bg"]
             root.configure(bg=bg)
         try:
             root.attributes("-alpha", 0.96)
@@ -108,11 +116,14 @@ class Overlay:
             "text": "",
             "phase": 0.0,
             "hist": [0.0] * METER_N,
+            "targets": [0.0] * METER_N,
             "visible": False,
             "hide_at": 0.0,
             "picker_title": "",
             "picker_items": [],
             "h": WIN_H,            # current window height (grows for the picker list)
+            "scene": None,
+            "items": {},
         }
 
         def reveal():
@@ -161,6 +172,12 @@ class Overlay:
                         st["hide_at"] = 0.0
                         resize(WIN_H)
                         reveal()
+                    elif kind == "meeting":
+                        st["name"] = "meeting"
+                        st["text"] = ""
+                        st["hide_at"] = 0.0
+                        resize(WIN_H)
+                        reveal()
                     elif kind == "state":
                         if state:
                             st["name"] = state
@@ -180,6 +197,7 @@ class Overlay:
                         items = text if isinstance(text, list) else []
                         st["picker_items"] = items
                         st["hide_at"] = 0.0
+                        st["scene"] = None
                         resize(44 + 30 * max(1, min(6, len(items))) + 12)
                         reveal()
             except queue.Empty:
@@ -203,50 +221,172 @@ class Overlay:
 
     # ---- drawing ----------------------------------------------------------
     def _draw(self, c, st) -> None:
-        c.delete("all")
         H = st.get("h", WIN_H)
         accent = ACCENT.get(st["name"], ACCENT["idle"])
-        self._round_rect(c, 3, 3, WIN_W - 3, H - 3, 24, fill="#13151d", outline=accent, width=2)
 
         if st["name"] == "picker":
-            title = st["picker_title"] or "Pick a voice"
-            items = st["picker_items"][:6]
-            c.create_text(WIN_W // 2, 22, text=title, anchor="center",
-                          fill=accent, font=("Segoe UI", 9, "bold"))
-            row, y0 = 30, 50
-            for i, name in enumerate(items):
-                yy = y0 + i * row
-                c.create_text(24, yy, text=str(i + 1), anchor="w",
-                              fill=accent, font=("Consolas", 13, "bold"))
-                c.create_text(48, yy, text=self._fit(name, WIN_W - 64), anchor="w",
-                              fill="#e5e7eb", font=("Segoe UI", 12))
+            self._draw_picker(c, st, H, accent)
             return
 
-        st["phase"] += 0.18
+        st["phase"] += 0.1
+        if st["name"] == "listening":
+            self._draw_listening(c, st, H, accent)
+            return
+        if st["name"] == "meeting":
+            self._draw_meeting(c, st, H, accent)
+            return
+        self._draw_status(c, st, H, accent)
+
+    def _base_scene(self, c, st, scene: str, H: int, accent: str) -> dict:
+        if st["scene"] == scene:
+            items = st["items"]
+            c.itemconfigure(items["pill"], outline=accent)
+            return items
+        c.delete("all")
+        st["scene"] = scene
+        st["items"] = {
+            "pill": self._round_rect(
+                c, 3, 3, WIN_W - 3, H - 3, 24,
+                fill=PALETTE["bg"], outline=accent, width=2,
+            )
+        }
+        return st["items"]
+
+    def _draw_picker(self, c, st, H: int, accent: str) -> None:
+        items = self._base_scene(c, st, "picker", H, accent)
+        if "title" in items:
+            return
+        items["title"] = c.create_text(
+            WIN_W // 2, 22, text=st["picker_title"] or "Pick a voice",
+            anchor="center", fill=accent, font=("Segoe UI", 9, "bold"),
+        )
+        for i, name in enumerate(st["picker_items"][:6]):
+            yy = 50 + i * 30
+            items[f"number_{i}"] = c.create_text(
+                24, yy, text=str(i + 1), anchor="w",
+                fill=accent, font=("Consolas", 13, "bold"),
+            )
+            items[f"name_{i}"] = c.create_text(
+                48, yy, text=self._fit(name, WIN_W - 64), anchor="w",
+                fill=PALETTE["fg"], font=("Segoe UI", 12),
+            )
+
+    def _draw_listening(self, c, st, H: int, accent: str) -> None:
+        items = self._base_scene(c, st, "listening", H, accent)
         cy = WIN_H // 2
         cx = 28
+        if "dot" not in items:
+            items["ring"] = c.create_oval(0, 0, 0, 0, fill="", width=2)
+            items["dot"] = c.create_oval(0, 0, 0, 0, outline="")
+            for i in range(METER_N):
+                items[f"bar_{i}"] = c.create_line(
+                    0, cy, 0, cy, width=METER_BW, capstyle="round",
+                )
+            items["text"] = c.create_text(
+                176, cy, anchor="w", fill=PALETTE["fg"],
+                font=("Segoe UI", 12),
+            )
+        try:
+            level = max(0.0, float(self.level_provider()))
+        except Exception:
+            level = 0.0
+        normalized = min(1.0, level * 7.0)
+        targets = st["targets"]
+        targets.pop(0)
+        targets.append(normalized)
+        hist = st["hist"]
+        for i, target in enumerate(targets):
+            hist[i] += (target - hist[i]) * 0.28
+            value = hist[i]
+            bx = 50 + i * (METER_BW + METER_GAP)
+            half_height = 1.5 + value * 15.5
+            c.coords(items[f"bar_{i}"], bx, cy - half_height, bx, cy + half_height)
+            c.itemconfigure(
+                items[f"bar_{i}"],
+                fill=self._blend(PALETTE["muted"], accent, value),
+            )
+        breath = (math.sin(st["phase"] * 0.55) + 1.0) / 2.0
+        ring_r = 10.0 + 2.5 * breath + 4.0 * normalized
+        ring_colour = self._blend(PALETTE["bg"], accent, 0.3 + 0.35 * normalized)
+        c.coords(items["ring"], cx - ring_r, cy - ring_r, cx + ring_r, cy + ring_r)
+        c.itemconfigure(items["ring"], outline=ring_colour)
+        dot_r = 5.0 + 1.5 * normalized
+        c.coords(items["dot"], cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r)
+        c.itemconfigure(items["dot"], fill=accent)
+        c.itemconfigure(items["text"], text=self._fit(st["text"] or "Listening…", 186))
 
-        # pulsing status dot
-        r = 6 + (2.4 * abs(math.sin(st["phase"])) if st["name"] == "listening" else 0)
-        c.create_oval(cx - r, cy - r, cx + r, cy + r, fill=accent, outline="")
+    def _draw_meeting(self, c, st, H: int, accent: str) -> None:
+        items = self._base_scene(c, st, "meeting", H, accent)
+        cy = WIN_H // 2
+        cx = 28
+        if "dot" not in items:
+            items["ring"] = c.create_oval(0, 0, 0, 0, fill="", width=2)
+            items["dot"] = c.create_oval(0, 0, 0, 0, outline="")
+            items["rec"] = c.create_text(
+                50, cy, anchor="w", fill=PALETTE["fg"],
+                font=("Consolas", 11, "bold"),
+            )
+            for label, label_x, x1, x2 in (
+                ("mic", 145, 174, 221),
+                ("desktop", 235, 292, 350),
+            ):
+                items[f"{label}_label"] = c.create_text(
+                    label_x, cy - 9, text=label, anchor="w",
+                    fill=PALETTE["muted"], font=("Segoe UI", 8),
+                )
+                items[f"{label}_track"] = c.create_line(
+                    x1, cy + 9, x2, cy + 9, fill=PALETTE["meter_track"],
+                    width=4, capstyle="round",
+                )
+                items[f"{label}_level"] = c.create_line(
+                    x1, cy + 9, x1, cy + 9, fill=accent,
+                    width=4, capstyle="round",
+                )
+        try:
+            data = self.meeting_provider() or {}
+        except Exception:
+            data = {}
+        levels = data.get("levels") if isinstance(data.get("levels"), dict) else {}
+        errors = data.get("errors") if isinstance(data.get("errors"), dict) else {}
+        elapsed = data.get("elapsed", 0.0)
+        breath = (math.sin(st["phase"]) + 1.0) / 2.0
+        dot_colour = self._blend(PALETTE["meeting"], PALETTE["meeting_hi"], breath)
+        ring_r = 9.0 + 3.0 * breath
+        c.coords(items["ring"], cx - ring_r, cy - ring_r, cx + ring_r, cy + ring_r)
+        c.itemconfigure(
+            items["ring"],
+            outline=self._blend(PALETTE["bg"], dot_colour, 0.45),
+        )
+        dot_r = 5.0 + 1.6 * breath
+        c.coords(items["dot"], cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r)
+        c.itemconfigure(items["dot"], fill=dot_colour)
+        c.itemconfigure(items["rec"], text=f"REC  {self._elapsed_text(elapsed)}")
+        for label, x1, x2 in (("mic", 174, 221), ("desktop", 292, 350)):
+            dead = bool(errors.get(label))
+            normalized = min(1.0, max(0.0, float(levels.get(label, 0.0))) * 7.0)
+            if dead:
+                c.coords(items[f"{label}_level"], x1, cy + 9, x2, cy + 9)
+                colour = PALETTE["error"]
+            else:
+                end = x1 + max(1.0, (x2 - x1) * normalized)
+                c.coords(items[f"{label}_level"], x1, cy + 9, end, cy + 9)
+                colour = self._blend(PALETTE["muted"], accent, normalized)
+            c.itemconfigure(items[f"{label}_level"], fill=colour)
+            c.itemconfigure(
+                items[f"{label}_label"],
+                fill=PALETTE["error"] if dead else PALETTE["muted"],
+            )
 
-        if st["name"] == "listening":
-            try:
-                lvl = float(self.level_provider())
-            except Exception:
-                lvl = 0.0
-            hist = st["hist"]
-            hist.pop(0)
-            hist.append(lvl)
-            mx = 50
-            for i, v in enumerate(hist):
-                bx = mx + i * (METER_BW + METER_GAP)
-                bh = max(3, min(34, v * 700 + 3))
-                c.create_rectangle(bx, cy - bh / 2, bx + METER_BW, cy + bh / 2, fill=accent, outline="")
-            text_x = mx + METER_N * (METER_BW + METER_GAP) + 14
-        else:
-            text_x = 50
-
+    def _draw_status(self, c, st, H: int, accent: str) -> None:
+        items = self._base_scene(c, st, "status", H, accent)
+        cy = WIN_H // 2
+        if "dot" not in items:
+            items["dot"] = c.create_oval(22, cy - 6, 34, cy + 6, outline="")
+            items["text"] = c.create_text(
+                50, cy, anchor="w", fill=PALETTE["fg"],
+                font=("Segoe UI", 12),
+            )
+        c.itemconfigure(items["dot"], fill=accent)
         txt = st["text"]
         if not txt:
             txt = {
@@ -258,9 +398,27 @@ class Overlay:
             }.get(st["name"], "")
         if st["name"] == "transcribing" and not st["text"]:
             txt = "Transcribing" + "." * (1 + int(st["phase"]) % 3)
+        c.itemconfigure(items["text"], text=self._fit(txt, WIN_W - 68))
 
-        txt = self._fit(txt, WIN_W - text_x - 18)
-        c.create_text(text_x, cy, text=txt, anchor="w", fill="#e5e7eb", font=("Segoe UI", 12))
+    @staticmethod
+    def _elapsed_text(seconds: object) -> str:
+        try:
+            total = max(0, int(float(seconds)))
+        except (TypeError, ValueError, OverflowError):
+            total = 0
+        if total >= 3600:
+            return f"{total // 3600}:{(total % 3600) // 60:02d}:{total % 60:02d}"
+        return f"{total // 60:02d}:{total % 60:02d}"
+
+    @staticmethod
+    def _blend(start: str, end: str, amount: float) -> str:
+        amount = min(1.0, max(0.0, float(amount)))
+        rgb = [
+            round(int(start[index:index + 2], 16) * (1.0 - amount)
+                  + int(end[index:index + 2], 16) * amount)
+            for index in (1, 3, 5)
+        ]
+        return "#" + "".join(f"{component:02x}" for component in rgb)
 
     @staticmethod
     def _round_rect(c, x1, y1, x2, y2, r, **kw):

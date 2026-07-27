@@ -40,7 +40,11 @@ class App:
         self._meeting_errors_reported = set()
 
         self.recorder = Recorder(device=config.device_arg(self.cfg))
-        self.overlay = Overlay(level_provider=lambda: self.recorder.level, enabled=self.cfg.overlay)
+        self.overlay = Overlay(
+            level_provider=lambda: self.recorder.level,
+            meeting_provider=self._meeting_overlay_state,
+            enabled=self.cfg.overlay,
+        )
         self.tray = Tray(self)
         self.hotkeys = HotkeyManager(
             get_hotkey=lambda: self.cfg.hotkey,
@@ -427,6 +431,13 @@ class App:
     def meeting_active(self) -> bool:
         return self._meeting_active
 
+    def _meeting_overlay_state(self) -> dict:
+        return {
+            "elapsed": self._meeting.elapsed,
+            "levels": self._meeting.levels,
+            "errors": self._meeting.fatal_errors,
+        }
+
     def toggle_meeting(self) -> None:
         if self._meeting_active:
             try:
@@ -434,6 +445,8 @@ class App:
             finally:
                 self._meeting_active = False
                 self._meeting_degraded = False
+                if getattr(self, "overlay", None) is not None:
+                    self.overlay.hide()
                 self._set_icon("idle")
                 self.tray.update()
             return
@@ -450,6 +463,8 @@ class App:
             self._fail(f"meeting: {exc}")
             self.tray.update()
             return
+        if getattr(self, "overlay", None) is not None:
+            self.overlay.show_meeting()
         self._set_icon("meeting")
         self.tray.update()
 
@@ -468,12 +483,21 @@ class App:
             self._meeting_degraded = True
         if failures:
             self._fail("meeting capture: " + "; ".join(failures))
+            timer = threading.Timer(2.2, self._restore_meeting_overlay)
+            timer.daemon = True
+            timer.start()
+
+    def _restore_meeting_overlay(self) -> None:
+        if self._meeting_active and getattr(self, "overlay", None) is not None:
+            self.overlay.show_meeting()
 
     def _on_meeting_auto_stop(self, reason: str) -> None:
         if not self._meeting_active:
             return
         self._meeting_active = False
         self._meeting_degraded = False
+        if getattr(self, "overlay", None) is not None:
+            self.overlay.hide()
         self._fail(f"meeting stopped: {reason}")
         self.tray.update()
 

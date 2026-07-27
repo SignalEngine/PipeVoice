@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -94,6 +95,23 @@ def cycle_match_index(current: int, count: int, step: int) -> int:
     if current < 0:
         return 0 if step >= 0 else count - 1
     return (current + (1 if step >= 0 else -1)) % count
+
+
+def meetings_signature(base_dir: str | Path | None = None) -> tuple:
+    """Cheaply describe meeting dirs and their metadata revision."""
+    base = Path(base_dir) if base_dir is not None else meetings_dir()
+    try:
+        paths = [path for path in base.glob("meeting-*") if path.is_dir()]
+    except OSError:
+        return ()
+    signature = []
+    for path in paths:
+        try:
+            mtime = (path / "meta.json").stat().st_mtime_ns
+        except OSError:
+            mtime = None
+        signature.append((path.name, mtime))
+    return tuple(sorted(signature))
 
 
 def _started_timestamp(meta: dict, path: Path) -> float:
@@ -271,6 +289,9 @@ def build(container, root, wheel=None) -> None:
         "matches": [],
         "match_index": -1,
         "busy": False,
+        "signature": (),
+        "poll_after": None,
+        "destroyed": False,
     }
 
     head = tk.Frame(container, bg=BG, padx=18, pady=14)
@@ -682,7 +703,13 @@ def build(container, root, wheel=None) -> None:
         secondary.pack(fill="x", padx=(19, 0), pady=(3, 0))
 
         widgets = (row, top, dot, title, duration, secondary)
-        row_info = {"frame": row, "widgets": widgets, "selected": False}
+        row_info = {
+            "frame": row,
+            "widgets": widgets,
+            "selected": False,
+            "path": session["path"],
+            "duration": duration,
+        }
         state["rows"].append(row_info)
 
         def enter(_event) -> None:
@@ -703,8 +730,19 @@ def build(container, root, wheel=None) -> None:
 
         tk.Frame(session_rows, bg=DIV, height=1).pack(fill="x", padx=12)
 
-    def refresh(preferred: Path | None = None) -> None:
+    def refresh(
+        preferred: Path | None = None,
+        *,
+        preserve_scroll: float | None = None,
+    ) -> None:
+        if state["rows"]:
+            if preferred is None:
+                preferred = selected_path()
+            if preserve_scroll is None:
+                view = session_canvas.yview()
+                preserve_scroll = view[0] if view else 0.0
         state["sessions"] = list_sessions()
+        state["signature"] = meetings_signature()
         state["rows"] = []
         for child in session_rows.winfo_children():
             child.destroy()
@@ -749,6 +787,67 @@ def build(container, root, wheel=None) -> None:
             0,
         )
         select_session(target_index, reveal=True)
+        if preserve_scroll is not None:
+            session_canvas.update_idletasks()
+            session_canvas.yview_moveto(preserve_scroll)
+
+    def update_live_durations() -> None:
+        now = time.time()
+        selected_changed = False
+        for session, row_info in zip(state["sessions"], state["rows"]):
+            if session["status"] != "recording":
+                continue
+            started = session.get("started_timestamp") or now
+            duration_seconds = max(
+                float(session.get("duration_seconds") or 0),
+                now - float(started),
+            )
+            duration = format_duration(duration_seconds)
+            if duration == session["duration"]:
+                continue
+            session["duration_seconds"] = duration_seconds
+            session["duration"] = duration
+            row_info["duration"].config(text=duration)
+            if (
+                state["selected"]
+                and state["selected"]["path"] == session["path"]
+            ):
+                state["selected"] = session
+                selected_changed = True
+        if selected_changed:
+            selected = state["selected"]
+            meta_bits = [selected["duration"], selected["status"]]
+            session_meta.config(text=" · ".join(meta_bits))
+
+    def poll_sessions() -> None:
+        if state["destroyed"]:
+            return
+        signature = meetings_signature()
+        if signature != state["signature"] and not state["busy"]:
+            selected = selected_path()
+            view = session_canvas.yview()
+            refresh(
+                preferred=selected,
+                preserve_scroll=view[0] if view else 0.0,
+            )
+        else:
+            update_live_durations()
+        try:
+            state["poll_after"] = root.after(2000, poll_sessions)
+        except Exception:
+            state["poll_after"] = None
+
+    def stop_polling(event) -> None:
+        if event.widget is not container:
+            return
+        state["destroyed"] = True
+        after_id = state["poll_after"]
+        state["poll_after"] = None
+        if after_id is not None:
+            try:
+                root.after_cancel(after_id)
+            except Exception:
+                pass
 
     def set_busy(busy: bool) -> None:
         state["busy"] = busy
@@ -912,6 +1011,8 @@ def build(container, root, wheel=None) -> None:
     folder_btn.config(command=do_open_folder)
     delete_btn.config(command=do_delete)
     refresh()
+    container.bind("<Destroy>", stop_polling, add="+")
+    state["poll_after"] = root.after(2000, poll_sessions)
 
 
 def main() -> None:

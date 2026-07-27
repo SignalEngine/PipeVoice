@@ -4,6 +4,7 @@ import json
 import pathlib
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -136,6 +137,31 @@ def test_duration_formatting():
     assert meetings_tab.format_duration(45.9) == "45s"
     assert meetings_tab.format_duration(90) == "1m 30s"
     assert meetings_tab.format_duration(3725) == "1h 02m"
+
+
+def test_meetings_signature_tracks_dirs_and_meta_mtime_only():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        session = base / "meeting-one"
+        session.mkdir()
+        meta = session / "meta.json"
+        meta.write_text("{}", encoding="utf-8")
+        first = meetings_tab.meetings_signature(base)
+
+        (session / "mic.wav").write_bytes(b"audio")
+        assert meetings_tab.meetings_signature(base) == first
+
+        stat = meta.stat()
+        meta.write_text('{"stopped_at": true}', encoding="utf-8")
+        meta.touch()
+        if meta.stat().st_mtime_ns == stat.st_mtime_ns:
+            time.sleep(0.002)
+            meta.touch()
+        second = meetings_tab.meetings_signature(base)
+        assert second != first
+
+        (base / "meeting-two").mkdir()
+        assert meetings_tab.meetings_signature(base) != second
 
 
 def test_search_match_index_cycles_both_directions():

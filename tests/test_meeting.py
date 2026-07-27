@@ -295,6 +295,25 @@ def test_elapsed_uses_monotonic_time():
         assert recorder.elapsed == 2.75
 
 
+def test_stream_levels_use_fast_attack_slow_release():
+    recorder = MeetingRecorder(pathlib.Path("unused"))
+    recorder._waves = {
+        "mic": types.SimpleNamespace(
+            writeframesraw=lambda _pcm: None,
+            _patchheader=lambda: None,
+            _file=types.SimpleNamespace(flush=lambda: None),
+        )
+    }
+    recorder._last_header_patches["mic"] = time.monotonic()
+
+    recorder._write_block("mic", np.array([0.5, -0.5], dtype=np.float32))
+    assert recorder.levels["mic"] == 0.5
+    recorder._write_block("mic", np.array([0.1, -0.1], dtype=np.float32))
+    assert abs(recorder.levels["mic"] - 0.35) < 1e-6
+    recorder._write_block("mic", np.array([0.6, -0.6], dtype=np.float32))
+    assert abs(recorder.levels["mic"] - 0.6) < 1e-6
+
+
 def test_one_stream_failure_keeps_the_other():
     with tempfile.TemporaryDirectory() as tmp:
         recorder = MeetingRecorder(pathlib.Path(tmp))

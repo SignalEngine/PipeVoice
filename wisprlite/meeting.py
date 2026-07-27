@@ -29,6 +29,11 @@ HEADER_PATCH_INTERVAL = 5.0
 DEFAULT_RETENTION_SESSIONS = 20
 
 
+def smooth_level(current: float, rms: float) -> float:
+    """Apply the recorder's fast-attack, slow-release level smoothing."""
+    return rms if rms > current else current * 0.7
+
+
 def meetings_dir() -> Path:
     """Return a machine-local recording directory, never the roaming profile."""
     from .config import APP_NAME
@@ -260,6 +265,7 @@ class MeetingRecorder:
             "mic": None,
             "desktop": None,
         }
+        self._levels = {"mic": 0.0, "desktop": 0.0}
         self._mic_stream = None
         self._limit_timer: threading.Timer | None = None
         self._stop_reason: str | None = None
@@ -289,6 +295,11 @@ class MeetingRecorder:
     def fatal_errors(self) -> dict[str, str | None]:
         with self._state_lock:
             return dict(self._fatal_errors)
+
+    @property
+    def levels(self) -> dict[str, float]:
+        with self._state_lock:
+            return dict(self._levels)
 
     def start(self) -> Path:
         with self._lifecycle_lock:
@@ -320,6 +331,7 @@ class MeetingRecorder:
             }
             self._errors = {"mic": None, "desktop": None}
             self._fatal_errors = {"mic": None, "desktop": None}
+            self._levels = {"mic": 0.0, "desktop": 0.0}
             self._stop_reason = None
             self._stop.clear()
             self._active = True
@@ -569,6 +581,9 @@ class MeetingRecorder:
             data = np.asarray(block, dtype=np.float32).reshape(-1)
             if not data.size:
                 return
+            rms = float(np.sqrt(np.mean(data ** 2)))
+            with self._state_lock:
+                self._levels[label] = smooth_level(self._levels[label], rms)
             pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
             with self._wave_locks[label]:
                 output = self._waves.get(label)
