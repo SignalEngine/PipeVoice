@@ -13,7 +13,7 @@ import os
 import threading
 import webbrowser
 
-from . import about, autostart, cleanup, config, history, voices, winui
+from . import about, autostart, cleanup, config, history, meetings_tab, voices, winui
 
 ENGINES = [("gemini", "Gemini — free, one key does it all"),
            ("groq", "Groq Whisper — fast & cheap, top accuracy"),
@@ -175,6 +175,35 @@ def _build_guide(parent, wheel) -> None:
     link("Get an OpenRouter key  ↗", "openrouter")
     link("Install Ollama  ↗", "ollama")
 
+    head("Record a meeting")
+    body("Pipevoice can record a whole call — both sides — and turn it into a transcript, "
+         "then into notes and action items. Nothing is uploaded unless you choose a cloud "
+         "engine; the recordings stay on your machine.")
+    item("1 · Set a meeting hotkey",
+         "Settings → Hotkeys → Meeting hotkey → Capture. Tap it once to start recording, "
+         "tap it again to stop. It's off until you set one.", badge="START HERE", badge_color=GOOD)
+    item("2 · It records both sides",
+         "Your microphone and your computer's own audio are captured separately — so what "
+         "you said and what they said never get mixed up. A REC bar shows the elapsed time "
+         "and a level meter for each side, so you can see at a glance that both are alive.")
+    item("3 · Dictation pauses itself",
+         "Your normal typing hotkey is switched off while a meeting records, so a stray "
+         "press can't interrupt the capture. It comes back the moment you stop.")
+    item("4 · Transcribe it",
+         "Settings → Meetings, pick the session, press Transcribe. Deepgram is fast and "
+         "separates the remote speakers; Local whisper works offline but labels everyone "
+         "the same. The tab tells you which one produced each transcript.")
+    item("5 · Name the people",
+         "Click a “Them 1” label in the transcript. Pipevoice plays the clearest two "
+         "seconds of that person talking so you can recognise them, then you type their "
+         "name. Names are per-meeting and never overwrite the original transcript.")
+    item("6 · Summarise",
+         "Choose Bullets, To-dos or Actions and press Summarise. Actions lists tasks with "
+         "an owner — which is why naming people first is worth the ten seconds.")
+    body("• Playing music? Your computer's audio is captured as one mix, so a podcast or "
+         "Spotify ends up in the transcript alongside the meeting. Pause it first.")
+    body("• Recording other people may need their consent where you live. Ask first.")
+
     head("Make it yours")
     body("• Accent / language (under Audio): pick yours for a real accuracy boost — UK, US, Indian, "
          "Australian, or Russian-accented English, and more.")
@@ -296,10 +325,11 @@ def main(first_run: bool = False) -> None:
     tab_settings = tk.Frame(body_wrap, bg=BG)
     tab_voices = tk.Frame(body_wrap, bg=BG)
     tab_history = tk.Frame(body_wrap, bg=BG)
+    tab_meetings = tk.Frame(body_wrap, bg=BG)
     tab_guide = tk.Frame(body_wrap, bg=BG)
     tab_about = tk.Frame(body_wrap, bg=BG)
     _tabs = [("Settings", tab_settings), ("Voices", tab_voices), ("History", tab_history),
-             ("Guide", tab_guide), ("About", tab_about)]
+             ("Meetings", tab_meetings), ("Guide", tab_guide), ("About", tab_about)]
     _tab_w = {}
 
     def _show_tab(name):
@@ -335,6 +365,7 @@ def main(first_run: bool = False) -> None:
     frm.bind("<Configure>", lambda e: _canvas.configure(scrollregion=_canvas.bbox("all")))
     _wheel(_canvas)
     history.build(tab_history, root, _wheel)
+    meetings_tab.build(tab_meetings, root, _wheel)
     _build_guide(tab_guide, _wheel)
     about.build(tab_about, root, _wheel)
     _build_voices_tab(tab_voices, _show_tab, _wheel)
@@ -404,6 +435,7 @@ def main(first_run: bool = False) -> None:
     output_var = tk.StringVar(value=dict(OUTPUTS).get(cfg.output_mode, OUTPUTS[0][1]))
     hotkey_var = tk.StringVar(value=cfg.hotkey)
     clip_hotkey_var = tk.StringVar(value=cfg.clipboard_hotkey)
+    meeting_hotkey_var = tk.StringVar(value=cfg.meeting_hotkey)
     lang_var = tk.StringVar(value=dict(LANGUAGES).get(cfg.language, LANGUAGES[0][1]))
     devices = _input_devices()
     dev_label = next((lbl for lbl, val in devices if val == cfg.device), devices[0][0])
@@ -428,6 +460,8 @@ def main(first_run: bool = False) -> None:
     auto_enter_var = tk.BooleanVar(value=cfg.auto_enter)
     min_seconds_var = tk.StringVar(value=str(cfg.min_seconds))
     dg_timeout_var = tk.StringVar(value=str(cfg.deepgram_finish_timeout))
+    meeting_max_minutes_var = tk.StringVar(value=str(cfg.meeting_max_minutes))
+    meetings_keep_var = tk.StringVar(value=str(cfg.meetings_keep))
     paste_speed_var = tk.StringVar(value=dict(PASTE_SPEEDS).get(cfg.paste_speed, PASTE_SPEEDS[1][1]))
     fixes_var = tk.StringVar(value=", ".join(f"{k}={v}" for k, v in cfg.replacements.items()))
     speech_notes_var = tk.StringVar(value=cfg.speech_notes)
@@ -548,6 +582,19 @@ def main(first_run: bool = False) -> None:
 
     clip_cap_btn.config(command=clip_capture)
 
+    r = row(
+        c,
+        "Meeting hotkey",
+        "Tap once to start meeting recording and again to stop. "
+        "Dictation is suppressed while a meeting is recording.",
+    )
+    entry(r, meeting_hotkey_var, width=14)
+    meeting_cap_btn = ttk.Button(r, text="Capture", width=8)
+    meeting_cap_btn.pack(side="left", padx=(8, 0))
+    meeting_cap_btn.config(
+        command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
+    )
+
     # --- Voice hotkeys ---
     c = card("Voice hotkeys",
              "Press a key to dictate with a specific Voice. Optional picker key chooses on the fly.")
@@ -663,6 +710,16 @@ def main(first_run: bool = False) -> None:
     c = card("Advanced", "Most people never need these.")
     entry(row(c, "Min seconds", "Ignore taps shorter than this."), min_seconds_var, width=7)
     entry(row(c, "Deepgram wait", "Seconds to wait for final words."), dg_timeout_var, width=7)
+    entry(
+        row(c, "Meeting max minutes", "Safety limit for an unattended recording."),
+        meeting_max_minutes_var,
+        width=7,
+    )
+    entry(
+        row(c, "Meetings to keep", "Newest local meeting sessions retained on this PC."),
+        meetings_keep_var,
+        width=7,
+    )
     combo(row(c, "Paste speed", "Slower is more reliable in some apps."),
           paste_speed_var, [l for _, l in PASTE_SPEEDS], width=10)
 
@@ -687,6 +744,7 @@ def main(first_run: bool = False) -> None:
         cfg.output_mode = value_for(output_var, OUTPUTS)
         cfg.hotkey = hotkey_var.get().strip() or "right ctrl"
         cfg.clipboard_hotkey = clip_hotkey_var.get().strip()
+        cfg.meeting_hotkey = meeting_hotkey_var.get().strip()
         cfg.language = value_for(lang_var, LANGUAGES)
         cfg.device = dict((lbl, val) for lbl, val in devices).get(device_var.get(), "")
         cfg.gemini_model = gemini_model_var.get().strip() or "gemini-3.1-flash-lite"
@@ -721,6 +779,14 @@ def main(first_run: bool = False) -> None:
             pass
         try:
             cfg.deepgram_finish_timeout = max(1.0, min(30.0, float(dg_timeout_var.get())))
+        except ValueError:
+            pass
+        try:
+            cfg.meeting_max_minutes = max(0, int(meeting_max_minutes_var.get()))
+        except ValueError:
+            pass
+        try:
+            cfg.meetings_keep = max(1, int(meetings_keep_var.get()))
         except ValueError:
             pass
         cfg.paste_speed = value_for(paste_speed_var, PASTE_SPEEDS)

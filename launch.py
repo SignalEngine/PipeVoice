@@ -9,6 +9,8 @@ if "--settings" in sys.argv:
     from wisprlite.settings import main
 elif "--history" in sys.argv:
     from wisprlite.history import main
+elif "--meetings" in sys.argv:
+    from wisprlite.meetings_tab import main
 elif "--about" in sys.argv:
     from wisprlite.about import main
 elif "--profiles" in sys.argv:

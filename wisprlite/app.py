@@ -12,6 +12,7 @@ import time
 from . import autostart, config
 from .audio import Recorder
 from .hotkey import HotkeyManager
+from .meeting import MeetingRecorder
 from .overlay import Overlay
 from .tray import Tray
 from .typer import apply_replacements, copy_clipboard, type_text
@@ -28,16 +29,29 @@ class App:
     def __init__(self) -> None:
         self.cfg = config.Config.load()
         self.paused = False
+        self._meeting = MeetingRecorder(
+            device=config.device_arg(self.cfg),
+            max_minutes=self.cfg.meeting_max_minutes,
+            retention_sessions=self.cfg.meeting_retention_sessions,
+            on_auto_stop=self._on_meeting_auto_stop,
+        )
+        self._meeting_active = False
+        self._meeting_degraded = False
+        self._meeting_errors_reported = set()
 
         self.recorder = Recorder(device=config.device_arg(self.cfg))
-        self.overlay = Overlay(level_provider=lambda: self.recorder.level, enabled=self.cfg.overlay)
+        self.overlay = Overlay(
+            level_provider=lambda: self.recorder.level,
+            meeting_provider=self._meeting_overlay_state,
+            enabled=self.cfg.overlay,
+        )
         self.tray = Tray(self)
         self.hotkeys = HotkeyManager(
             get_hotkey=lambda: self.cfg.hotkey,
             get_mode=lambda: self.cfg.mode,
             on_start=lambda: self._on_start(clipboard=False),
             on_stop=self._on_stop,
-            is_paused=lambda: self.paused,
+            is_paused=lambda: self.paused or self._meeting_active,
         )
         # second hotkey: same record flow, but the result goes to the clipboard
         self.clip_hotkeys = HotkeyManager(
@@ -45,7 +59,14 @@ class App:
             get_mode=lambda: self.cfg.mode,
             on_start=lambda: self._on_start(clipboard=True),
             on_stop=self._on_stop,
-            is_paused=lambda: self.paused,
+            is_paused=lambda: self.paused or self._meeting_active,
+        )
+        self.meeting_hotkeys = HotkeyManager(
+            get_hotkey=lambda: self.cfg.meeting_hotkey,
+            get_mode=lambda: "toggle",
+            on_start=self.toggle_meeting,
+            on_stop=self.toggle_meeting,
+            is_paused=lambda: self.paused and not self._meeting_active,
         )
 
         self._armed_voice = None      # a Voice armed by the picker, consumed by the next utterance
@@ -152,7 +173,7 @@ class App:
                 get_mode=lambda: self.cfg.mode,
                 on_start=(lambda v=vn: self._on_start(voice=v)),
                 on_stop=self._on_stop,
-                is_paused=lambda: self.paused,
+                is_paused=lambda: self.paused or self._meeting_active,
             )
             self._voice_mgrs.append(mgr)
         pk = (self.cfg.voice_picker_hotkey or "").strip()
@@ -162,7 +183,7 @@ class App:
                 get_mode=lambda: "ptt",             # fire on every press (toggle would skip every 2nd press)
                 on_start=self._open_picker,
                 on_stop=lambda: None,
-                is_paused=lambda: self.paused,
+                is_paused=lambda: self.paused or self._meeting_active,
             )
 
     def _start_voice_hotkeys(self) -> None:
@@ -406,6 +427,80 @@ class App:
         self.paused = not self.paused
         self.tray.update()
 
+    @property
+    def meeting_active(self) -> bool:
+        return self._meeting_active
+
+    def _meeting_overlay_state(self) -> dict:
+        return {
+            "elapsed": self._meeting.elapsed,
+            "levels": self._meeting.levels,
+            "errors": self._meeting.fatal_errors,
+        }
+
+    def toggle_meeting(self) -> None:
+        if self._meeting_active:
+            try:
+                self._meeting.stop()
+            finally:
+                self._meeting_active = False
+                self._meeting_degraded = False
+                if getattr(self, "overlay", None) is not None:
+                    self.overlay.hide()
+                self._set_icon("idle")
+                self.tray.update()
+            return
+        if self.paused:
+            return
+
+        self._meeting_active = True
+        self._meeting_degraded = False
+        self._meeting_errors_reported.clear()
+        try:
+            self._meeting.start()
+        except Exception as exc:
+            self._meeting_active = False
+            self._fail(f"meeting: {exc}")
+            self.tray.update()
+            return
+        if getattr(self, "overlay", None) is not None:
+            self.overlay.show_meeting()
+        self._set_icon("meeting")
+        self.tray.update()
+
+    def _check_meeting_errors(self) -> None:
+        if not self._meeting_active:
+            return
+        errors = self._meeting.errors
+        fatal_errors = self._meeting.fatal_errors
+        failures = []
+        for label, error in errors.items():
+            failure = (label, error)
+            if error is not None and failure not in self._meeting_errors_reported:
+                self._meeting_errors_reported.add(failure)
+                failures.append(f"{label}: {error}")
+        if any(error is not None for error in fatal_errors.values()):
+            self._meeting_degraded = True
+        if failures:
+            self._fail("meeting capture: " + "; ".join(failures))
+            timer = threading.Timer(2.2, self._restore_meeting_overlay)
+            timer.daemon = True
+            timer.start()
+
+    def _restore_meeting_overlay(self) -> None:
+        if self._meeting_active and getattr(self, "overlay", None) is not None:
+            self.overlay.show_meeting()
+
+    def _on_meeting_auto_stop(self, reason: str) -> None:
+        if not self._meeting_active:
+            return
+        self._meeting_active = False
+        self._meeting_degraded = False
+        if getattr(self, "overlay", None) is not None:
+            self.overlay.hide()
+        self._fail(f"meeting stopped: {reason}")
+        self.tray.update()
+
     # ---- agent MCP -------------------------------------------------------
     def _polish(self, text: str) -> str:
         """Optional LLM cleanup ('Flow mode'); returns the input unchanged if off/unavailable."""
@@ -453,7 +548,11 @@ class App:
     def on_agent_listen(self, prompt="", timeout=45, mode="") -> dict:
         import concurrent.futures
         mode = mode or self.cfg.mcp_default_mode
-        if self._busy.locked() or self._pending_agent_listen is not None:
+        if (
+            self._meeting_active
+            or self._busy.locked()
+            or self._pending_agent_listen is not None
+        ):
             return {"status": "busy", "text": ""}
         if mode == "hands_free":
             return self._agent_listen_hands_free(prompt, timeout)
@@ -477,7 +576,7 @@ class App:
     def _agent_listen_hands_free(self, prompt="", timeout=45) -> dict:
         import time
         from .vad import SilenceEndpointer
-        if not self._busy.acquire(blocking=False):
+        if self._meeting_active or not self._busy.acquire(blocking=False):
             return {"status": "busy", "text": ""}
         try:
             try:
@@ -682,10 +781,17 @@ class App:
         self._stop.set()
         self.stop_mcp_bridge()
         self.hotkeys.stop()
+        self.clip_hotkeys.stop()
+        self.meeting_hotkeys.stop()
         for m in self._voice_mgrs:
             m.stop()
         if self._picker_mgr:
             self._picker_mgr.stop()
+        if self._meeting_active:
+            try:
+                self._meeting.stop()
+            finally:
+                self._meeting_active = False
         self.overlay.stop()
         self.tray.stop()
 
@@ -697,6 +803,8 @@ class App:
             last = None
         while not self._stop.is_set():
             time.sleep(1.0)
+            if self._meeting_active:
+                self._check_meeting_errors()
             try:
                 mtime = config.CONFIG_PATH.stat().st_mtime
             except Exception:
@@ -722,6 +830,11 @@ class App:
 
         old, new = self.cfg, config.Config.load()
         self.cfg = new  # hotkey/mode/output read live via lambdas
+        self._meeting.device = config.device_arg(new)
+        self._meeting.max_minutes = new.meeting_max_minutes
+        self._meeting.retention_sessions = max(
+            1, new.meeting_retention_sessions
+        )
 
         engine_keys = ("engine", "gemini_model", "groq_model", "openai_model",
                        "deepgram_model", "local_model_size", "local_device",
@@ -756,6 +869,8 @@ class App:
             pass
 
     def _set_icon(self, state: str) -> None:
+        if self._meeting_active and state != "error":
+            state = "meeting_degraded" if self._meeting_degraded else "meeting"
         self.tray.set_state(state)
 
     def _fail(self, msg: str) -> None:
@@ -763,7 +878,9 @@ class App:
         self._beep(220, 200)
         self.overlay.set_state("error", msg[:80])
         self.tray.set_state("error")
-        threading.Timer(1.6, lambda: self.tray.set_state("idle")).start()
+        timer = threading.Timer(1.6, lambda: self._set_icon("idle"))
+        timer.daemon = True
+        timer.start()
 
     def _beep(self, freq: int, ms: int) -> None:
         if self.cfg.sounds and winsound is not None:
@@ -814,6 +931,7 @@ class App:
         self.tray.start()
         self.hotkeys.start()
         self.clip_hotkeys.start()
+        self.meeting_hotkeys.start()
         self._start_voice_hotkeys()
         if self.cfg.mcp_enabled:
             self.start_mcp_bridge()

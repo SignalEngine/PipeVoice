@@ -62,6 +62,9 @@ class Config:
     mode: str = "ptt"               # ptt | toggle
     hotkey: str = "ctrl+\\"          # any key/combo, e.g. "ctrl+alt", "f9"
     clipboard_hotkey: str = "right ctrl+right shift"  # 2nd hotkey -> dictate to clipboard (no typing); safe to hold. "" = off
+    meeting_hotkey: str = ""        # toggle meeting capture; "" = disabled
+    meeting_max_minutes: int = 240  # safety cap for an unattended meeting capture
+    meeting_retention_sessions: int = 20  # newest local meeting sessions to keep
     output_mode: str = "type"       # type | paste
     language: str = ""              # "" = auto-detect; else ISO code e.g. "en"
     device: str = ""                # mic index or name substring; "" = default
@@ -105,6 +108,15 @@ class Config:
     hands_free_silence_ms: int = 800  # trailing silence that ends a hands-free capture
     transcribe_model_size: str = ""   # blank = reuse local_model_size
 
+    @property
+    def meetings_keep(self) -> int:
+        """Compatibility name used by the Meetings settings UI."""
+        return self.meeting_retention_sessions
+
+    @meetings_keep.setter
+    def meetings_keep(self, value: int) -> None:
+        self.meeting_retention_sessions = int(value)
+
     @classmethod
     def load(cls) -> "Config":
         cfg = cls()
@@ -113,6 +125,14 @@ class Config:
                 data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
                 for k, v in data.items():
                     if hasattr(cfg, k):
+                        current = getattr(cfg, k)
+                        try:
+                            if type(current) is int:
+                                v = int(v)
+                            elif type(current) is float:
+                                v = float(v)
+                        except (TypeError, ValueError):
+                            continue
                         setattr(cfg, k, v)
             except Exception:
                 pass

@@ -1,5 +1,7 @@
 # --- Core (always required) ---
 sounddevice>=0.4.6
+# Windows loopback capture only; sounddevice/PortAudio cannot capture desktop audio.
+soundcard>=0.4
 numpy>=1.24
 keyboard>=0.13.5
 python-dotenv>=1.0

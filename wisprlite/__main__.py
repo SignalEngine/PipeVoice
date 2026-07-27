@@ -4,6 +4,8 @@ if "--settings" in sys.argv:
     from .settings import main
 elif "--history" in sys.argv:
     from .history import main
+elif "--meetings" in sys.argv:
+    from .meetings_tab import main
 elif "--about" in sys.argv:
     from .about import main
 elif "--profiles" in sys.argv:
