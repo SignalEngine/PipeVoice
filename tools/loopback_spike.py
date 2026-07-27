@@ -17,9 +17,21 @@ from pathlib import Path
 RATE = 16_000
 CHUNK = 1_600
 SILENCE_RMS = 1e-5
+# DO NOT TOUCH device.name ANYWHERE IN THIS FILE.
+#
+# soundcard 0.4.6's `.name` is not cached: every access runs a full
+# CoCreateInstance + release of an IMMDeviceEnumerator and then dereferences a
+# device pointer obtained from the enumerator it just released
+# (mediafoundation.py:352-355, :366). Repeating that corrupts the process heap
+# — observed 2026-07-27 as `Windows fatal exception: code 0xc0000374`
+# (STATUS_HEAP_CORRUPTION) while building a name lookup over the mic list.
+#
+# `.id` is a plain attribute (no COM), so we identify devices by id only.
+# Note this also rules out sc.get_microphone(): _match_device builds
+# {device.name: device} unconditionally BEFORE its id check, so it always
+# walks the poisoned path even when you pass an exact id.
 def describe(device):
-    device_id = getattr(device, "id", getattr(device, "_id", "?"))
-    return f"{device.name} (id={device_id})"
+    return f"id={getattr(device, 'id', getattr(device, '_id', '?'))}"
 def show_devices(title, devices):
     print(f"\n{title} ({len(devices)}):")
     for index, device in enumerate(devices, 1):
@@ -65,12 +77,9 @@ def main():
         print(f"ERROR: Audio device enumeration failed: {exc}")
         print("Run this diagnostic on the target Windows machine.")
         return 2
-    def key(device):
-        return (getattr(device, "id", getattr(device, "_id", None)), device.name)
-    ordinary = {key(device) for device in microphones}
+    # id-only identity; see the warning above about .name
     loopbacks = [device for device in all_mics
-                 if getattr(device, "isloopback", False)
-                 or key(device) not in ordinary]
+                 if getattr(device, "isloopback", False)]
     show_devices("Speakers", speakers)
     show_devices("Microphones", microphones)
     show_devices("Loopback microphones", loopbacks)
@@ -80,13 +89,20 @@ def main():
         print("=============================")
         return 1
     try:
+        # default_microphone()/default_speaker() are safe: they wrap one
+        # enumerator call and never read .name.
         default_mic = sc.default_microphone()
         speaker = sc.default_speaker()
         if default_mic is None or speaker is None:
             raise RuntimeError("Windows has no default microphone or speaker")
-        desktop_mic = sc.get_microphone(id=speaker.name, include_loopback=True)
+        # Resolve the loopback by ID rather than sc.get_microphone(id=speaker.name),
+        # which would walk every device's .name and corrupt the heap.
+        desktop_mic = next((m for m in loopbacks if m.id == speaker.id), None)
         if desktop_mic is None:
-            raise RuntimeError("no loopback endpoint matches the default speaker")
+            # Default speaker has no loopback twin — fall back to the first one.
+            desktop_mic = loopbacks[0]
+            print("\nNOTE: no loopback matches the default speaker id; "
+                  "using the first loopback endpoint instead.")
     except Exception as exc:
         print(f"\nERROR: Could not resolve the default capture devices: {exc}")
         return 1
