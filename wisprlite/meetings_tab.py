@@ -229,31 +229,38 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
         meta = _read_json(path / "meta.json")
         status = derive_status(path, meta)
         if status == "recorded" and not meta.get("stopped_at"):
-            # Make the recovery durable so later code can use the same stop
-            # gate as a normally stopped session.
-            duration = float(meta.get("duration_seconds") or 0)
-            try:
-                started = datetime.fromisoformat(
-                    str(meta["started_at"]).replace("Z", "+00:00")
-                )
-                if started.tzinfo is None:
-                    started = started.replace(tzinfo=timezone.utc)
-                stopped_at = (started + timedelta(seconds=max(0, duration))).isoformat()
-            except (KeyError, TypeError, ValueError, OverflowError):
+            # Re-read before recovery: a surviving stream may have refreshed
+            # the heartbeat between the first status check and this mutation.
+            latest_meta = _read_json(path / "meta.json")
+            if derive_status(path, latest_meta) == "recording":
+                meta = latest_meta
+                status = "recording"
+            else:
+                # Make the recovery durable so later code can use the same stop
+                # gate as a normally stopped session.
+                duration = float(meta.get("duration_seconds") or 0)
                 try:
-                    stopped_at = datetime.fromtimestamp(
-                        (path / "meta.json").stat().st_mtime,
-                        timezone.utc,
-                    ).isoformat()
-                except (OSError, ValueError, OverflowError):
-                    stopped_at = datetime.now(timezone.utc).isoformat()
-            meta["stopped_at"] = stopped_at
-            try:
-                pending = path / "meta.json.tmp"
-                pending.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-                pending.replace(path / "meta.json")
-            except OSError:
-                pass
+                    started = datetime.fromisoformat(
+                        str(meta["started_at"]).replace("Z", "+00:00")
+                    )
+                    if started.tzinfo is None:
+                        started = started.replace(tzinfo=timezone.utc)
+                    stopped_at = (started + timedelta(seconds=max(0, duration))).isoformat()
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    try:
+                        stopped_at = datetime.fromtimestamp(
+                            (path / "meta.json").stat().st_mtime,
+                            timezone.utc,
+                        ).isoformat()
+                    except (OSError, ValueError, OverflowError):
+                        stopped_at = datetime.now(timezone.utc).isoformat()
+                meta["stopped_at"] = stopped_at
+                try:
+                    pending = path / "meta.json.tmp"
+                    pending.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+                    pending.replace(path / "meta.json")
+                except OSError:
+                    pass
         transcript = _read_json(path / "transcript.json")
         timestamp = _started_timestamp(meta, path)
         duration_seconds = meta.get("duration_seconds", 0)
@@ -739,7 +746,21 @@ def build(container, root, wheel=None) -> None:
             wav_path = path / "desktop.wav"
             if not isinstance(segments, list) or not wav_path.is_file():
                 return None
-            window = find_loudest_speaker_window(wav_path, segments, raw_speaker)
+            meta = _read_json(path / "meta.json")
+            offsets = [
+                float((meta.get(stream) or {}).get("first_block_monotonic"))
+                for stream in ("mic", "desktop")
+                if (meta.get(stream) or {}).get("first_block_monotonic") is not None
+            ]
+            desktop_offset = (meta.get("desktop") or {}).get("first_block_monotonic")
+            stream_shift = (
+                float(desktop_offset) - min(offsets)
+                if desktop_offset is not None and offsets
+                else 0.0
+            )
+            window = find_loudest_speaker_window(
+                wav_path, segments, raw_speaker, stream_shift=stream_shift
+            )
             if window is None:
                 return None
             return write_wav_window(wav_path, *window, directory=tempfile.gettempdir())
@@ -753,6 +774,11 @@ def build(container, root, wheel=None) -> None:
                         pass
                 return
             if sample is None or sys.platform != "win32":
+                if sample:
+                    try:
+                        Path(sample).unlink()
+                    except OSError:
+                        pass
                 sample_status.config(
                     text=("Audio samples unavailable on this platform." if sys.platform != "win32"
                           else "No audio sample found."),
@@ -1306,9 +1332,10 @@ def build(container, root, wheel=None) -> None:
 
     def set_busy(busy: bool) -> None:
         state["busy"] = busy
+        widget_state = "disabled" if busy else "normal"
         for button in (transcribe_btn, summarise_btn, delete_btn):
-            button.config(state="disabled")
-        summary_mode.config(state="disabled")
+            button.config(state=widget_state)
+        summary_mode.config(state=widget_state)
 
     def move_session(step: int) -> str:
         if not state["sessions"] or state["busy"]:
@@ -1424,6 +1451,7 @@ def build(container, root, wheel=None) -> None:
                     cfg.cleanup_provider,
                     cfg.cleanup_model,
                     session_dir=path,
+                    speaker_map=load_speaker_map(path),
                 )
             except Exception as exc:
                 back_on_ui(failed, str(exc))

@@ -719,33 +719,54 @@ def test_loudest_speaker_window_uses_highest_rms_region():
         assert result == (2.0, 2.0)
 
 
+def test_loudest_speaker_window_converts_merged_time_to_desktop_time():
+    """Merged transcript t includes the desktop stream's 1.4s start shift."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "desktop.wav"
+        frames = np.zeros(96_000, dtype=np.int16)
+        frames[64_000:96_000] = 20_000
+        with wave.open(str(path), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16_000)
+            audio.writeframes(frames.tobytes())
+        result = meeting.find_loudest_speaker_window(
+            path,
+            [{"speaker": "Them", "t": 5.4}],
+            "Them",
+            stream_shift=1.4,
+        )
+        assert result == (4.0, 2.0)
+
+
+def test_mic_only_live_session_refreshes_heartbeat_and_stays_live():
+    from wisprlite import meetings_tab
+
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp) / "meeting-mic-only"
+        session.mkdir()
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder.session_dir = session
+        recorder._started_at = "2026-07-27T12:00:00+00:00"
+        recorder._active = True
+        recorder._waves["mic"] = recorder._open_wave(session / "mic.wav")
+        recorder._last_header_patches["mic"] = 0.0
+        recorder._write_meta(stopped_at=None, duration=20.0)
+        stale = time.time() - 120.0
+        os.utime(session / "meta.json", (stale, stale))
+
+        with patch.object(meeting.time, "monotonic", return_value=6.0):
+            recorder._write_block("mic", np.full((1_600, 1), 0.25, dtype=np.float32))
+
+        listed = meetings_tab.list_sessions(pathlib.Path(tmp))
+        assert listed[0]["status"] == "recording"
+        assert json.loads((session / "meta.json").read_text())["stopped_at"] is None
+        recorder._close_waves()
+
+
 if __name__ == "__main__":
-    test_session_directory_naming()
-    test_meta_round_trip_and_elapsed()
-    test_mid_recording_checkpoint_patches_wave_header()
-    test_recoverable_overflow_is_not_persisted_as_session_error()
-    test_retention_uses_recording_time_not_directory_mtime()
-    test_retention_prunes_all_but_newest_sessions()
-    test_retention_reserves_room_for_the_next_session()
-    test_retention_continues_after_one_session_cannot_be_removed()
-    test_default_meetings_dir_is_outside_roaming_profile()
-    test_elapsed_uses_monotonic_time()
-    test_one_stream_failure_keeps_the_other()
-    test_missing_dependency_raises_from_start()
-    test_post_thread_start_failure_rolls_back_capture()
-    test_numeric_config_values_are_coerced()
-    test_configured_device_is_passed_to_input_stream()
-    test_inactive_mic_stream_records_an_error()
-    test_mic_callback_status_records_an_error()
-    test_fatal_error_upgrades_an_earlier_recoverable_error()
-    test_paused_meeting_can_stop_but_not_start()
-    test_config_watcher_surfaces_a_late_meeting_error()
-    test_recoverable_meeting_error_does_not_latch_degraded_state()
-    test_agent_hands_free_is_busy_during_meeting()
-    test_agent_push_to_talk_is_busy_during_meeting()
-    test_degraded_meeting_icon_persists()
-    test_live_thread_blocks_a_second_session()
-    test_session_limit_stops_and_records_reason()
-    test_speaker_map_round_trip_and_clearing_preserves_transcript_bytes()
-    test_loudest_speaker_window_uses_highest_rms_region()
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_"):
+            fn()
+            print(f"  ok  {name}")
     print("OK")

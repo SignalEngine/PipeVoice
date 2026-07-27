@@ -183,7 +183,7 @@ class App:
                 get_mode=lambda: "ptt",             # fire on every press (toggle would skip every 2nd press)
                 on_start=self._open_picker,
                 on_stop=lambda: None,
-                is_paused=lambda: self.paused,
+                is_paused=lambda: self.paused or self._meeting_active,
             )
 
     def _start_voice_hotkeys(self) -> None:

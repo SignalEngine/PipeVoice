@@ -206,6 +206,7 @@ def find_loudest_speaker_window(
     speaker: str,
     *,
     window_seconds: float = 2.0,
+    stream_shift: float = 0.0,
 ) -> tuple[float, float] | None:
     """Find the highest-RMS two-second window among one speaker's segments.
 
@@ -219,7 +220,11 @@ def find_loudest_speaker_window(
         if not isinstance(segment, dict) or str(segment.get("speaker") or "") != speaker:
             continue
         try:
-            start = max(0.0, float(segment.get("t", segment.get("start", 0)) or 0))
+            start = max(
+                0.0,
+                float(segment.get("t", segment.get("start", 0)) or 0)
+                - float(stream_shift),
+            )
         except (TypeError, ValueError, OverflowError):
             continue
         candidates.append(start)
@@ -432,6 +437,8 @@ class MeetingRecorder:
         self._state_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
         self._meta_lock = threading.Lock()
+        self._heartbeat_lock = threading.Lock()
+        self._last_meta_heartbeat = float("-inf")
 
     @property
     def active(self) -> bool:
@@ -489,6 +496,7 @@ class MeetingRecorder:
                 "mic": float("-inf"),
                 "desktop": float("-inf"),
             }
+            self._last_meta_heartbeat = time.monotonic()
             self._errors = {"mic": None, "desktop": None}
             self._fatal_errors = {"mic": None, "desktop": None}
             self._levels = {"mic": 0.0, "desktop": 0.0}
@@ -774,10 +782,14 @@ class MeetingRecorder:
                     checkpointed = True
         except Exception as exc:
             self._record_error(label, exc)
-        # The desktop capture runs on its own worker; keep JSON I/O out of the
-        # PortAudio realtime callback while still refreshing crash metadata.
-        if checkpointed and label == "desktop" and not self._stop.is_set():
-            self._write_meta(stopped_at=None, duration=self.elapsed)
+        # Either stream can be the one still alive after the other fails. Keep
+        # JSON I/O out of the realtime callback and share one heartbeat budget
+        # so two healthy streams do not double the metadata writes.
+        if checkpointed and not self._stop.is_set():
+            with self._heartbeat_lock:
+                if arrived_at - self._last_meta_heartbeat >= HEADER_PATCH_INTERVAL:
+                    self._last_meta_heartbeat = arrived_at
+                    self._write_meta(stopped_at=None, duration=self.elapsed)
 
     def _record_error(
         self,
