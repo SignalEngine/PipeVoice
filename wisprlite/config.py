@@ -108,6 +108,15 @@ class Config:
     hands_free_silence_ms: int = 800  # trailing silence that ends a hands-free capture
     transcribe_model_size: str = ""   # blank = reuse local_model_size
 
+    @property
+    def meetings_keep(self) -> int:
+        """Compatibility name used by the Meetings settings UI."""
+        return self.meeting_retention_sessions
+
+    @meetings_keep.setter
+    def meetings_keep(self, value: int) -> None:
+        self.meeting_retention_sessions = int(value)
+
     @classmethod
     def load(cls) -> "Config":
         cfg = cls()
