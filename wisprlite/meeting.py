@@ -493,10 +493,22 @@ class MeetingRecorder:
                 for path in self.base_dir.glob("meeting-*")
                 if path.is_dir()
             ]
-            sessions.sort(
-                key=lambda path: (path.stat().st_mtime_ns, path.name),
-                reverse=True,
-            )
+            def recording_time(path: Path) -> tuple[float, str]:
+                try:
+                    meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+                    started_at = meta.get("started_at") if isinstance(meta, dict) else None
+                    if started_at:
+                        return (
+                            datetime.fromisoformat(
+                                str(started_at).replace("Z", "+00:00")
+                            ).timestamp(),
+                            path.name,
+                        )
+                except (OSError, ValueError, TypeError, OverflowError):
+                    pass
+                return (path.stat().st_mtime, path.name)
+
+            sessions.sort(key=recording_time, reverse=True)
             keep = max(0, self.retention_sessions - reserve)
             for path in sessions[keep:]:
                 try:
@@ -669,17 +681,18 @@ class MeetingRecorder:
             "stopped_at": stopped_at,
             "duration_seconds": duration,
             "stop_reason": self._stop_reason,
+            "recording_pid": os.getpid(),
             "sample_rate": SAMPLE_RATE,
             "channels": CHANNELS,
             "mic": {
                 "file": "mic.wav",
                 "first_block_monotonic": self._first_blocks["mic"],
-                "error": self._errors["mic"],
+                "error": self._fatal_errors["mic"],
             },
             "desktop": {
                 "file": "desktop.wav",
                 "first_block_monotonic": self._first_blocks["desktop"],
-                "error": self._errors["desktop"],
+                "error": self._fatal_errors["desktop"],
             },
         }
         try:

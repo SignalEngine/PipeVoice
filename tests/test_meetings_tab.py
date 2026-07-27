@@ -1,6 +1,7 @@
 """Headless tests for the pure Meetings-tab helpers."""
 
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -124,12 +125,42 @@ def test_live_session_is_recording_and_not_transcribable():
             stopped_at=None,
             duration=30,
         )
+        meta_path = live / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["recording_pid"] = os.getpid()
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
         (live / "desktop.wav").write_bytes(b"R" * 45)
 
         [session] = meetings_tab.list_sessions(base)
 
         assert session["status"] == "recording"
         assert session["can_transcribe"] is False
+
+
+def test_orphaned_session_is_recovered_and_transcribable():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        orphan = _session(
+            base,
+            "meeting-orphan",
+            started_at="2026-07-27T12:00:00+00:00",
+            stopped_at=None,
+            duration=42,
+        )
+        meta_path = orphan / "meta.json"
+        (orphan / "desktop.wav").write_bytes(b"R" * 45)
+        # Simulate the crash the way a crash actually presents: the process died,
+        # so meta.json stopped being checkpointed and its mtime went stale.
+        # (This previously faked a dead pid, but liveness must NOT be probed with
+        # os.kill — on Windows that terminates the target rather than testing it.)
+        stale = time.time() - 120
+        os.utime(meta_path, (stale, stale))
+
+        [session] = meetings_tab.list_sessions(base)
+
+        assert session["status"] == "recorded"
+        assert session["can_transcribe"] is True
+        assert json.loads(meta_path.read_text(encoding="utf-8"))["stopped_at"]
 
 
 def test_duration_formatting():
@@ -164,12 +195,63 @@ def test_meetings_signature_tracks_dirs_and_meta_mtime_only():
         assert meetings_tab.meetings_signature(base) != second
 
 
+def test_live_checkpoint_metadata_does_not_churn_signature():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        session = _session(
+            base,
+            "meeting-live",
+            started_at="2026-07-27T12:00:00+00:00",
+            stopped_at=None,
+        )
+        first = meetings_tab.meetings_signature(base)
+        meta_path = session / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["duration_seconds"] = 17
+        meta["recording_pid"] = os.getpid()
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        assert meetings_tab.meetings_signature(base) == first
+
+
 def test_search_match_index_cycles_both_directions():
     assert meetings_tab.cycle_match_index(-1, 0, 1) == -1
     assert meetings_tab.cycle_match_index(-1, 3, 1) == 0
     assert meetings_tab.cycle_match_index(2, 3, 1) == 0
     assert meetings_tab.cycle_match_index(0, 3, -1) == 2
     assert meetings_tab.cycle_match_index(-1, 3, -1) == 2
+
+
+def test_a_crashed_session_is_recoverable_not_orphaned_forever():
+    """A crash leaves stopped_at unset. Treating that alone as "live" orphaned the
+    session forever: not transcribable, not deletable, duration ticking up. The WAV
+    headers are patched at checkpoints precisely so a crashed capture survives."""
+    import json, os, tempfile, time
+    from wisprlite.meetings_tab import derive_status
+
+    with tempfile.TemporaryDirectory() as d:
+        s = os.path.join(d, "meeting-20260727-2100")
+        os.makedirs(s)
+        meta_path = os.path.join(s, "meta.json")
+        json.dump({"started_at": "2026-07-27T21:00:00+00:00", "stopped_at": None,
+                   "duration_seconds": 60}, open(meta_path, "w"))
+        assert derive_status(s) == "recording", "a fresh heartbeat is genuinely live"
+        stale = time.time() - 120
+        os.utime(meta_path, (stale, stale))
+        assert derive_status(s) == "recorded", "a stale heartbeat is an orphan, not live"
+
+
+def test_liveness_never_signals_a_pid():
+    """os.kill(pid, 0) is the POSIX liveness idiom and is CATASTROPHIC here: on
+    Windows, the only platform this app ships on, any signal other than
+    CTRL_C_EVENT/CTRL_BREAK_EVENT unconditionally terminates the target via
+    TerminateProcess. Probing the recorder would have killed it mid-meeting, just
+    by opening the Meetings tab."""
+    import inspect
+    from wisprlite import meetings_tab
+
+    source = inspect.getsource(meetings_tab.derive_status)
+    code = "\n".join(line.split("#")[0] for line in source.splitlines())
+    assert "os.kill" not in code, "derive_status must not signal a pid to test liveness"
 
 
 if __name__ == "__main__":

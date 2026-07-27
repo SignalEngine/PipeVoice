@@ -13,7 +13,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import config
@@ -35,6 +35,9 @@ ROW_HOVER = PALETTE["row_hover"]
 SEARCH_MATCH = PALETTE["search_match"]
 SEARCH_CURRENT = PALETTE["search_current"]
 SPEAKER_COLOURS = tuple(PALETTE[f"speaker_{number}"] for number in range(1, 5))
+# 3x the recorder's 5s meta checkpoint — a session whose meta.json is staler than
+# this had its owning process die, so it is an orphan, not a live recording.
+LIVE_HEARTBEAT_SECONDS = 15.0
 ON_ACCENT = PALETTE["bg"]
 SCROLL = PALETTE["border"]
 SCROLL_HI = PALETTE["muted"]
@@ -59,7 +62,25 @@ def derive_status(session_dir: str | Path, meta: dict | None = None) -> str:
     if not meta:
         return "error"
     if not meta.get("stopped_at"):
-        return "recording"
+        # A process crash leaves the checkpoint metadata with no stopped_at, so
+        # "no stopped_at" alone cannot mean "live" — that orphans a crashed
+        # session forever (it can be neither transcribed nor deleted).
+        #
+        # Liveness is decided by a HEARTBEAT, not by probing a pid. The recorder
+        # rewrites meta.json every HEADER_PATCH_INTERVAL seconds, so a stale file
+        # means the owning process is gone.
+        #
+        # Do NOT use os.kill(pid, 0) here. That is the POSIX idiom, but on Windows
+        # — the only platform this app ships on — any signal other than
+        # CTRL_C_EVENT/CTRL_BREAK_EVENT UNCONDITIONALLY terminates the target via
+        # TerminateProcess. Probing "is the recorder alive?" would have killed the
+        # recorder, mid-meeting, just by opening this tab. It is also pid-reuse
+        # prone. The heartbeat needs no pid and behaves identically everywhere.
+        try:
+            age = time.time() - (path / "meta.json").stat().st_mtime
+        except OSError:
+            return "recorded"
+        return "recording" if age < LIVE_HEARTBEAT_SECONDS else "recorded"
     if (path / "transcript.json").is_file():
         return "transcribed"
     raw_status = str(meta.get("status") or "").lower()
@@ -99,7 +120,7 @@ def cycle_match_index(current: int, count: int, step: int) -> int:
 
 
 def meetings_signature(base_dir: str | Path | None = None) -> tuple:
-    """Cheaply describe meeting dirs and their metadata revision."""
+    """Describe changes relevant to the meeting list, ignoring live checkpoints."""
     base = Path(base_dir) if base_dir is not None else meetings_dir()
     try:
         paths = [path for path in base.glob("meeting-*") if path.is_dir()]
@@ -108,7 +129,19 @@ def meetings_signature(base_dir: str | Path | None = None) -> tuple:
     signature = []
     for path in paths:
         try:
-            mtime = (path / "meta.json").stat().st_mtime_ns
+            meta = _read_json(path / "meta.json")
+            transcript = path / "transcript.json"
+            transcript_mtime = transcript.stat().st_mtime_ns if transcript.is_file() else None
+            mtime = (
+                meta.get("stopped_at"),
+                meta.get("status"),
+                meta.get("transcription_error"),
+                tuple(
+                    (meta.get(stream) or {}).get("error")
+                    for stream in ("mic", "desktop")
+                ),
+                transcript_mtime,
+            )
         except OSError:
             mtime = None
         signature.append((path.name, mtime))
@@ -183,6 +216,33 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
     sessions = []
     for path in paths:
         meta = _read_json(path / "meta.json")
+        status = derive_status(path, meta)
+        if status == "recorded" and not meta.get("stopped_at"):
+            # Make the recovery durable so later code can use the same stop
+            # gate as a normally stopped session.
+            duration = float(meta.get("duration_seconds") or 0)
+            try:
+                started = datetime.fromisoformat(
+                    str(meta["started_at"]).replace("Z", "+00:00")
+                )
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                stopped_at = (started + timedelta(seconds=max(0, duration))).isoformat()
+            except (KeyError, TypeError, ValueError, OverflowError):
+                try:
+                    stopped_at = datetime.fromtimestamp(
+                        (path / "meta.json").stat().st_mtime,
+                        timezone.utc,
+                    ).isoformat()
+                except (OSError, ValueError, OverflowError):
+                    stopped_at = datetime.now(timezone.utc).isoformat()
+            meta["stopped_at"] = stopped_at
+            try:
+                pending = path / "meta.json.tmp"
+                pending.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+                pending.replace(path / "meta.json")
+            except OSError:
+                pass
         transcript = _read_json(path / "transcript.json")
         timestamp = _started_timestamp(meta, path)
         duration_seconds = meta.get("duration_seconds", 0)
@@ -196,8 +256,8 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
                 "display_started": _display_started(meta, timestamp, path),
                 "duration_seconds": duration_seconds,
                 "duration": format_duration(duration_seconds),
-                "status": derive_status(path, meta),
-                "can_transcribe": bool(meta.get("stopped_at"))
+                "status": status,
+                "can_transcribe": status != "recording"
                 and _has_audio(path)
                 and not (path / "transcript.json").is_file(),
                 "speaker_count": len(speaker_names) or None,
@@ -699,7 +759,9 @@ def build(container, root, wheel=None) -> None:
         for widget in row_info["widgets"]:
             widget.config(bg=colour)
 
-    def select_session(index: int, *, reveal: bool = False) -> None:
+    def select_session(
+        index: int, *, reveal: bool = False, preserve_search: bool = False
+    ) -> None:
         if state["busy"] or not 0 <= index < len(state["sessions"]):
             return
         session = state["sessions"][index]
@@ -762,7 +824,8 @@ def build(container, root, wheel=None) -> None:
                 if mode in state["summaries"]:
                     summary_mode_var.set(label)
                     break
-        search_var.set("")
+        if not preserve_search:
+            search_var.set("")
         can_transcribe = session["can_transcribe"] and not state["busy"]
         transcribe_btn.config(state="normal" if can_transcribe else "disabled")
         copy_btn.config(state="normal" if body_text else "disabled")
@@ -889,6 +952,9 @@ def build(container, root, wheel=None) -> None:
         *,
         preserve_scroll: float | None = None,
     ) -> None:
+        search_query = search_var.get()
+        search_match_index = state["match_index"]
+        transcript_scroll = transcript.yview()
         if state["rows"]:
             if preferred is None:
                 preferred = selected_path()
@@ -944,7 +1010,16 @@ def build(container, root, wheel=None) -> None:
             ),
             0,
         )
-        select_session(target_index, reveal=True)
+        select_session(target_index, reveal=True, preserve_search=True)
+        search_var.set(search_query)
+        update_search()
+        if state["matches"]:
+            state["match_index"] = min(
+                max(search_match_index, 0), len(state["matches"]) - 1
+            )
+            apply_current_match()
+        if transcript_scroll:
+            transcript.yview_moveto(transcript_scroll[0])
         if preserve_scroll is not None:
             session_canvas.update_idletasks()
             session_canvas.yview_moveto(preserve_scroll)

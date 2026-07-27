@@ -211,6 +211,49 @@ def test_late_checkpoint_does_not_overwrite_final_meta():
         assert meta["duration_seconds"] == 1800.0
 
 
+def test_recoverable_overflow_is_not_persisted_as_session_error():
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp) / "meeting-overflow"
+        session.mkdir()
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder.session_dir = session
+        recorder._started_at = "2026-07-27T12:00:00+00:00"
+        recorder._on_mic_block(np.zeros((1, 1), dtype=np.float32), 1, None, "input overflow")
+        recorder._write_meta(stopped_at="2026-07-27T12:00:01+00:00", duration=1.0)
+
+        meta = json.loads((session / "meta.json").read_text(encoding="utf-8"))
+        assert recorder.errors["mic"] == "RuntimeError: input overflow"
+        assert recorder.fatal_errors["mic"] is None
+        assert meta["mic"]["error"] is None
+
+
+def test_retention_uses_recording_time_not_directory_mtime():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        sessions = []
+        for index, started_at in enumerate((
+            "2026-07-20T12:00:00+00:00",
+            "2026-07-21T12:00:00+00:00",
+            "2026-07-22T12:00:00+00:00",
+        )):
+            path = base / f"meeting-{index}"
+            path.mkdir()
+            (path / "meta.json").write_text(
+                json.dumps({"started_at": started_at}), encoding="utf-8"
+            )
+            sessions.append(path)
+        # Simulate transcribing the oldest: its directory is now newest.
+        os.utime(sessions[0], (100, 100))
+        os.utime(sessions[2], (1, 1))
+
+        recorder = MeetingRecorder(base, retention_sessions=2)
+        recorder._prune_sessions()
+
+        assert sessions[0].exists() is False
+        assert sessions[1].exists()
+        assert sessions[2].exists()
+
+
 def test_retention_prunes_all_but_newest_sessions():
     with tempfile.TemporaryDirectory() as tmp:
         base = pathlib.Path(tmp)
@@ -646,6 +689,8 @@ if __name__ == "__main__":
     test_session_directory_naming()
     test_meta_round_trip_and_elapsed()
     test_mid_recording_checkpoint_patches_wave_header()
+    test_recoverable_overflow_is_not_persisted_as_session_error()
+    test_retention_uses_recording_time_not_directory_mtime()
     test_retention_prunes_all_but_newest_sessions()
     test_retention_reserves_room_for_the_next_session()
     test_retention_continues_after_one_session_cannot_be_removed()
