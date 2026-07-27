@@ -29,7 +29,11 @@ class App:
     def __init__(self) -> None:
         self.cfg = config.Config.load()
         self.paused = False
-        self._meeting = MeetingRecorder()
+        self._meeting = MeetingRecorder(
+            device=config.device_arg(self.cfg),
+            max_minutes=self.cfg.meeting_max_minutes,
+            on_auto_stop=self._on_meeting_auto_stop,
+        )
         self._meeting_active = False
 
         self.recorder = Recorder(device=config.device_arg(self.cfg))
@@ -432,13 +436,38 @@ class App:
 
         self._meeting_active = True
         try:
-            self._meeting.start()
+            session_dir = self._meeting.start()
         except Exception as exc:
             self._meeting_active = False
             self._fail(f"meeting: {exc}")
             self.tray.update()
             return
         self._set_icon("meeting")
+        self.tray.update()
+        timer = threading.Timer(
+            1.0,
+            lambda: self._check_meeting_errors(session_dir),
+        )
+        timer.daemon = True
+        timer.start()
+
+    def _check_meeting_errors(self, session_dir) -> None:
+        if not self._meeting_active or self._meeting.session_dir != session_dir:
+            return
+        errors = self._meeting.errors
+        failures = [
+            f"{label}: {error}"
+            for label, error in errors.items()
+            if error is not None
+        ]
+        if failures:
+            self._fail("meeting capture: " + "; ".join(failures))
+
+    def _on_meeting_auto_stop(self, reason: str) -> None:
+        if not self._meeting_active:
+            return
+        self._meeting_active = False
+        self._fail(f"meeting stopped: {reason}")
         self.tray.update()
 
     # ---- agent MCP -------------------------------------------------------
@@ -764,6 +793,8 @@ class App:
 
         old, new = self.cfg, config.Config.load()
         self.cfg = new  # hotkey/mode/output read live via lambdas
+        self._meeting.device = config.device_arg(new)
+        self._meeting.max_minutes = new.meeting_max_minutes
 
         engine_keys = ("engine", "gemini_model", "groq_model", "openai_model",
                        "deepgram_model", "local_model_size", "local_device",
@@ -807,7 +838,9 @@ class App:
         self._beep(220, 200)
         self.overlay.set_state("error", msg[:80])
         self.tray.set_state("error")
-        threading.Timer(1.6, lambda: self.tray.set_state("idle")).start()
+        timer = threading.Timer(1.6, lambda: self._set_icon("idle"))
+        timer.daemon = True
+        timer.start()
 
     def _beep(self, freq: int, ms: int) -> None:
         if self.cfg.sounds and winsound is not None:

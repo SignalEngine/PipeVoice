@@ -3,6 +3,7 @@ import pathlib
 import re
 import sys
 import tempfile
+import threading
 import time
 import types
 import wave
@@ -25,7 +26,11 @@ class FixedDateTime(RealDateTime):
 
 
 class FakeInputStream:
+    last_kwargs = None
+    close_count = 0
+
     def __init__(self, **kwargs):
+        type(self).last_kwargs = kwargs
         self.callback = kwargs["callback"]
 
     def start(self):
@@ -35,7 +40,7 @@ class FakeInputStream:
         pass
 
     def close(self):
-        pass
+        type(self).close_count += 1
 
 
 class FailingInputStream:
@@ -152,9 +157,100 @@ def test_one_stream_failure_keeps_the_other():
             assert audio.getnframes() > 0
 
 
+def test_missing_dependency_raises_from_start():
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        modules = fake_audio_modules()
+        modules["soundcard"] = None
+        with patch.dict(sys.modules, modules):
+            try:
+                recorder.start()
+            except ModuleNotFoundError:
+                pass
+            else:
+                raise AssertionError("start() hid a missing soundcard dependency")
+        assert recorder.active is False
+
+
+def test_configured_device_is_passed_to_input_stream():
+    with tempfile.TemporaryDirectory() as tmp:
+        FakeInputStream.last_kwargs = None
+        FakeInputStream.close_count = 0
+        recorder = MeetingRecorder(pathlib.Path(tmp), device=7)
+        with patch.dict(sys.modules, fake_audio_modules()):
+            recorder.start()
+            wait_for(lambda: FakeInputStream.last_kwargs is not None)
+            recorder.stop()
+        assert FakeInputStream.last_kwargs["device"] == 7
+        assert FakeInputStream.close_count == 1
+
+
+def test_live_thread_blocks_a_second_session():
+    entered = threading.Event()
+    release = threading.Event()
+
+    class StalledDesktopRecorder(FakeDesktopRecorder):
+        def record(self, numframes):
+            entered.set()
+            release.wait()
+            return np.full((numframes, 1), 0.125, dtype=np.float32)
+
+    class StalledLoopback(FakeLoopback):
+        def recorder(self, **_kwargs):
+            return StalledDesktopRecorder()
+
+    modules = fake_audio_modules()
+    modules["soundcard"].all_microphones = (
+        lambda include_loopback=False: [StalledLoopback()]
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        with patch.dict(sys.modules, modules), patch.object(
+            meeting, "CAPTURE_JOIN_TIMEOUT", 0.01
+        ):
+            first_session = recorder.start()
+            wait_for(entered.is_set)
+            recorder.stop()
+            try:
+                recorder.start()
+            except RuntimeError as exc:
+                assert "still stopping" in str(exc)
+            else:
+                raise AssertionError("second session started with a live capture thread")
+
+            release.set()
+            wait_for(lambda: not any(thread.is_alive() for thread in recorder._threads))
+            second_session = recorder.start()
+            assert second_session != first_session
+            recorder.stop()
+
+
+def test_session_limit_stops_and_records_reason():
+    reasons = []
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(
+            pathlib.Path(tmp),
+            max_minutes=0.0005,
+            on_auto_stop=reasons.append,
+        )
+        with patch.dict(sys.modules, fake_audio_modules()):
+            session = recorder.start()
+            wait_for(lambda: not recorder.active)
+            wait_for(lambda: bool(reasons))
+
+        meta = json.loads((session / "meta.json").read_text(encoding="utf-8"))
+        assert "maximum session length reached" in meta["stop_reason"]
+        assert reasons == [meta["stop_reason"]]
+
+
 if __name__ == "__main__":
     test_session_directory_naming()
     test_meta_round_trip_and_elapsed()
     test_elapsed_uses_monotonic_time()
     test_one_stream_failure_keeps_the_other()
+    test_missing_dependency_raises_from_start()
+    test_configured_device_is_passed_to_input_stream()
+    test_live_thread_blocks_a_second_session()
+    test_session_limit_stops_and_records_reason()
     print("OK")
