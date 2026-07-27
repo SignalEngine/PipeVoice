@@ -14,6 +14,7 @@ The work runs on a daemon thread; results are marshalled back to Tk with
 
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 
@@ -46,6 +47,30 @@ def _local_model(cfg) -> str:
             getattr(cfg, "local_model_size", "") or "base.en")
 
 
+@contextlib.contextmanager
+def _missing_dep(modules: tuple, pip_name: str):
+    """Turn a missing optional engine dep into an actionable message.
+
+    Both engines import lazily, so running from a venv that predates a
+    requirements.txt change surfaces a bare "No module named 'deepgram'" in the
+    status line, which tells the user nothing. The packaged .exe bundles both
+    (CI --collect-all), so this only bites when running from source.
+
+    `modules` is every top-level module the package brings in, not just its
+    namesake: transcribe_file_deepgram imports httpx BEFORE deepgram, so a box
+    without the SDK reports "No module named 'httpx'" and a namesake-only check
+    would let it through unchanged.
+    """
+    try:
+        yield
+    except ModuleNotFoundError as exc:
+        if exc.name and exc.name.split(".")[0] in modules:
+            raise RuntimeError(
+                f"{pip_name} isn't installed in this environment. "
+                f"Run:  pip install -r requirements.txt") from exc
+        raise
+
+
 def _run(path: str, backend: str, cfg) -> dict:
     """Transcribe `path`. Raises on failure; the caller reports it.
 
@@ -63,18 +88,20 @@ def _run(path: str, backend: str, cfg) -> dict:
             raise RuntimeError(
                 "No Deepgram API key. Add DEEPGRAM_API_KEY to your .env "
                 "(or set it in Settings), then reopen this window.")
-        return T.transcribe_file_deepgram(
-            path, api_key=key,
-            model=(getattr(cfg, "deepgram_model", "") or "nova-3"),
-            language=(lang or "en-US"))
-    return T.transcribe_file(
-        path, model_size=_local_model(cfg),
-        language=(lang.split("-")[0] or None),
-        # honour the same device/precision dials dictation uses — a user who
-        # pinned local_device="cpu" to dodge a broken CUDA install must not get
-        # device="auto" here and fail on missing CUDA libs.
-        device=(getattr(cfg, "local_device", "") or "auto"),
-        compute_type=(getattr(cfg, "local_compute_type", "") or "int8"))
+        with _missing_dep(("deepgram", "httpx"), "deepgram-sdk"):
+            return T.transcribe_file_deepgram(
+                path, api_key=key,
+                model=(getattr(cfg, "deepgram_model", "") or "nova-3"),
+                language=(lang or "en-US"))
+    with _missing_dep(("faster_whisper", "ctranslate2", "av"), "faster-whisper"):
+        return T.transcribe_file(
+            path, model_size=_local_model(cfg),
+            language=(lang.split("-")[0] or None),
+            # honour the same device/precision dials dictation uses — a user who
+            # pinned local_device="cpu" to dodge a broken CUDA install must not get
+            # device="auto" here and fail on missing CUDA libs.
+            device=(getattr(cfg, "local_device", "") or "auto"),
+            compute_type=(getattr(cfg, "local_compute_type", "") or "int8"))
 
 
 def _pretty_duration(seconds: float) -> str:
