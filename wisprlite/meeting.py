@@ -42,6 +42,179 @@ def meetings_dir() -> Path:
     return Path(base) / APP_NAME / "meetings"
 
 
+def merge_transcripts(
+    mic_segments: list[dict],
+    desktop_segments: list[dict],
+    *,
+    mic_offset: float | None,
+    desktop_offset: float | None,
+) -> list[dict]:
+    """Merge mic and desktop segments on their first-frame timeline."""
+    streams = []
+    if mic_segments:
+        streams.append(("mic", mic_segments, mic_offset))
+    if desktop_segments:
+        streams.append(("desktop", desktop_segments, desktop_offset))
+    if not streams:
+        return []
+
+    known_offsets = [float(offset) for _, _, offset in streams if offset is not None]
+    timeline_start = min(known_offsets) if known_offsets else 0.0
+
+    desktop_speakers = []
+    for segment in desktop_segments:
+        speaker = segment.get("speaker")
+        if speaker is not None and speaker not in desktop_speakers:
+            desktop_speakers.append(speaker)
+    speaker_numbers = {
+        speaker: index + 1 for index, speaker in enumerate(desktop_speakers)
+    }
+    multiple_remote_speakers = len(desktop_speakers) > 1
+
+    merged = []
+    for stream, segments, offset in streams:
+        shift = float(offset) - timeline_start if offset is not None else 0.0
+        for segment in segments:
+            text = str(segment.get("text") or "").strip()
+            if not text:
+                continue
+            if stream == "mic":
+                speaker = "You"
+            elif multiple_remote_speakers:
+                speaker_id = segment.get("speaker")
+                number = speaker_numbers.get(speaker_id)
+                speaker = f"Them {number}" if number is not None else "Them"
+            else:
+                speaker = "Them"
+            merged.append(
+                {
+                    "t": round(float(segment.get("start") or 0.0) + shift, 3),
+                    "speaker": speaker,
+                    "text": text,
+                }
+            )
+
+    merged.sort(key=lambda segment: segment["t"])
+    return merged
+
+
+def render_transcript(segments: list[dict]) -> str:
+    """Render consecutive same-speaker segments as plain-text blocks."""
+    blocks: list[dict[str, str]] = []
+    for segment in segments:
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        speaker = str(segment.get("speaker") or "").strip()
+        if blocks and blocks[-1]["speaker"] == speaker:
+            blocks[-1]["text"] += " " + text
+        else:
+            blocks.append({"speaker": speaker, "text": text})
+    return "\n\n".join(
+        f"{block['speaker']}: {block['text']}" for block in blocks
+    )
+
+
+def _wav_has_frames(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        with wave.open(str(path), "rb") as audio:
+            return audio.getnframes() > 0
+    except (OSError, EOFError, wave.Error):
+        return False
+
+
+def _write_json(path: Path, value: dict) -> None:
+    pending = path.with_suffix(path.suffix + ".tmp")
+    pending.write_text(json.dumps(value, indent=2), encoding="utf-8")
+    pending.replace(path)
+
+
+def transcribe_session(
+    session_dir: str | Path,
+    cfg,
+    backend: str = "auto",
+) -> dict:
+    """Transcribe and merge one captured session.
+
+    This function is synchronous and has no UI dependencies, so callers can
+    invoke it directly from their worker thread.
+    """
+    from . import config
+    from .engines.transcribe import transcribe_file, transcribe_file_deepgram
+
+    session_dir = Path(session_dir)
+    meta_path = session_dir / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+    api_key = config.deepgram_key()
+    selected_backend = "deepgram" if backend == "auto" and api_key else backend
+    if selected_backend == "auto":
+        selected_backend = "local"
+    if selected_backend not in {"deepgram", "local"}:
+        raise ValueError(f"unsupported meeting transcription backend: {backend}")
+    if selected_backend == "deepgram" and not api_key:
+        raise ValueError("Deepgram transcription requires DEEPGRAM_API_KEY")
+
+    meta["status"] = "transcribing"
+    meta["transcription_backend"] = selected_backend
+    meta.pop("transcription_error", None)
+    _write_json(meta_path, meta)
+
+    results: dict[str, dict] = {}
+    try:
+        for stream in ("desktop", "mic"):
+            stream_meta = meta.get(stream) or {}
+            path = session_dir / stream_meta.get("file", f"{stream}.wav")
+            if stream_meta.get("error") or not _wav_has_frames(path):
+                continue
+            if selected_backend == "deepgram":
+                results[stream] = transcribe_file_deepgram(
+                    str(path),
+                    api_key=api_key,
+                    model=cfg.deepgram_model,
+                    diarize=stream == "desktop",
+                    language=cfg.language or None,
+                )
+            else:
+                results[stream] = transcribe_file(
+                    str(path),
+                    language=cfg.language or None,
+                    model_size=cfg.local_model_size,
+                    device=cfg.local_device,
+                    compute_type=cfg.local_compute_type,
+                )
+
+        if not results:
+            raise ValueError("meeting session has no usable audio streams")
+
+        mic_meta = meta.get("mic") or {}
+        desktop_meta = meta.get("desktop") or {}
+        segments = merge_transcripts(
+            (results.get("mic") or {}).get("segments") or [],
+            (results.get("desktop") or {}).get("segments") or [],
+            mic_offset=mic_meta.get("first_block_monotonic"),
+            desktop_offset=desktop_meta.get("first_block_monotonic"),
+        )
+        transcript = {
+            "backend": selected_backend,
+            "text": render_transcript(segments),
+            "segments": segments,
+        }
+        _write_json(session_dir / "transcript.json", transcript)
+    except Exception as exc:
+        meta["status"] = "transcription_failed"
+        meta["transcription_error"] = f"{type(exc).__name__}: {exc}"
+        _write_json(meta_path, meta)
+        raise
+
+    meta["status"] = "transcribed"
+    meta["transcript_file"] = "transcript.json"
+    _write_json(meta_path, meta)
+    return transcript
+
+
 class MeetingRecorder:
     def __init__(
         self,
