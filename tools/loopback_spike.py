@@ -52,8 +52,10 @@ def main():
     parser.add_argument("--outdir", type=Path,
                         help="output directory (default: timestamp under Music or cwd)")
     args = parser.parse_args()
-    if not math.isfinite(args.seconds) or args.seconds <= 0:
-        parser.error("--seconds must be a positive finite number")
+    # 0.05 not 0: a sub-frame duration yields an empty capture and made the old
+    # frames-vs-expected maths divide by zero.
+    if not math.isfinite(args.seconds) or args.seconds < 0.05:
+        parser.error("--seconds must be a finite number >= 0.05")
     try:
         import soundcard as sc
     except ModuleNotFoundError as exc:
@@ -120,7 +122,9 @@ def main():
     stop, start = threading.Event(), threading.Event()
     deadline, results = [0.0], {}
     def capture(label, device):
-        chunks, short_reads, started, error = [], 0, None, None
+        # no short-read counter: record() zero-pads and always returns numframes,
+        # so it would be a constant 0. Skew vs wall-clock is the real signal.
+        chunks, started, error = [], None, None
         try:
             with device.recorder(samplerate=RATE, channels=1) as recorder:
                 results[label] = {"ready": True}
@@ -133,7 +137,7 @@ def main():
                     requested = min(CHUNK, max(1, int(remaining * RATE)))
                     block = np.asarray(recorder.record(numframes=requested),
                                        dtype=np.float32).reshape(-1)
-                    short_reads += len(block) < requested
+
                     if len(block):
                         chunks.append(block)
         except Exception as exc:
@@ -143,7 +147,7 @@ def main():
         results[label] = {
             "data": np.concatenate(chunks) if chunks else np.empty(0, np.float32),
             "duration": ended - started if started is not None else 0.0,
-            "short_reads": short_reads, "error": error,
+            "error": error,
         }
     threads = [
         threading.Thread(target=capture, args=("mic", default_mic), daemon=True),
@@ -181,7 +185,14 @@ def main():
         for thread in threads:
             thread.join(timeout=2)
         print()
-    expected, write_errors = round(args.seconds * RATE), []
+    # Frames-vs-requested is a USELESS health metric here: soundcard's
+    # _Recorder.record(numframes) (mediafoundation.py:781-820) ZERO-PADS when the
+    # device supplies nothing and always returns exactly numframes. A starved or
+    # dropping stream therefore reports 0 short reads and ~0% drift, with the
+    # padding hiding as silence. The only honest signal is captured audio-seconds
+    # (frames / RATE) against real elapsed wall-clock: if the device under-supplies,
+    # the read loop races ahead of real time and skew goes negative.
+    write_errors = []
     for label in ("mic", "desktop"):
         result = results.get(label, {})
         data = result.get("data", np.empty(0, np.float32))
@@ -190,19 +201,30 @@ def main():
         except OSError as exc:
             write_errors.append(f"{label}.wav: {exc}")
         frames = len(data)
-        drift = (frames - expected) / expected * 100
+        wall = float(result.get("duration", 0.0) or 0.0)
+        audio_s = frames / RATE
+        skew = audio_s - wall
+        skew_pct = (skew / wall * 100) if wall > 0 else 0.0
+        result["skew"] = skew
         peak = float(np.max(np.abs(data))) if frames else 0.0
         rms = float(np.sqrt(np.mean(np.square(data, dtype=np.float64)))) if frames else 0.0
         result.update(data=data, peak=peak, rms=rms)
         results[label] = result
-        print(f"{label:7}: {frames} frames, {result.get('duration', 0):.2f}s wall, "
-              f"expected {expected}, drift {drift:+.3f}%, peak {peak:.6f}, "
-              f"RMS {rms:.6f}, short reads {result.get('short_reads', 0)}")
+        print(f"{label:7}: {frames} frames = {audio_s:.3f}s audio vs {wall:.3f}s wall, "
+              f"skew {skew:+.3f}s ({skew_pct:+.2f}%), peak {peak:.6f}, "
+              f"RMS {rms:.6f}")
         if result.get("error"):
             print(f"         capture error: {result['error']}")
     mic_ok = len(results["mic"]["data"]) > 0 and not results["mic"].get("error")
     desk_ok = len(results["desktop"]["data"]) > 0 and not results["desktop"].get("error")
     audible = results["desktop"]["rms"] > SILENCE_RMS
+    # Relative skew between the two streams is what a timestamp-merge has to
+    # survive; each stream's own skew is measured against the same wall clock.
+    if mic_ok and desk_ok:
+        rel = results["mic"]["skew"] - results["desktop"]["skew"]
+        print(f"\nrelative mic-vs-desktop skew over {args.seconds:g}s: {rel:+.3f}s"
+              f"  -> extrapolates to ~{rel * (3600 / max(args.seconds, 1e-9)):+.1f}s/hour")
+        print("(a merge that assumes sample-count == elapsed time drifts by this much)")
     passed = mic_ok and desk_ok and audible and not interrupted and not write_errors
     print(f"\nWAV output: {outdir.resolve()}")
     print("\n========== VERDICT ==========")
