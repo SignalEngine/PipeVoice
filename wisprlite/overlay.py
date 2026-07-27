@@ -21,6 +21,10 @@ METER_N = 16           # samples of rolling level history behind the ribbon
 RIBBON_SPLINE = 20     # Bezier steps per span; higher = smoother, more work per frame
 RIBBON_FLOOR = 0.06    # a sliver of ribbon at silence, so the HUD never looks dead
 RIBBON_WOBBLE = 0.75   # depth of the travelling wave, scaled by level
+# Per-stream auto-gain for the meeting meters (see _draw_meeting).
+METER_PEAK_DECAY = 0.995      # ~4s to halve at 30fps: holds through a pause
+METER_MIN_REFERENCE = 0.004   # never amplify pure silence into a full meter
+METER_REFERENCE_RMS = 0.05    # a stream at its own recent peak reads as loud speech
 MEETING_METER_N = 7
 WIN_W, WIN_H = 380, 68
 TRANSPARENT = "#010203"  # Windows color key punched out for rounded corners
@@ -57,6 +61,24 @@ def meter_level(level: float) -> float:
     db = 20.0 * math.log10(level)
     span = METER_DB_CEIL - METER_DB_FLOOR
     return min(1.0, max(0.0, (db - METER_DB_FLOOR) / span))
+
+
+def auto_gain(raw: float, peak: float) -> float:
+    """Meter value for one stream, judged against that stream's OWN recent peak.
+
+    Desktop loopback carries system audio (a podcast sits around RMS 0.1-0.3)
+    while a microphone carries a voice at ~0.01-0.03 — about ten times quieter.
+    On one shared absolute scale the mic meter barely moves while desktop looks
+    healthy, which is what a user reported. These meters exist to answer "is this
+    stream alive?", so each is scaled to its own range instead.
+    """
+    try:
+        raw = max(0.0, float(raw))
+        peak = max(0.0, float(peak))
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    reference = max(peak, METER_MIN_REFERENCE)
+    return meter_level(raw / reference * METER_REFERENCE_RMS)
 
 
 class Overlay:
@@ -151,6 +173,7 @@ class Overlay:
                 "mic": [0.0] * MEETING_METER_N,
                 "desktop": [0.0] * MEETING_METER_N,
             },
+            "meeting_peak": {"mic": 0.0, "desktop": 0.0},
             "hover": False,
             "visible": False,
             "hide_at": 0.0,
@@ -421,7 +444,16 @@ class Overlay:
                 raw_level = float(levels.get(label, 0.0))
             except (TypeError, ValueError, OverflowError):
                 raw_level = 0.0
-            normalized = meter_level(raw_level)
+            # Per-stream auto-gain. Desktop loopback carries system audio (a
+            # podcast sits around RMS 0.1-0.3) while the mic carries a voice at
+            # ~0.01-0.03 — roughly ten times quieter. On one shared absolute
+            # scale the mic meter barely moves while desktop looks fine, which
+            # is exactly what a user reported. These meters answer "is this
+            # stream ALIVE?", so each is judged against its OWN recent peak:
+            # a reference that rises instantly and decays slowly.
+            peaks = st["meeting_peak"]
+            peaks[label] = max(raw_level, peaks[label] * METER_PEAK_DECAY)
+            normalized = auto_gain(raw_level, peaks[label])
             history = st["meeting_hist"][label]
             history.pop(0)
             history.append(normalized)
