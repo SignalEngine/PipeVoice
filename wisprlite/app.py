@@ -578,6 +578,21 @@ class App:
         except Exception as exc:
             self._fail(f"history: {exc}")
 
+    def open_transcribe(self) -> None:
+        import os
+        import subprocess
+
+        try:
+            if getattr(sys, "frozen", False):
+                subprocess.Popen([sys.executable, "--transcribe"])
+            else:
+                from .autostart import _pythonw
+
+                parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                subprocess.Popen([_pythonw(), "-m", "wisprlite", "--transcribe"], cwd=parent)
+        except Exception as exc:
+            self._fail(f"transcribe: {exc}")
+
     def open_about(self) -> None:
         import os
         import subprocess
