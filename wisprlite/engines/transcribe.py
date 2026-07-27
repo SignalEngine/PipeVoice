@@ -85,7 +85,7 @@ def _diarized_text(alt) -> str:
     return "\n\n".join(blocks).strip() or (getattr(alt, "transcript", "") or "").strip()
 
 
-def transcribe_file_deepgram(path: str, *, api_key: str, model: str = "nova-2",
+def transcribe_file_deepgram(path: str, *, api_key: str, model: str = "nova-3",
                              diarize: bool = True, language=None,
                              timeout_s: float = 900.0) -> dict:
     """Cloud transcription with speaker labels, via Deepgram's prerecorded API.

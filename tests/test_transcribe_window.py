@@ -37,10 +37,12 @@ def _stub_engine():
 
 
 class Cfg:
-    def __init__(self, transcribe_model_size="", local_model_size="base.en", language=""):
+    def __init__(self, transcribe_model_size="", local_model_size="base.en", language="",
+                 deepgram_model="nova-3"):
         self.transcribe_model_size = transcribe_model_size
         self.local_model_size = local_model_size
         self.language = language
+        self.deepgram_model = deepgram_model
 
 
 def test_local_backend_uses_configured_model():
@@ -92,6 +94,40 @@ def test_cloud_backend_with_key_calls_deepgram():
     kind, path, kw = calls[0]
     assert kind == "cloud" and path == "a.wav", calls
     assert kw["api_key"] == "sk-test", kw
+
+
+def _cloud_call(cfg):
+    """Run the cloud path with a key present; return the kwargs it passed."""
+    calls = _stub_engine()
+    real = config.deepgram_key
+    config.deepgram_key = lambda: "sk-test"
+    try:
+        W._run("a.wav", W.CLOUD, cfg)
+    finally:
+        config.deepgram_key = real
+    return calls[0][2]
+
+
+def test_locale_is_stripped_for_local_but_not_for_deepgram():
+    """cfg.language holds locales (cleanup._ACCENTS is keyed on en-US/en-GB/…).
+    faster-whisper's tokenizer rejects 'en-GB'; Deepgram wants the full locale.
+    App._build_engine draws exactly this distinction — mirror it."""
+    calls = _stub_engine()
+    W._run("a.wav", W.LOCAL, Cfg(language="en-GB"))
+    assert calls[0][2]["language"] == "en", calls[0][2]
+    assert _cloud_call(Cfg(language="en-GB"))["language"] == "en-GB"
+
+
+def test_blank_language_defaults_deepgram_to_en_us():
+    """App._build_engine uses `cfg.language or "en-US"` for Deepgram."""
+    assert _cloud_call(Cfg(language=""))["language"] == "en-US"
+
+
+def test_deepgram_model_comes_from_config():
+    """config.py defaults deepgram_model to nova-3; a hardcoded nova-2 here
+    would silently contradict the app's own setting for every user."""
+    assert _cloud_call(Cfg(deepgram_model="nova-2"))["model"] == "nova-2"
+    assert _cloud_call(Cfg(deepgram_model=""))["model"] == "nova-3"
 
 
 def test_pretty_duration():

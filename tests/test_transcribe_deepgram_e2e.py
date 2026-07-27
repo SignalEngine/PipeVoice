@@ -136,7 +136,7 @@ def main():
 
     assert "/v1/listen" in received["path"], received["path"]
     for flag in ("diarize=true", "paragraphs=true", "smart_format=true",
-                 "utterances=true", "model=nova-2"):
+                 "utterances=true", "model=nova-3"):
         assert flag in received["path"], f"{flag} missing from {received['path']}"
     print("  ok  request carries model + diarize + paragraphs + smart_format + utterances")
 

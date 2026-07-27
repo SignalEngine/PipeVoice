@@ -47,9 +47,16 @@ def _local_model(cfg) -> str:
 
 
 def _run(path: str, backend: str, cfg) -> dict:
-    """Transcribe `path`. Raises on failure; the caller reports it."""
+    """Transcribe `path`. Raises on failure; the caller reports it.
+
+    Language handling mirrors `App._build_engine`: Deepgram takes the full
+    locale ("en-GB"), faster-whisper wants the bare code ("en") — feeding it a
+    locale fails in the tokenizer. `cfg.language` really does hold locales
+    (cleanup.py's _ACCENTS is keyed on en-US/en-GB/en-AU/…).
+    """
     from .engines import transcribe as T
 
+    lang = getattr(cfg, "language", "") or ""
     if backend == CLOUD:
         key = config.deepgram_key()
         if not key:
@@ -57,10 +64,12 @@ def _run(path: str, backend: str, cfg) -> dict:
                 "No Deepgram API key. Add DEEPGRAM_API_KEY to your .env "
                 "(or set it in Settings), then reopen this window.")
         return T.transcribe_file_deepgram(
-            path, api_key=key, language=(getattr(cfg, "language", "") or None))
+            path, api_key=key,
+            model=(getattr(cfg, "deepgram_model", "") or "nova-3"),
+            language=(lang or "en-US"))
     return T.transcribe_file(
         path, model_size=_local_model(cfg),
-        language=(getattr(cfg, "language", "") or None))
+        language=(lang.split("-")[0] or None))
 
 
 def _pretty_duration(seconds: float) -> str:
@@ -189,6 +198,12 @@ def main() -> None:
         if not path:
             return
         state["path"] = path
+        # Drop the previous transcript, or Copy/Save would hand back the OLD
+        # file's text under the NEW file's name.
+        state["text"] = ""
+        text.delete("1.0", "end")
+        for b in (copy_btn, save_btn):
+            b.config(state="disabled")
         file_lbl.config(text=os.path.basename(path), fg=FG)
         status.config(text="Ready. Long recordings can take a while on the local "
                            "backend — the window stays responsive.", fg=MUTED)
