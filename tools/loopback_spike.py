@@ -121,6 +121,40 @@ def main():
         return 1
     stop, results = threading.Event(), {}
     t_zero = time.monotonic()
+    def capture_mic_sounddevice(label):
+        """Mic via sounddevice/PortAudio, NOT soundcard.
+
+        soundcard's _AudioClient asserts a device's mix format is float32
+        WAVEFORMATEXTENSIBLE (mediafoundation.py:516-525) and cannot open
+        anything else — its own comment says "the program crashes if these
+        values are different". A mic held by a call app is switched to
+        communications mode (commonly 16-bit PCM) and that assert fires with a
+        bare AssertionError. PortAudio negotiates the format instead, and the
+        app already records the mic this way, so we reuse the proven path and
+        confine soundcard to loopback, which nothing else can do.
+        """
+        chunks, started, error, opened_at = [], None, None, None
+        try:
+            import sounddevice as sd
+            print(f"  opening {label} (sounddevice)...", flush=True)
+            def on_block(indata, _frames, _t, _status):
+                chunks.append(indata.copy().reshape(-1))
+            with sd.InputStream(samplerate=RATE, channels=1, dtype="float32",
+                                blocksize=800, callback=on_block):
+                started = opened_at = time.monotonic()
+                print(f"  {label} open after {opened_at - t_zero:.2f}s, recording",
+                      flush=True)
+                stop.wait(args.seconds)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            print(f"  {label} FAILED to open/record -> {error}", flush=True)
+        ended = time.monotonic()
+        results[label] = {
+            "data": np.concatenate(chunks) if chunks else np.empty(0, np.float32),
+            "duration": ended - started if started is not None else 0.0,
+            "open_offset": (opened_at - t_zero) if opened_at is not None else None,
+            "error": error,
+        }
     def capture(label, device):
         # NO start/ready handshake. The previous version made each thread wait on
         # a barrier the main thread only lifted once BOTH recorders reported
@@ -158,7 +192,7 @@ def main():
             "error": error,
         }
     threads = [
-        threading.Thread(target=capture, args=("mic", default_mic), daemon=True),
+        threading.Thread(target=capture_mic_sounddevice, args=("mic",), daemon=True),
         threading.Thread(target=capture, args=("desktop", desktop_mic), daemon=True),
     ]
     print("\nOpening both capture streams...")
