@@ -721,7 +721,17 @@ def build(container, root, wheel=None) -> None:
                 pass
             close()
 
-        outside_binding["id"] = root.bind_all("<Button-1>", outside_click, add="+")
+        # Install the dismiss-on-outside-click binding only AFTER the click that
+        # opened this popover has finished propagating. Binding it synchronously
+        # means that very click is still in flight, outside_click sees the
+        # transcript widget (correctly, it IS outside the dialog) and closes the
+        # popover instantly — so clicking a speaker name appeared to do nothing.
+        def arm_outside_click() -> None:
+            if closed["value"]:
+                return
+            outside_binding["id"] = root.bind_all("<Button-1>", outside_click, add="+")
+
+        root.after_idle(arm_outside_click)
 
         def play_sample() -> None:
             sample = temp_path["value"]
