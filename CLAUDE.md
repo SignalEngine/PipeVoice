@@ -21,6 +21,7 @@ The pipevoice.app website + marketing live in a separate private repo (`Powleads
 
 - **Run from source:** `run.bat` — first run creates `.venv`, installs `requirements.txt`, then runs `python -m wisprlite`. Subsequent runs just activate and launch. Equivalent manual launch after venv exists: `python -m wisprlite`.
 - **Open the settings GUI:** `python -m wisprlite --settings` (the app spawns this as a *separate process*; see Architecture).
+- **Transcribe an existing file:** `python -m wisprlite --transcribe` (also tray → "Transcribe a file…"). Local whisper by default; Deepgram with speaker labels when `DEEPGRAM_API_KEY` is set.
 - **Build the single .exe:** `build_exe.bat` → `dist\WisprLite.exe` (PyInstaller onefile, no console, bundles all three engines incl. the local Whisper runtime).
 - **Build the full installer:** `build_installer.bat` → `installer\Output\WisprLite-Setup.exe` (runs `build_exe.bat` first; needs Inno Setup 6 installed).
 - **List microphones** (to set `device` in config): `python -m sounddevice`.

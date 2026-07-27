@@ -15,6 +15,8 @@ elif "--profiles" in sys.argv:
     from wisprlite.profiles import main
 elif "--voices" in sys.argv:
     from wisprlite.voices_editor import main
+elif "--transcribe" in sys.argv:
+    from wisprlite.transcribe_window import main
 elif "--mcp" in sys.argv:
     from wisprlite.mcp_shim import main
 elif "--feedback" in sys.argv:

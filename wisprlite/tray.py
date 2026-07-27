@@ -91,6 +91,7 @@ class Tray:
             Menu.SEPARATOR,
             Item("Settings…", lambda i, it: app.open_settings(), default=True),
             Item("History…", lambda i, it: app.open_history()),
+            Item("Transcribe a file…", lambda i, it: app.open_transcribe()),
             Item("App profiles…", lambda i, it: app.open_profiles()),
             Item("Show overlay", lambda i, it: app.toggle_overlay(),
                  checked=lambda it: app.cfg.overlay),
