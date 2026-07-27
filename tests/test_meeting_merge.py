@@ -6,6 +6,8 @@ import types
 import wave
 from unittest.mock import patch
 
+import numpy as np
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from wisprlite import meeting
@@ -98,6 +100,8 @@ def test_one_usable_stream_still_writes_transcript():
     with tempfile.TemporaryDirectory() as tmp:
         session = pathlib.Path(tmp)
         write_session(session, mic_error="RuntimeError: mic failed")
+        with wave.open(str(session / "mic.wav"), "wb") as audio:
+            audio.setparams((1, 2, 16_000, 0, "NONE", "not compressed"))
         with patch(
             "wisprlite.engines.transcribe.transcribe_file",
             side_effect=fake_local,
@@ -114,6 +118,66 @@ def test_one_usable_stream_still_writes_transcript():
         ) == transcript
         meta = json.loads((session / "meta.json").read_text(encoding="utf-8"))
         assert meta["status"] == "transcribed"
+
+
+def test_stream_with_frames_is_transcribed_even_if_error_was_flagged():
+    calls = []
+
+    def fake_local(path, **_kwargs):
+        name = pathlib.Path(path).name
+        calls.append(name)
+        return result({"start": 0.0, "text": name})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp)
+        write_session(session, mic_error="RuntimeError: transient capture warning")
+        with patch(
+            "wisprlite.engines.transcribe.transcribe_file",
+            side_effect=fake_local,
+        ):
+            transcript = meeting.transcribe_session(session, cfg(), backend="local")
+
+    assert calls == ["desktop.wav", "mic.wav"]
+    assert [segment["speaker"] for segment in transcript["segments"]] == [
+        "You",
+        "Them",
+    ]
+
+
+def test_input_overflow_does_not_drop_good_mic_audio_from_transcript():
+    calls = []
+
+    def fake_local(path, **_kwargs):
+        name = pathlib.Path(path).name
+        calls.append(name)
+        return result({"start": 0.0, "text": name})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp)
+        recorder = meeting.MeetingRecorder(session)
+        recorder.session_dir = session
+        recorder._waves = {
+            "mic": recorder._open_wave(session / "mic.wav"),
+            "desktop": recorder._open_wave(session / "desktop.wav"),
+        }
+        block = np.full((160, 1), 0.25, dtype=np.float32)
+        recorder._on_mic_block(block, 160, None, "input overflow")
+        recorder._on_mic_block(block, 160, None, None)
+        recorder._write_block("desktop", block)
+        recorder._close_waves()
+        recorder._write_meta(stopped_at=None, duration=0.02)
+
+        with patch(
+            "wisprlite.engines.transcribe.transcribe_file",
+            side_effect=fake_local,
+        ):
+            transcript = meeting.transcribe_session(session, cfg(), backend="local")
+
+    assert calls == ["desktop.wav", "mic.wav"]
+    assert any(
+        segment["speaker"] == "You" and segment["text"] == "mic.wav"
+        for segment in transcript["segments"]
+    )
 
 
 def test_zero_frame_stream_is_skipped():
@@ -231,6 +295,8 @@ if __name__ == "__main__":
     test_offset_shifting_puts_earlier_stream_first()
     test_interleaving_uses_adjusted_segment_time()
     test_one_usable_stream_still_writes_transcript()
+    test_stream_with_frames_is_transcribed_even_if_error_was_flagged()
+    test_input_overflow_does_not_drop_good_mic_audio_from_transcript()
     test_zero_frame_stream_is_skipped()
     test_remote_speaker_labels_follow_diarized_speaker_count()
     test_renderer_merges_consecutive_same_speaker_blocks()

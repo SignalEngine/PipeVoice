@@ -167,7 +167,7 @@ def transcribe_session(
         for stream in ("desktop", "mic"):
             stream_meta = meta.get(stream) or {}
             path = session_dir / stream_meta.get("file", f"{stream}.wav")
-            if stream_meta.get("error") or not _wav_has_frames(path):
+            if not _wav_has_frames(path):
                 continue
             if selected_backend == "deepgram":
                 results[stream] = transcribe_file_deepgram(
@@ -256,6 +256,10 @@ class MeetingRecorder:
             "mic": None,
             "desktop": None,
         }
+        self._fatal_errors: dict[str, str | None] = {
+            "mic": None,
+            "desktop": None,
+        }
         self._mic_stream = None
         self._limit_timer: threading.Timer | None = None
         self._stop_reason: str | None = None
@@ -280,6 +284,11 @@ class MeetingRecorder:
     def errors(self) -> dict[str, str | None]:
         with self._state_lock:
             return dict(self._errors)
+
+    @property
+    def fatal_errors(self) -> dict[str, str | None]:
+        with self._state_lock:
+            return dict(self._fatal_errors)
 
     def start(self) -> Path:
         with self._lifecycle_lock:
@@ -310,6 +319,7 @@ class MeetingRecorder:
                 "desktop": float("-inf"),
             }
             self._errors = {"mic": None, "desktop": None}
+            self._fatal_errors = {"mic": None, "desktop": None}
             self._stop_reason = None
             self._stop.clear()
             self._active = True
@@ -397,6 +407,7 @@ class MeetingRecorder:
                         "capture thread did not stop within "
                         f"{CAPTURE_JOIN_TIMEOUT:g} seconds"
                     ),
+                    recoverable=True,
                 )
 
         self._close_waves()
@@ -450,7 +461,11 @@ class MeetingRecorder:
             )
             keep = max(0, self.retention_sessions - reserve)
             for path in sessions[keep:]:
-                shutil.rmtree(path)
+                try:
+                    shutil.rmtree(path)
+                except Exception:
+                    # One locked session must not block pruning the rest.
+                    pass
         except Exception:
             # Retention must never prevent recording.
             pass
@@ -498,7 +513,11 @@ class MeetingRecorder:
 
     def _on_mic_block(self, indata, _frames, _time_info, _status) -> None:
         if _status:
-            self._record_error("mic", RuntimeError(str(_status)))
+            self._record_error(
+                "mic",
+                RuntimeError(str(_status)),
+                recoverable=True,
+            )
         self._write_block("mic", indata)
 
     def _capture_desktop(self, sc) -> None:
@@ -573,10 +592,22 @@ class MeetingRecorder:
         if checkpointed and label == "desktop":
             self._write_meta(stopped_at=None, duration=self.elapsed)
 
-    def _record_error(self, label: str, exc: Exception) -> None:
+    def _record_error(
+        self,
+        label: str,
+        exc: Exception,
+        *,
+        recoverable: bool = False,
+    ) -> None:
+        message = f"{type(exc).__name__}: {exc}"
         with self._state_lock:
-            if self._errors[label] is None:
-                self._errors[label] = f"{type(exc).__name__}: {exc}"
+            if recoverable:
+                if self._errors[label] is None:
+                    self._errors[label] = message
+            elif self._fatal_errors[label] is None:
+                # A fatal failure supersedes an earlier recoverable warning.
+                self._fatal_errors[label] = message
+                self._errors[label] = message
 
     def _close_waves(self) -> None:
         for label in tuple(self._waves):

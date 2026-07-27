@@ -11,10 +11,11 @@ if not exist ".venv" (
 
 set "REQ_HASH="
 for /f %%H in ('powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 'requirements.txt').Hash"') do set "REQ_HASH=%%H"
+if not defined REQ_HASH set "REQ_HASH=unknown"
 
 set "INSTALLED_HASH="
 if exist ".venv\requirements.sha256" set /p INSTALLED_HASH=<".venv\requirements.sha256"
-if defined REQ_HASH if /I not "!REQ_HASH!"=="!INSTALLED_HASH!" (
+if /I not "!REQ_HASH!"=="!INSTALLED_HASH!" (
     echo Installing updated dependencies...
     .venv\Scripts\python.exe -m pip install -r requirements.txt
     if errorlevel 1 (

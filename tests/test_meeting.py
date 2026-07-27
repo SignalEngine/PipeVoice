@@ -202,6 +202,33 @@ def test_retention_reserves_room_for_the_next_session():
         assert newest.exists()
 
 
+def test_retention_continues_after_one_session_cannot_be_removed():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        sessions = []
+        for index in range(4):
+            session = base / f"meeting-2026072{index + 1}-120000"
+            session.mkdir()
+            os.utime(session, (index, index))
+            sessions.append(session)
+
+        original_rmtree = meeting.shutil.rmtree
+
+        def remove_unless_blocked(path):
+            if path == sessions[2]:
+                raise PermissionError("session is open")
+            original_rmtree(path)
+
+        recorder = MeetingRecorder(base, retention_sessions=1)
+        with patch.object(meeting.shutil, "rmtree", side_effect=remove_unless_blocked):
+            recorder._prune_sessions()
+
+        assert sessions[3].exists()
+        assert sessions[2].exists()
+        assert sessions[1].exists() is False
+        assert sessions[0].exists() is False
+
+
 def test_default_meetings_dir_is_outside_roaming_profile():
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
@@ -342,6 +369,21 @@ def test_mic_callback_status_records_an_error():
         "input overflow",
     )
     assert recorder.errors["mic"] == "RuntimeError: input overflow"
+    assert recorder.fatal_errors["mic"] is None
+
+
+def test_fatal_error_upgrades_an_earlier_recoverable_error():
+    recorder = MeetingRecorder(pathlib.Path("unused"))
+    recorder._on_mic_block(
+        np.empty((0, 1), dtype=np.float32),
+        0,
+        None,
+        "input overflow",
+    )
+    recorder._record_error("mic", RuntimeError("device lost"))
+
+    assert recorder.errors["mic"] == "RuntimeError: device lost"
+    assert recorder.fatal_errors["mic"] == "RuntimeError: device lost"
 
 
 def test_paused_meeting_can_stop_but_not_start():
@@ -398,6 +440,11 @@ def test_config_watcher_surfaces_a_late_meeting_error():
             desktop = None if self.checks == 1 else "RuntimeError: device lost"
             return {"mic": None, "desktop": desktop}
 
+        @property
+        def fatal_errors(self):
+            desktop = None if self.checks == 1 else "RuntimeError: device lost"
+            return {"mic": None, "desktop": desktop}
+
     App = app_class()
     app = App.__new__(App)
     app._stop = TwoIntervals()
@@ -416,6 +463,26 @@ def test_config_watcher_surfaces_a_late_meeting_error():
     assert app._meeting.checks == 2
     assert failures == ["meeting capture: desktop: RuntimeError: device lost"]
     assert app._meeting_degraded is True
+
+
+def test_recoverable_meeting_error_does_not_latch_degraded_state():
+    class RecoverableFailureMeeting:
+        errors = {"mic": "RuntimeError: input overflow", "desktop": None}
+        fatal_errors = {"mic": None, "desktop": None}
+
+    App = app_class()
+    app = App.__new__(App)
+    app._meeting_active = True
+    app._meeting_degraded = False
+    app._meeting = RecoverableFailureMeeting()
+    app._meeting_errors_reported = set()
+    failures = []
+    app._fail = failures.append
+
+    app._check_meeting_errors()
+
+    assert failures == ["meeting capture: mic: RuntimeError: input overflow"]
+    assert app._meeting_degraded is False
 
 
 def test_agent_hands_free_is_busy_during_meeting():
@@ -479,6 +546,8 @@ def test_live_thread_blocks_a_second_session():
             first_session = recorder.start()
             wait_for(entered.is_set)
             recorder.stop()
+            assert "did not stop" in recorder.errors["desktop"]
+            assert recorder.fatal_errors["desktop"] is None
             try:
                 recorder.start()
             except RuntimeError as exc:
@@ -517,6 +586,7 @@ if __name__ == "__main__":
     test_mid_recording_checkpoint_patches_wave_header()
     test_retention_prunes_all_but_newest_sessions()
     test_retention_reserves_room_for_the_next_session()
+    test_retention_continues_after_one_session_cannot_be_removed()
     test_default_meetings_dir_is_outside_roaming_profile()
     test_elapsed_uses_monotonic_time()
     test_one_stream_failure_keeps_the_other()
@@ -526,8 +596,10 @@ if __name__ == "__main__":
     test_configured_device_is_passed_to_input_stream()
     test_inactive_mic_stream_records_an_error()
     test_mic_callback_status_records_an_error()
+    test_fatal_error_upgrades_an_earlier_recoverable_error()
     test_paused_meeting_can_stop_but_not_start()
     test_config_watcher_surfaces_a_late_meeting_error()
+    test_recoverable_meeting_error_does_not_latch_degraded_state()
     test_agent_hands_free_is_busy_during_meeting()
     test_agent_push_to_talk_is_busy_during_meeting()
     test_degraded_meeting_icon_persists()

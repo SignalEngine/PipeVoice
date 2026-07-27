@@ -457,14 +457,16 @@ class App:
         if not self._meeting_active:
             return
         errors = self._meeting.errors
+        fatal_errors = self._meeting.fatal_errors
         failures = []
         for label, error in errors.items():
             failure = (label, error)
             if error is not None and failure not in self._meeting_errors_reported:
                 self._meeting_errors_reported.add(failure)
                 failures.append(f"{label}: {error}")
-        if failures:
+        if any(error is not None for error in fatal_errors.values()):
             self._meeting_degraded = True
+        if failures:
             self._fail("meeting capture: " + "; ".join(failures))
 
     def _on_meeting_auto_stop(self, reason: str) -> None:
