@@ -9,6 +9,7 @@ packages still fail synchronously.
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 import wave
@@ -124,31 +125,47 @@ class MeetingRecorder:
                 self._active = False
             raise
 
-        self._threads = [
-            threading.Thread(
-                target=self._capture_mic,
-                args=(sd,),
-                name="meeting-mic",
-                daemon=True,
-            ),
-            threading.Thread(
-                target=self._capture_desktop,
-                args=(sc,),
-                name="meeting-desktop",
-                daemon=True,
-            ),
-        ]
-        for thread in self._threads:
-            thread.start()
-        if self.max_minutes > 0:
-            session_dir = self.session_dir
-            max_minutes = self.max_minutes
-            self._limit_timer = threading.Timer(
-                max_minutes * 60,
-                lambda: self._stop_at_limit(session_dir, max_minutes),
-            )
-            self._limit_timer.daemon = True
-            self._limit_timer.start()
+        try:
+            self._threads = [
+                threading.Thread(
+                    target=self._capture_mic,
+                    args=(sd,),
+                    name="meeting-mic",
+                    daemon=True,
+                ),
+                threading.Thread(
+                    target=self._capture_desktop,
+                    args=(sc,),
+                    name="meeting-desktop",
+                    daemon=True,
+                ),
+            ]
+            for thread in self._threads:
+                thread.start()
+            if self.max_minutes > 0:
+                session_dir = self.session_dir
+                max_minutes = self.max_minutes
+                self._limit_timer = threading.Timer(
+                    max_minutes * 60,
+                    lambda: self._stop_at_limit(session_dir, max_minutes),
+                )
+                self._limit_timer.daemon = True
+                self._limit_timer.start()
+        except Exception:
+            self._stop.set()
+            timer = self._limit_timer
+            self._limit_timer = None
+            if timer is not None:
+                timer.cancel()
+            for thread in self._threads:
+                if thread.ident is not None:
+                    thread.join(timeout=CAPTURE_JOIN_TIMEOUT)
+            self._close_waves()
+            with self._state_lock:
+                self._active = False
+            if not any(thread.is_alive() for thread in self._threads):
+                self._threads = []
+            raise
         return self.session_dir
 
     def stop(self, reason: str = "stopped by user") -> Path | None:
@@ -172,9 +189,13 @@ class MeetingRecorder:
         for thread in self._threads:
             thread.join(timeout=CAPTURE_JOIN_TIMEOUT)
         for label, thread in zip(("mic", "desktop"), self._threads):
-            if thread.is_alive() and self._errors[label] is None:
-                self._errors[label] = (
-                    f"capture thread did not stop within {CAPTURE_JOIN_TIMEOUT:g} seconds"
+            if thread.is_alive():
+                self._record_error(
+                    label,
+                    RuntimeError(
+                        "capture thread did not stop within "
+                        f"{CAPTURE_JOIN_TIMEOUT:g} seconds"
+                    ),
                 )
 
         self._close_waves()
@@ -237,7 +258,9 @@ class MeetingRecorder:
             if self._stop.is_set():
                 return
             stream.start()
-            self._stop.wait()
+            while not self._stop.wait(0.25):
+                if not stream.active:
+                    raise RuntimeError("microphone input stream became inactive")
         except Exception as exc:
             self._record_error("mic", exc)
         finally:
@@ -257,7 +280,18 @@ class MeetingRecorder:
         self._write_block("mic", indata)
 
     def _capture_desktop(self, sc) -> None:
+        com_initialized = False
         try:
+            if sys.platform == "win32":
+                import ctypes
+
+                result = ctypes.windll.ole32.CoInitializeEx(None, 0)
+                if result not in (0, 1):
+                    raise OSError(
+                        "CoInitializeEx failed with HRESULT "
+                        f"0x{result & 0xffffffff:08x}"
+                    )
+                com_initialized = True
             speaker = sc.default_speaker()
             if speaker is None:
                 raise RuntimeError("Windows has no default speaker")
@@ -281,6 +315,9 @@ class MeetingRecorder:
                     self._write_block("desktop", block)
         except Exception as exc:
             self._record_error("desktop", exc)
+        finally:
+            if com_initialized:
+                ctypes.windll.ole32.CoUninitialize()
 
     def _write_block(self, label: str, block) -> None:
         arrived_at = time.monotonic()
@@ -307,13 +344,15 @@ class MeetingRecorder:
                 self._errors[label] = f"{type(exc).__name__}: {exc}"
 
     def _close_waves(self) -> None:
-        for label, output in list(self._waves.items()):
+        for label in tuple(self._waves):
             with self._wave_locks[label]:
+                output = self._waves.pop(label, None)
+                if output is None:
+                    continue
                 try:
                     output.close()
                 except Exception as exc:
                     self._record_error(label, exc)
-        self._waves = {}
 
     def _write_meta(self, stopped_at: str, duration: float) -> None:
         if self.session_dir is None:

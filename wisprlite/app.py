@@ -35,6 +35,7 @@ class App:
             on_auto_stop=self._on_meeting_auto_stop,
         )
         self._meeting_active = False
+        self._meeting_errors_reported = set()
 
         self.recorder = Recorder(device=config.device_arg(self.cfg))
         self.overlay = Overlay(level_provider=lambda: self.recorder.level, enabled=self.cfg.overlay)
@@ -59,7 +60,7 @@ class App:
             get_mode=lambda: "toggle",
             on_start=self.toggle_meeting,
             on_stop=self.toggle_meeting,
-            is_paused=lambda: False,
+            is_paused=lambda: self.paused and not self._meeting_active,
         )
 
         self._armed_voice = None      # a Voice armed by the picker, consumed by the next utterance
@@ -433,10 +434,13 @@ class App:
                 self._set_icon("idle")
                 self.tray.update()
             return
+        if self.paused:
+            return
 
         self._meeting_active = True
+        self._meeting_errors_reported.clear()
         try:
-            session_dir = self._meeting.start()
+            self._meeting.start()
         except Exception as exc:
             self._meeting_active = False
             self._fail(f"meeting: {exc}")
@@ -444,22 +448,17 @@ class App:
             return
         self._set_icon("meeting")
         self.tray.update()
-        timer = threading.Timer(
-            1.0,
-            lambda: self._check_meeting_errors(session_dir),
-        )
-        timer.daemon = True
-        timer.start()
 
     def _check_meeting_errors(self, session_dir) -> None:
         if not self._meeting_active or self._meeting.session_dir != session_dir:
             return
         errors = self._meeting.errors
-        failures = [
-            f"{label}: {error}"
-            for label, error in errors.items()
-            if error is not None
-        ]
+        failures = []
+        for label, error in errors.items():
+            failure = (label, error)
+            if error is not None and failure not in self._meeting_errors_reported:
+                self._meeting_errors_reported.add(failure)
+                failures.append(f"{label}: {error}")
         if failures:
             self._fail("meeting capture: " + "; ".join(failures))
 
@@ -541,7 +540,7 @@ class App:
     def _agent_listen_hands_free(self, prompt="", timeout=45) -> dict:
         import time
         from .vad import SilenceEndpointer
-        if not self._busy.acquire(blocking=False):
+        if self._meeting_active or not self._busy.acquire(blocking=False):
             return {"status": "busy", "text": ""}
         try:
             try:
@@ -768,6 +767,8 @@ class App:
             last = None
         while not self._stop.is_set():
             time.sleep(1.0)
+            if self._meeting_active:
+                self._check_meeting_errors(self._meeting.session_dir)
             try:
                 mtime = config.CONFIG_PATH.stat().st_mtime
             except Exception:

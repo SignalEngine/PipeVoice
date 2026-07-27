@@ -115,6 +115,14 @@ class Config:
                 data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
                 for k, v in data.items():
                     if hasattr(cfg, k):
+                        current = getattr(cfg, k)
+                        try:
+                            if type(current) is int:
+                                v = int(v)
+                            elif type(current) is float:
+                                v = float(v)
+                        except (TypeError, ValueError):
+                            continue
                         setattr(cfg, k, v)
             except Exception:
                 pass

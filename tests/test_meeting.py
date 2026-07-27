@@ -14,6 +14,7 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+from wisprlite import config
 from wisprlite import meeting
 from wisprlite.meeting import MeetingRecorder
 
@@ -32,12 +33,14 @@ class FakeInputStream:
     def __init__(self, **kwargs):
         type(self).last_kwargs = kwargs
         self.callback = kwargs["callback"]
+        self.active = False
 
     def start(self):
+        self.active = True
         self.callback(np.array([[0.25], [-0.25]], dtype=np.float32), 2, None, None)
 
     def stop(self):
-        pass
+        self.active = False
 
     def close(self):
         type(self).close_count += 1
@@ -75,6 +78,18 @@ def fake_audio_modules(input_stream=FakeInputStream):
     soundcard.default_speaker = lambda: types.SimpleNamespace(id="speaker-id")
     soundcard.all_microphones = lambda include_loopback=False: [FakeLoopback()]
     return {"sounddevice": sounddevice, "soundcard": soundcard}
+
+
+def app_class():
+    sounddevice = types.ModuleType("sounddevice")
+    sounddevice.InputStream = FakeInputStream
+    keyboard = types.ModuleType("keyboard")
+    with patch.dict(
+        sys.modules,
+        {"sounddevice": sounddevice, "keyboard": keyboard},
+    ):
+        from wisprlite.app import App
+    return App
 
 
 def wait_for(predicate, timeout=1.0):
@@ -172,6 +187,51 @@ def test_missing_dependency_raises_from_start():
         assert recorder.active is False
 
 
+def test_post_thread_start_failure_rolls_back_capture():
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp), max_minutes="240")
+        with patch.dict(sys.modules, fake_audio_modules()):
+            try:
+                recorder.start()
+            except TypeError:
+                pass
+            else:
+                raise AssertionError("post-thread failure did not escape start()")
+
+        assert recorder.active is False
+        assert recorder._waves == {}
+        assert not any(thread.is_alive() for thread in recorder._threads)
+
+
+def test_numeric_config_values_are_coerced():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "config.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "meeting_max_minutes": "240",
+                    "min_seconds": "0.5",
+                    "history_size": "75",
+                    "deepgram_finish_timeout": "7.5",
+                    "mcp_port": "49519",
+                    "hands_free_silence_ms": "900",
+                }
+            ),
+            encoding="utf-8",
+        )
+        with patch.object(config, "CONFIG_PATH", path):
+            cfg = config.Config.load()
+
+    assert cfg.meeting_max_minutes == 240
+    assert type(cfg.meeting_max_minutes) is int
+    assert cfg.min_seconds == 0.5
+    assert type(cfg.min_seconds) is float
+    assert cfg.history_size == 75
+    assert cfg.deepgram_finish_timeout == 7.5
+    assert cfg.mcp_port == 49519
+    assert cfg.hands_free_silence_ms == 900
+
+
 def test_configured_device_is_passed_to_input_stream():
     with tempfile.TemporaryDirectory() as tmp:
         FakeInputStream.last_kwargs = None
@@ -183,6 +243,104 @@ def test_configured_device_is_passed_to_input_stream():
             recorder.stop()
         assert FakeInputStream.last_kwargs["device"] == 7
         assert FakeInputStream.close_count == 1
+
+
+def test_inactive_mic_stream_records_an_error():
+    class InactiveInputStream(FakeInputStream):
+        def start(self):
+            self.active = False
+
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        with patch.dict(sys.modules, fake_audio_modules(InactiveInputStream)):
+            recorder.start()
+            wait_for(lambda: recorder.errors["mic"] is not None)
+            recorder.stop()
+
+        assert "became inactive" in recorder.errors["mic"]
+
+
+def test_paused_meeting_can_stop_but_not_start():
+    class FakeMeeting:
+        def __init__(self):
+            self.starts = 0
+            self.stops = 0
+
+        def start(self):
+            self.starts += 1
+            return pathlib.Path("unused")
+
+        def stop(self):
+            self.stops += 1
+
+    App = app_class()
+    app = App.__new__(App)
+    app.paused = True
+    app._meeting_active = False
+    app._meeting = FakeMeeting()
+    app._meeting_errors_reported = set()
+    app._set_icon = lambda _state: None
+    app._fail = lambda _message: None
+    app.tray = types.SimpleNamespace(update=lambda: None)
+
+    app.toggle_meeting()
+    assert app._meeting.starts == 0
+    assert app._meeting_active is False
+
+    app._meeting_active = True
+    app.toggle_meeting()
+    assert app._meeting.stops == 1
+    assert app._meeting_active is False
+
+
+def test_config_watcher_surfaces_a_late_meeting_error():
+    class TwoIntervals:
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            self.calls += 1
+            return self.calls > 2
+
+    class LateFailureMeeting:
+        session_dir = pathlib.Path("session")
+
+        def __init__(self):
+            self.checks = 0
+
+        @property
+        def errors(self):
+            self.checks += 1
+            desktop = None if self.checks == 1 else "RuntimeError: device lost"
+            return {"mic": None, "desktop": desktop}
+
+    App = app_class()
+    app = App.__new__(App)
+    app._stop = TwoIntervals()
+    app._meeting_active = True
+    app._meeting = LateFailureMeeting()
+    app._meeting_errors_reported = set()
+    failures = []
+    app._fail = failures.append
+
+    missing_config = pathlib.Path("config-that-does-not-exist.json")
+    with patch.object(config, "CONFIG_PATH", missing_config), patch(
+        "wisprlite.app.time.sleep", return_value=None
+    ):
+        app._watch_config()
+
+    assert app._meeting.checks == 2
+    assert failures == ["meeting capture: desktop: RuntimeError: device lost"]
+
+
+def test_agent_hands_free_is_busy_during_meeting():
+    App = app_class()
+    app = App.__new__(App)
+    app._meeting_active = True
+    app._busy = threading.Lock()
+
+    assert app._agent_listen_hands_free() == {"status": "busy", "text": ""}
+    assert app._busy.locked() is False
 
 
 def test_live_thread_blocks_a_second_session():
@@ -250,7 +408,13 @@ if __name__ == "__main__":
     test_elapsed_uses_monotonic_time()
     test_one_stream_failure_keeps_the_other()
     test_missing_dependency_raises_from_start()
+    test_post_thread_start_failure_rolls_back_capture()
+    test_numeric_config_values_are_coerced()
     test_configured_device_is_passed_to_input_stream()
+    test_inactive_mic_stream_records_an_error()
+    test_paused_meeting_can_stop_but_not_start()
+    test_config_watcher_surfaces_a_late_meeting_error()
+    test_agent_hands_free_is_busy_during_meeting()
     test_live_thread_blocks_a_second_session()
     test_session_limit_stops_and_records_reason()
     print("OK")
