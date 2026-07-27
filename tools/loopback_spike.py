@@ -119,34 +119,42 @@ def main():
     except OSError as exc:
         print(f"ERROR: Could not create output directory '{outdir}': {exc}")
         return 1
-    stop, start = threading.Event(), threading.Event()
-    deadline, results = [0.0], {}
+    stop, results = threading.Event(), {}
+    t_zero = time.monotonic()
     def capture(label, device):
+        # NO start/ready handshake. The previous version made each thread wait on
+        # a barrier the main thread only lifted once BOTH recorders reported
+        # ready within 10s; if a recorder's __enter__ was slow, the main thread
+        # set stop and both threads exited having captured nothing, reporting a
+        # bare "FAIL" with 0.000s and no reason. Each thread now simply records
+        # for `--seconds` from the moment ITS OWN device opens, and we report the
+        # open latency so a slow device is visible instead of fatal.
+        #
         # no short-read counter: record() zero-pads and always returns numframes,
         # so it would be a constant 0. Skew vs wall-clock is the real signal.
-        chunks, started, error = [], None, None
+        chunks, started, error, opened_at = [], None, None, None
         try:
+            print(f"  opening {label}...", flush=True)
             with device.recorder(samplerate=RATE, channels=1) as recorder:
-                results[label] = {"ready": True}
-                start.wait()
-                started = time.monotonic()
-                while not stop.is_set():
-                    remaining = deadline[0] - time.monotonic()
-                    if remaining <= 0:
-                        break
+                started = opened_at = time.monotonic()
+                print(f"  {label} open after {opened_at - t_zero:.2f}s, recording",
+                      flush=True)
+                end_at = started + args.seconds
+                while not stop.is_set() and time.monotonic() < end_at:
+                    remaining = end_at - time.monotonic()
                     requested = min(CHUNK, max(1, int(remaining * RATE)))
                     block = np.asarray(recorder.record(numframes=requested),
                                        dtype=np.float32).reshape(-1)
-
                     if len(block):
                         chunks.append(block)
         except Exception as exc:
-            error = str(exc)
-            stop.set()
+            error = f"{type(exc).__name__}: {exc}"
+            print(f"  {label} FAILED to open/record -> {error}", flush=True)
         ended = time.monotonic()
         results[label] = {
             "data": np.concatenate(chunks) if chunks else np.empty(0, np.float32),
             "duration": ended - started if started is not None else 0.0,
+            "open_offset": (opened_at - t_zero) if opened_at is not None else None,
             "error": error,
         }
     threads = [
@@ -158,32 +166,18 @@ def main():
         thread.start()
     interrupted = False
     try:
-        ready_until = time.monotonic() + 10
-        while not all(results.get(name, {}).get("ready")
-                      for name in ("mic", "desktop")):
-            if stop.is_set() or time.monotonic() >= ready_until:
-                break
-            time.sleep(0.05)
-        if not all(results.get(name, {}).get("ready")
-                   for name in ("mic", "desktop")):
-            stop.set()
-        deadline[0] = time.monotonic() + args.seconds
-        start.set()
-        while any(thread.is_alive() for thread in threads) and not stop.is_set():
-            remaining = max(0.0, deadline[0] - time.monotonic())
-            print(f"\rCapturing... {remaining:4.1f}s remaining", end="", flush=True)
-            if remaining <= 0:
-                stop.set()
-            else:
-                stop.wait(min(0.25, remaining))
+        # Threads self-terminate at their own deadline; just wait them out.
+        while any(thread.is_alive() for thread in threads):
+            elapsed = time.monotonic() - t_zero
+            print(f"\r  capturing... {elapsed:4.1f}s elapsed ", end="", flush=True)
+            stop.wait(0.25)
     except KeyboardInterrupt:
         interrupted = True
         stop.set()
         print("\nCtrl-C received; saving partial capture.")
     finally:
-        start.set()
         for thread in threads:
-            thread.join(timeout=2)
+            thread.join(timeout=max(5.0, args.seconds + 5))
         print()
     # Frames-vs-requested is a USELESS health metric here: soundcard's
     # _Recorder.record(numframes) (mediafoundation.py:781-820) ZERO-PADS when the
@@ -210,9 +204,11 @@ def main():
         rms = float(np.sqrt(np.mean(np.square(data, dtype=np.float64)))) if frames else 0.0
         result.update(data=data, peak=peak, rms=rms)
         results[label] = result
-        print(f"{label:7}: {frames} frames = {audio_s:.3f}s audio vs {wall:.3f}s wall, "
-              f"skew {skew:+.3f}s ({skew_pct:+.2f}%), peak {peak:.6f}, "
-              f"RMS {rms:.6f}")
+        offset = result.get("open_offset")
+        opened = f"opened +{offset:.2f}s" if offset is not None else "NEVER OPENED"
+        print(f"{label:7}: {opened}, {frames} frames = {audio_s:.3f}s audio vs "
+              f"{wall:.3f}s wall, skew {skew:+.3f}s ({skew_pct:+.2f}%), "
+              f"peak {peak:.6f}, RMS {rms:.6f}")
         if result.get("error"):
             print(f"         capture error: {result['error']}")
     mic_ok = len(results["mic"]["data"]) > 0 and not results["mic"].get("error")
