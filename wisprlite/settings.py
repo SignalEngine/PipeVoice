@@ -175,6 +175,35 @@ def _build_guide(parent, wheel) -> None:
     link("Get an OpenRouter key  ↗", "openrouter")
     link("Install Ollama  ↗", "ollama")
 
+    head("Record a meeting")
+    body("Pipevoice can record a whole call — both sides — and turn it into a transcript, "
+         "then into notes and action items. Nothing is uploaded unless you choose a cloud "
+         "engine; the recordings stay on your machine.")
+    item("1 · Set a meeting hotkey",
+         "Settings → Hotkeys → Meeting hotkey → Capture. Tap it once to start recording, "
+         "tap it again to stop. It's off until you set one.", badge="START HERE", badge_color=GOOD)
+    item("2 · It records both sides",
+         "Your microphone and your computer's own audio are captured separately — so what "
+         "you said and what they said never get mixed up. A REC bar shows the elapsed time "
+         "and a level meter for each side, so you can see at a glance that both are alive.")
+    item("3 · Dictation pauses itself",
+         "Your normal typing hotkey is switched off while a meeting records, so a stray "
+         "press can't interrupt the capture. It comes back the moment you stop.")
+    item("4 · Transcribe it",
+         "Settings → Meetings, pick the session, press Transcribe. Deepgram is fast and "
+         "separates the remote speakers; Local whisper works offline but labels everyone "
+         "the same. The tab tells you which one produced each transcript.")
+    item("5 · Name the people",
+         "Click a “Them 1” label in the transcript. Pipevoice plays the clearest two "
+         "seconds of that person talking so you can recognise them, then you type their "
+         "name. Names are per-meeting and never overwrite the original transcript.")
+    item("6 · Summarise",
+         "Choose Bullets, To-dos or Actions and press Summarise. Actions lists tasks with "
+         "an owner — which is why naming people first is worth the ten seconds.")
+    body("• Playing music? Your computer's audio is captured as one mix, so a podcast or "
+         "Spotify ends up in the transcript alongside the meeting. Pause it first.")
+    body("• Recording other people may need their consent where you live. Ask first.")
+
     head("Make it yours")
     body("• Accent / language (under Audio): pick yours for a real accuracy boost — UK, US, Indian, "
          "Australian, or Russian-accented English, and more.")

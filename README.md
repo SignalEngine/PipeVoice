@@ -69,6 +69,7 @@ One-click install · auto-updates itself · bring your own key, polish free with
 ## ✨ Features
 
 - 🎙️ **Push-to-talk voice typing into any app** — terminal, editor, browser, chat box.
+- 🎧 **Record a meeting** — captures your mic *and* your computer's audio as two separate streams, so what you said and what they said never get mixed up. Transcribe, name the speakers, and turn it into bullet points, to-dos or action items with an owner. See [Record a meeting](#-record-a-meeting).
 - 🔀 **Three transcription engines, switchable at runtime:** Deepgram (live, fastest), OpenAI Whisper (accurate), Local Whisper (private/offline).
 - ⌨️ **Two capture modes:** Push-to-talk (hold) or Toggle (tap on / tap off).
 - 📋 **Two output modes:** Type keystrokes, or Clipboard + Ctrl+V (paste).
@@ -127,6 +128,53 @@ Open your AI coding agent, hold the hotkey, and dictate:
 PipeVoice transcribes exactly what you said; turn on **Flow mode** and the AI cleans it into a tidy prompt before it lands. Set a **per-app profile** for your terminal (raw + Enter) and your chat app (polished + auto-send), and each window behaves the way it should.
 
 **Going further — an MCP server for agents (opt-in).** Enable *Agent MCP* in the tray and PipeVoice exposes two local tools so an agent can use your voice directly: **`listen`** (the agent asks a question, you answer by voice) and **`transcribe`** (hand it a local audio/video file → text with word/segment timestamps, or `srt`/`vtt` captions). No API key, runs on your machine.
+
+---
+
+## 🎧 Record a meeting
+
+PipeVoice can record a whole call — **both sides** — and turn it into a transcript, then into
+notes and action items. Recordings stay on your machine; nothing is uploaded unless you pick a
+cloud transcription engine.
+
+The trick is that it captures **two separate streams**: your microphone, and your computer's own
+audio (everyone else on the call). Because they're separate, *you* are identified with certainty
+rather than guessed at — no diarization can mistake you for someone else.
+
+**1 · Set a meeting hotkey.** Settings → Hotkeys → *Meeting hotkey* → Capture. Tap once to start,
+tap again to stop. It's off until you set one.
+
+**2 · Record.** A REC bar shows the elapsed time and a level meter for **each** side, so you can
+see at a glance that both are alive. Your normal dictation hotkey is disabled while a meeting
+records, so a stray press can't interrupt it.
+
+**3 · Transcribe.** Settings → **Meetings**, pick the session, press *Transcribe*.
+Deepgram is fast and separates the remote speakers; Local Whisper works fully offline but labels
+everyone the same. The tab shows which engine produced each transcript.
+
+**4 · Name the people.** Click a `Them 1` label in the transcript. PipeVoice plays the **clearest
+two seconds** of that person talking — not their first "um" — so you can recognise them, then you
+type their name. Names are per-meeting and never overwrite the original transcript, so a mistake
+is one edit away from undone.
+
+**5 · Summarise.** Choose **Bullets**, **To-dos** or **Actions**. Actions lists tasks with an
+owner, which is why naming people first is worth the ten seconds:
+
+```
+- [ ] Send the deck and the pricing sheet — You — tonight
+- [ ] Review the deck together — Sarah — next Tuesday
+- [ ] Add the roadmap slide — unassigned
+```
+
+It won't invent owners or deadlines that weren't said; anything unclear comes back `unassigned`.
+Summaries use the same provider as AI polish — the **free Gemini tier** works out of the box, and
+**Ollama** keeps them entirely offline.
+
+> **Two things worth knowing.** Your computer's audio is captured as one mix, so a podcast or
+> Spotify ends up in the transcript alongside the meeting — pause it first. And recording other
+> people may require their consent where you live.
+
+Recordings and transcripts live in `%LOCALAPPDATA%\Pipevoice\meetings\`.
 
 ---
 
