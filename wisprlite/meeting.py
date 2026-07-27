@@ -31,6 +31,7 @@ CAPTURE_JOIN_TIMEOUT = 3.0
 HEADER_PATCH_INTERVAL = 5.0
 DEFAULT_RETENTION_SESSIONS = 20
 SPEAKER_MAP_FILE = "speaker_map.json"
+CORRECTIONS_FILE = "corrections.json"
 
 
 def load_speaker_map(session_dir: str | Path) -> dict[str, str]:
@@ -72,6 +73,49 @@ def apply_speaker_map(
                 if str(segment.get("speaker") or "").casefold() == "you"
                 else mapping.get(str(segment.get("speaker") or ""), segment.get("speaker"))
             ),
+        }
+        for segment in segments
+        if isinstance(segment, dict)
+    ]
+
+
+def load_corrections(session_dir: str | Path) -> dict[str, str]:
+    """Load the optional wording overlay, never the raw transcript."""
+    path = Path(session_dir) / CORRECTIONS_FILE
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): str(replacement).strip()
+        for key, replacement in value.items()
+        if str(key).strip() and str(replacement).strip()
+    }
+
+
+def save_corrections(session_dir: str | Path, corrections: dict[str, str]) -> None:
+    """Persist only non-empty wording fixes as an atomic session overlay."""
+    clean = {
+        str(key): str(value).strip()
+        for key, value in corrections.items()
+        if str(key).strip() and str(value).strip()
+    }
+    _write_json(Path(session_dir) / CORRECTIONS_FILE, clean)
+
+
+def apply_corrections(
+    segments: list[dict], corrections: dict[str, str] | None = None
+) -> list[dict]:
+    """Return display copies of segments with wording overlaid."""
+    from .typer import apply_replacements
+
+    mapping = corrections or {}
+    return [
+        {
+            **segment,
+            "text": apply_replacements(str(segment.get("text") or ""), mapping),
         }
         for segment in segments
         if isinstance(segment, dict)
@@ -171,10 +215,13 @@ def render_transcript(
     *,
     timestamps: bool = False,
     speaker_map: dict[str, str] | None = None,
+    corrections: dict[str, str] | None = None,
 ) -> str:
     """Render consecutive same-speaker segments as plain-text blocks."""
     blocks: list[dict] = []
-    for segment in apply_speaker_map(segments, speaker_map):
+    for segment in apply_speaker_map(
+        apply_corrections(segments, corrections), speaker_map
+    ):
         text = str(segment.get("text") or "").strip()
         if not text:
             continue

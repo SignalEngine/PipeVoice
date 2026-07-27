@@ -5,21 +5,33 @@ from __future__ import annotations
 import re
 import time
 
-import keyboard
+try:
+    import keyboard
+except ImportError:  # Keep pure post-processing usable on headless test machines.
+    keyboard = None
 
 
 def apply_replacements(text: str, mapping: dict) -> str:
     """Apply user word-fixes (case-insensitive, word-boundary aware)."""
     if not text or not mapping:
         return text
-    for find, repl in mapping.items():
-        if not find:
-            continue
-        try:
-            text = re.sub(rf"\b{re.escape(find)}\b", repl, text, flags=re.IGNORECASE)
-        except re.error:
-            pass
-    return text
+    usable = {str(find): str(repl) for find, repl in mapping.items() if str(find)}
+    if not usable:
+        return text
+    try:
+        pattern = re.compile(
+            r"\b(" + "|".join(
+                re.escape(find)
+                for find in sorted(usable, key=len, reverse=True)
+            ) + r")\b",
+            re.IGNORECASE,
+        )
+        mapping_ci = {find.casefold(): replacement for find, replacement in usable.items()}
+        return pattern.sub(
+            lambda match: mapping_ci[match.group(1).casefold()], text
+        )
+    except re.error:
+        return text
 
 
 PASTE_TIMINGS = {
