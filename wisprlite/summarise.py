@@ -194,6 +194,7 @@ def summarise(
     model: str = "",
     *,
     session_dir: str | Path | None = None,
+    speaker_map: dict[str, str] | None = None,
     chunk_size: int = CHUNK_SEGMENTS,
     overlap: int = CHUNK_OVERLAP,
     completion: Callable[[list[dict[str, str]], str, str], str] | None = None,
@@ -219,7 +220,7 @@ def summarise(
 
     if len(parts) == 1:
         result = call(
-            _messages(mode, render_transcript(parts[0], timestamps=True)),
+            _messages(mode, render_transcript(parts[0], timestamps=True, speaker_map=speaker_map)),
             provider,
             resolved_model,
         ).strip()
@@ -229,7 +230,7 @@ def summarise(
         partials = []
         for index, part in enumerate(parts, 1):
             partial = call(
-                _messages(mode, render_transcript(part, timestamps=True)),
+                _messages(mode, render_transcript(part, timestamps=True, speaker_map=speaker_map)),
                 provider,
                 resolved_model,
             ).strip()

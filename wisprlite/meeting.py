@@ -9,12 +9,15 @@ packages still fail synchronously.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import sys
 import threading
+import tempfile
 import time
 import wave
+from array import array
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -27,6 +30,52 @@ DESKTOP_BLOCKSIZE = 1_600
 CAPTURE_JOIN_TIMEOUT = 3.0
 HEADER_PATCH_INTERVAL = 5.0
 DEFAULT_RETENTION_SESSIONS = 20
+SPEAKER_MAP_FILE = "speaker_map.json"
+
+
+def load_speaker_map(session_dir: str | Path) -> dict[str, str]:
+    """Load the optional display-name overlay, never the raw transcript."""
+    path = Path(session_dir) / SPEAKER_MAP_FILE
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): str(name).strip()
+        for key, name in value.items()
+        if str(key).strip() and str(key).casefold() != "you" and str(name).strip()
+    }
+
+
+def save_speaker_map(session_dir: str | Path, speaker_map: dict[str, str]) -> None:
+    """Persist only non-empty names as an atomic session-dir overlay."""
+    clean = {
+        str(key): str(value).strip()
+        for key, value in speaker_map.items()
+        if str(key).strip() and str(key).casefold() != "you" and str(value).strip()
+    }
+    _write_json(Path(session_dir) / SPEAKER_MAP_FILE, clean)
+
+
+def apply_speaker_map(
+    segments: list[dict], speaker_map: dict[str, str] | None = None
+) -> list[dict]:
+    """Return display copies of segments with remote names overlaid."""
+    mapping = speaker_map or {}
+    return [
+        {
+            **segment,
+            "speaker": (
+                segment.get("speaker")
+                if str(segment.get("speaker") or "").casefold() == "you"
+                else mapping.get(str(segment.get("speaker") or ""), segment.get("speaker"))
+            ),
+        }
+        for segment in segments
+        if isinstance(segment, dict)
+    ]
 
 
 def smooth_level(current: float, rms: float) -> float:
@@ -117,10 +166,15 @@ def _format_elapsed(value: object) -> str:
     return f"{elapsed // 60}:{elapsed % 60:02d}"
 
 
-def render_transcript(segments: list[dict], *, timestamps: bool = False) -> str:
+def render_transcript(
+    segments: list[dict],
+    *,
+    timestamps: bool = False,
+    speaker_map: dict[str, str] | None = None,
+) -> str:
     """Render consecutive same-speaker segments as plain-text blocks."""
     blocks: list[dict] = []
-    for segment in segments:
+    for segment in apply_speaker_map(segments, speaker_map):
         text = str(segment.get("text") or "").strip()
         if not text:
             continue
@@ -144,6 +198,86 @@ def render_transcript(segments: list[dict], *, timestamps: bool = False) -> str:
         + f"{block['speaker']}: {block['text']}"
         for block in blocks
     )
+
+
+def find_loudest_speaker_window(
+    wav_path: str | Path,
+    segments: list[dict],
+    speaker: str,
+    *,
+    window_seconds: float = 2.0,
+) -> tuple[float, float] | None:
+    """Find the highest-RMS two-second window among one speaker's segments.
+
+    Audio is read in bounded chunks for each candidate segment. The function is
+    deliberately Tk-free and does not retain the recording in memory.
+    """
+    if window_seconds <= 0:
+        raise ValueError("window_seconds must be positive")
+    candidates = []
+    for segment in segments:
+        if not isinstance(segment, dict) or str(segment.get("speaker") or "") != speaker:
+            continue
+        try:
+            start = max(0.0, float(segment.get("t", segment.get("start", 0)) or 0))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        candidates.append(start)
+    if not candidates:
+        return None
+    try:
+        with wave.open(str(wav_path), "rb") as audio:
+            if audio.getnchannels() != 1 or audio.getsampwidth() != 2:
+                return None
+            rate = audio.getframerate()
+            total = audio.getnframes()
+            length = max(1, int(round(window_seconds * rate)))
+            best = None
+            for start in candidates:
+                first = min(max(0, int(round(start * rate))), max(0, total - length))
+                audio.setpos(first)
+                remaining = min(length, total - first)
+                squares = 0
+                count = 0
+                while remaining:
+                    raw = audio.readframes(min(4096, remaining))
+                    if not raw:
+                        break
+                    samples = array("h")
+                    samples.frombytes(raw)
+                    if sys.byteorder != "little":
+                        samples.byteswap()
+                    squares += sum(sample * sample for sample in samples)
+                    count += len(samples)
+                    remaining -= len(samples)
+                if count:
+                    rms = math.sqrt(squares / count)
+                    if best is None or rms > best[0]:
+                        best = (rms, first / rate, min(length, total - first) / rate)
+            return (best[1], best[2]) if best else None
+    except (OSError, EOFError, wave.Error):
+        return None
+
+
+def write_wav_window(
+    wav_path: str | Path, start: float, duration: float, *, directory: str | Path | None = None
+) -> Path:
+    """Copy a bounded audio window to a temporary WAV for playback."""
+    with wave.open(str(wav_path), "rb") as source:
+        rate = source.getframerate()
+        first = max(0, int(round(start * rate)))
+        count = max(1, int(round(duration * rate)))
+        source.setpos(min(first, source.getnframes()))
+        frames = source.readframes(count)
+        fd, name = tempfile.mkstemp(prefix="pipevoice-speaker-", suffix=".wav", dir=directory)
+        os.close(fd)
+        target = Path(name)
+        with wave.open(str(target), "wb") as output:
+            output.setnchannels(source.getnchannels())
+            output.setsampwidth(source.getsampwidth())
+            output.setframerate(rate)
+            output.writeframes(frames)
+    return target
 
 
 def _wav_has_frames(path: Path) -> bool:

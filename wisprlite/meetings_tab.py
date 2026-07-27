@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -18,7 +19,15 @@ from pathlib import Path
 
 from . import config
 from .history import _copy_to_clipboard
-from .meeting import meetings_dir, render_transcript, transcribe_session
+from .meeting import (
+    find_loudest_speaker_window,
+    load_speaker_map,
+    meetings_dir,
+    render_transcript,
+    save_speaker_map,
+    transcribe_session,
+    write_wav_window,
+)
 from .summarise import provider_ready, read_summaries, summarise
 from .winui import PALETTE, tooltip
 
@@ -182,7 +191,7 @@ def _display_started(meta: dict, timestamp: float, path: Path) -> str:
         return path.name
 
 
-def _speaker_names(transcript: dict) -> list[str]:
+def _speaker_names(transcript: dict, speaker_map: dict[str, str] | None = None) -> list[str]:
     segments = transcript.get("segments")
     if not isinstance(segments, list):
         return []
@@ -190,7 +199,9 @@ def _speaker_names(transcript: dict) -> list[str]:
     for segment in segments:
         if not isinstance(segment, dict):
             continue
-        speaker = str(segment.get("speaker") or "").strip()
+        speaker = str((speaker_map or {}).get(
+            str(segment.get("speaker") or ""), segment.get("speaker")
+        ) or "").strip()
         if speaker and speaker not in speakers:
             speakers.append(speaker)
     return speakers
@@ -246,7 +257,7 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
         transcript = _read_json(path / "transcript.json")
         timestamp = _started_timestamp(meta, path)
         duration_seconds = meta.get("duration_seconds", 0)
-        speaker_names = _speaker_names(transcript)
+        speaker_names = _speaker_names(transcript, load_speaker_map(path))
         sessions.append(
             {
                 "path": path,
@@ -288,7 +299,7 @@ def _transcript_text(session_dir: str | Path) -> str:
     transcript = _read_json(Path(session_dir) / "transcript.json")
     segments = transcript.get("segments")
     if isinstance(segments, list):
-        rendered = render_transcript(segments)
+        rendered = render_transcript(segments, speaker_map=load_speaker_map(session_dir))
         if rendered:
             return rendered
     return str(transcript.get("text") or "").strip()
@@ -356,6 +367,7 @@ def build(container, root, wheel=None) -> None:
         "summaries": {},
         "summary_expanded": True,
         "summary_ready": False,
+        "speaker_map": {},
     }
 
     head = tk.Frame(container, bg=BG, padx=18, pady=14)
@@ -622,6 +634,193 @@ def build(container, root, wheel=None) -> None:
             "Actions": "actions",
         }.get(summary_mode_var.get(), "bullets")
 
+    def name_speaker(raw_speaker: str) -> None:
+        """Open the inline naming dialog for one remote diarization label."""
+        if raw_speaker.casefold() == "you" or state["busy"]:
+            return
+        import tkinter as tk
+        from tkinter import ttk
+
+        path = selected_path()
+        if path is None:
+            return
+        dialog = tk.Toplevel(root)
+        dialog.title(f"Name {raw_speaker}")
+        dialog.transient(root)
+        dialog.resizable(False, False)
+        dialog.configure(bg=CARD)
+        tk.Label(
+            dialog, text=f"Name {raw_speaker}", bg=CARD, fg=FG,
+            font=("Segoe UI", 10, "bold"), padx=18, pady=14,
+        ).pack(anchor="w")
+        entry = ttk.Entry(dialog, width=30)
+        entry.insert(0, state["speaker_map"].get(raw_speaker, ""))
+        entry.pack(fill="x", padx=18, pady=4)
+        sample_row = tk.Frame(dialog, bg=CARD)
+        sample_row.pack(fill="x", padx=18, pady=8)
+        play_btn = ttk.Button(sample_row, text="Play clearest sample", state="disabled")
+        play_btn.pack(side="left")
+        if sys.platform != "win32":
+            tooltip(play_btn, "Audio preview is only available on Windows.")
+        sample_status = tk.Label(sample_row, text="Finding a clear sample…", bg=CARD, fg=MUTED)
+        sample_status.pack(side="left", padx=8)
+        buttons = tk.Frame(dialog, bg=CARD)
+        buttons.pack(fill="x", padx=18, pady=14)
+        cancel_btn = ttk.Button(buttons, text="Cancel")
+        cancel_btn.pack(side="right")
+        save_btn = ttk.Button(buttons, text="Save")
+        save_btn.pack(side="right", padx=7)
+        temp_path = {"value": None}
+        closed = {"value": False}
+
+        def stop_audio() -> None:
+            if sys.platform == "win32":
+                try:
+                    import winsound
+                    winsound.PlaySound(None, 0)
+                except Exception:
+                    pass
+
+        def close() -> None:
+            if closed["value"]:
+                return
+            closed["value"] = True
+            stop_audio()
+            if temp_path["value"]:
+                try:
+                    Path(temp_path["value"]).unlink()
+                except OSError:
+                    pass
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", close)
+        cancel_btn.config(command=close)
+
+        def play_sample() -> None:
+            sample = temp_path["value"]
+            if not sample or sys.platform != "win32":
+                return
+            try:
+                import winsound
+                winsound.PlaySound(str(sample), winsound.SND_FILENAME | winsound.SND_ASYNC)
+                sample_status.config(text="Playing…")
+            except Exception as exc:
+                sample_status.config(text=f"Could not play: {exc}", fg=ACCENT)
+
+        play_btn.config(command=play_sample)
+
+        def save_name() -> None:
+            new_name = entry.get().strip()
+            updated = dict(state["speaker_map"])
+            if new_name:
+                updated[raw_speaker] = new_name
+            else:
+                updated.pop(raw_speaker, None)
+            try:
+                save_speaker_map(path, updated)
+            except OSError as exc:
+                sample_status.config(text=f"Could not save: {exc}", fg=ACCENT)
+                return
+            state["speaker_map"] = updated
+            close()
+            refresh(preferred=path, preserve_scroll=transcript.yview()[0])
+            regenerate_summaries(path, updated)
+
+        save_btn.config(command=save_name)
+        try:
+            dialog.grab_set()
+        except tk.TclError:
+            pass
+        entry.focus_set()
+
+        def prepare_sample() -> None:
+            transcript_data = _read_json(path / "transcript.json")
+            segments = transcript_data.get("segments")
+            wav_path = path / "desktop.wav"
+            if not isinstance(segments, list) or not wav_path.is_file():
+                return None
+            window = find_loudest_speaker_window(wav_path, segments, raw_speaker)
+            if window is None:
+                return None
+            return write_wav_window(wav_path, *window, directory=tempfile.gettempdir())
+
+        def sample_ready(sample) -> None:
+            if closed["value"]:
+                if sample:
+                    try:
+                        Path(sample).unlink()
+                    except OSError:
+                        pass
+                return
+            if sample is None or sys.platform != "win32":
+                sample_status.config(
+                    text=("Audio samples unavailable on this platform." if sys.platform != "win32"
+                          else "No audio sample found."),
+                    fg=MUTED,
+                )
+                return
+            temp_path["value"] = sample
+            play_btn.config(state="normal")
+            sample_status.config(text="")
+
+        def sample_work() -> None:
+            try:
+                sample = prepare_sample()
+            except Exception:
+                sample = None
+            try:
+                root.after(0, lambda: sample_ready(sample))
+            except Exception:
+                pass
+
+        threading.Thread(target=sample_work, daemon=True).start()
+
+    def regenerate_summaries(path: Path, speaker_map: dict[str, str]) -> None:
+        existing = read_summaries(path)
+        if not existing:
+            return
+        cfg = config.Config.load()
+        if not provider_ready(cfg.cleanup_provider):
+            status_label.config(
+                text="Speaker renamed; saved summaries are stale until a provider is available.",
+                fg=ACCENT,
+            )
+            return
+        set_busy(True)
+        status_label.config(text="Updating summaries for the new speaker name…", fg=MUTED)
+
+        def finished(error, values) -> None:
+            set_busy(False)
+            if error:
+                status_label.config(text=f"Summary update failed: {error}", fg=ACCENT)
+                return
+            state["summaries"].update(values)
+            display_summary()
+            status_label.config(text="Summaries updated.", fg=GOOD)
+
+        def work() -> None:
+            values = {}
+            error = None
+            try:
+                transcript_data = _read_json(path / "transcript.json")
+                segments = transcript_data.get("segments") or []
+                for mode in existing:
+                    value = summarise(
+                        segments, mode, cfg.cleanup_provider, cfg.cleanup_model,
+                        session_dir=path, speaker_map=speaker_map,
+                    )
+                    if not value:
+                        raise RuntimeError("the summary provider was not ready")
+                    values[mode] = value
+            except Exception as exc:
+                error = str(exc)
+            try:
+                root.after(0, lambda: finished(error, values))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
     def toggle_summary() -> None:
         state["summary_expanded"] = not state["summary_expanded"]
         if state["summary_expanded"]:
@@ -664,21 +863,23 @@ def build(container, root, wheel=None) -> None:
         if valid_segments:
             blocks = []
             for segment in valid_segments:
-                speaker = str(segment.get("speaker") or "Speaker").strip()
+                raw_speaker = str(segment.get("speaker") or "Speaker").strip()
                 body_text = str(segment.get("text") or "").strip()
-                if blocks and blocks[-1]["speaker"] == speaker:
+                if blocks and blocks[-1]["raw_speaker"] == raw_speaker:
                     blocks[-1]["text"] += " " + body_text
                 else:
                     blocks.append(
                         {
-                            "speaker": speaker,
+                            "raw_speaker": raw_speaker,
+                            "speaker": state["speaker_map"].get(raw_speaker, raw_speaker),
                             "text": body_text,
                             "time": segment.get("t", segment.get("start", 0)),
                         }
                     )
             remote_tags = {}
-            for block in blocks:
+            for block_index, block in enumerate(blocks):
                 speaker = block["speaker"]
+                raw_speaker = block["raw_speaker"]
                 if speaker.casefold() == "you":
                     speaker_tag = "speaker_you"
                 else:
@@ -687,6 +888,28 @@ def build(container, root, wheel=None) -> None:
                             f"speaker_{len(remote_tags) % len(SPEAKER_COLOURS)}"
                         )
                     speaker_tag = remote_tags[speaker]
+                    click_tag = f"speaker_click_{block_index}"
+                    transcript.tag_configure(
+                        click_tag,
+                        foreground=transcript.tag_cget(speaker_tag, "foreground"),
+                        font=("Segoe UI", 10, "bold"),
+                        spacing1=8,
+                    )
+                    transcript.tag_bind(
+                        click_tag,
+                        "<Enter>",
+                        lambda _event: transcript.config(cursor="hand2"),
+                    )
+                    transcript.tag_bind(
+                        click_tag,
+                        "<Leave>",
+                        lambda _event: transcript.config(cursor=""),
+                    )
+                    transcript.tag_bind(
+                        click_tag,
+                        "<Button-1>",
+                        lambda _event, raw=raw_speaker: name_speaker(raw),
+                    )
                 try:
                     elapsed = max(0, int(float(block["time"] or 0)))
                 except (TypeError, ValueError, OverflowError):
@@ -698,7 +921,7 @@ def build(container, root, wheel=None) -> None:
                     if elapsed >= 3600
                     else f"{elapsed // 60}:{elapsed % 60:02d}"
                 )
-                transcript.insert("end", speaker, speaker_tag)
+                transcript.insert("end", speaker, click_tag if speaker_tag != "speaker_you" else speaker_tag)
                 transcript.insert("end", f"  ·  {stamp}\n", "timestamp")
                 transcript.insert("end", block["text"] + "\n\n", "body")
         elif value:
@@ -798,6 +1021,7 @@ def build(container, root, wheel=None) -> None:
         session_title.config(text=session["display_started"])
         session_meta.config(text=" · ".join(meta_bits))
 
+        state["speaker_map"] = load_speaker_map(session["path"])
         transcript_data = _read_json(session["path"] / "transcript.json")
         segments = transcript_data.get("segments")
         body_text = _transcript_text(session["path"])
@@ -902,9 +1126,7 @@ def build(container, root, wheel=None) -> None:
         secondary_bits = []
         speakers = session["speaker_count"]
         if speakers is not None:
-            secondary_bits.append(
-                f"{speakers} speaker{'s' if speakers != 1 else ''}"
-            )
+            secondary_bits.append(" · ".join(session["speaker_names"]))
         if session["transcription_backend"]:
             secondary_bits.append(session["transcription_backend"])
         if not secondary_bits:

@@ -685,6 +685,40 @@ def test_session_limit_stops_and_records_reason():
         assert reasons == [meta["stop_reason"]]
 
 
+def test_speaker_map_round_trip_and_clearing_preserves_transcript_bytes():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp)
+        raw = b'{"segments":[{"speaker":"Them 1","text":"hello"}]}'
+        (path / "transcript.json").write_bytes(raw)
+        meeting.save_speaker_map(path, {"Them 1": "Sarah", "Them 2": ""})
+        assert meeting.load_speaker_map(path) == {"Them 1": "Sarah"}
+        assert meeting.render_transcript(
+            json.loads(raw)["segments"], speaker_map={"Them 1": "Sarah"}
+        ) == "Sarah: hello"
+        meeting.save_speaker_map(path, {})
+        assert meeting.load_speaker_map(path) == {}
+        assert (path / "transcript.json").read_bytes() == raw
+
+
+def test_loudest_speaker_window_uses_highest_rms_region():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "desktop.wav"
+        frames = (np.zeros(64_000, dtype=np.int16))
+        frames[32_000:64_000] = 20_000
+        with wave.open(str(path), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16_000)
+            audio.writeframes(frames.tobytes())
+        result = meeting.find_loudest_speaker_window(
+            path,
+            [{"speaker": "Them 1", "t": 0}, {"speaker": "Them 1", "t": 1},
+             {"speaker": "Them 1", "t": 2}],
+            "Them 1",
+        )
+        assert result == (2.0, 2.0)
+
+
 if __name__ == "__main__":
     test_session_directory_naming()
     test_meta_round_trip_and_elapsed()
@@ -712,4 +746,6 @@ if __name__ == "__main__":
     test_degraded_meeting_icon_persists()
     test_live_thread_blocks_a_second_session()
     test_session_limit_stops_and_records_reason()
+    test_speaker_map_round_trip_and_clearing_preserves_transcript_bytes()
+    test_loudest_speaker_window_uses_highest_rms_region()
     print("OK")
