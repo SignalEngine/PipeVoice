@@ -157,6 +157,26 @@ def test_rerunning_mode_replaces_only_that_persisted_section():
     assert loaded["actions"] == "- first actions"
 
 
+def test_rewriting_a_section_survives_backslashes_in_model_output():
+    """re.sub treats a replacement STRING's backslashes as group references, so a
+    summary mentioning a regex or a Windows path used to raise `bad escape \\d`,
+    surface as "Summarising failed", discard the paid LLM call and keep the stale
+    section — with every retry failing identically."""
+    import tempfile
+    from pathlib import Path
+    from wisprlite import summarise as S
+
+    with tempfile.TemporaryDirectory() as d:
+        S._persist(d, "bullets", "gemini", "m", "- first pass, nothing unusual")
+        nasty = r"- Ship the log parser for \d{4} dates; config in C:\Users\james\.pipevoice"
+        S._persist(d, "bullets", "gemini", "m", nasty)          # must not raise
+        saved = S.read_summaries(d)
+        assert nasty in saved["bullets"], saved
+        assert "first pass" not in saved["bullets"], "old section should be replaced"
+        assert (Path(d) / "summary.md").read_text(encoding="utf-8").count(
+            "pipevoice-summary:bullets:start") == 1
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

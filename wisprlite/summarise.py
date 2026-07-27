@@ -173,7 +173,13 @@ def _persist(
     )
     pattern = _section_pattern(mode)
     if pattern.search(existing):
-        updated = pattern.sub(section, existing, count=1)
+        # lambda, NOT the string directly: re.sub treats a replacement STRING's
+        # backslashes as group references, and `section` is model output. A summary
+        # mentioning "\d{4}" or a Windows path like C:\Users\me\.pipevoice raised
+        # `bad escape \d`, which surfaced as "Summarising failed", discarded the
+        # paid LLM call, and left the previous summary in place — every retry
+        # failing the same way.
+        updated = pattern.sub(lambda _m: section, existing, count=1)
     else:
         updated = existing.rstrip() + "\n\n" + section
     pending = path.with_suffix(".md.tmp")
