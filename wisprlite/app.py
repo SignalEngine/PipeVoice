@@ -32,9 +32,11 @@ class App:
         self._meeting = MeetingRecorder(
             device=config.device_arg(self.cfg),
             max_minutes=self.cfg.meeting_max_minutes,
+            retention_sessions=self.cfg.meeting_retention_sessions,
             on_auto_stop=self._on_meeting_auto_stop,
         )
         self._meeting_active = False
+        self._meeting_degraded = False
         self._meeting_errors_reported = set()
 
         self.recorder = Recorder(device=config.device_arg(self.cfg))
@@ -431,6 +433,7 @@ class App:
                 self._meeting.stop()
             finally:
                 self._meeting_active = False
+                self._meeting_degraded = False
                 self._set_icon("idle")
                 self.tray.update()
             return
@@ -438,6 +441,7 @@ class App:
             return
 
         self._meeting_active = True
+        self._meeting_degraded = False
         self._meeting_errors_reported.clear()
         try:
             self._meeting.start()
@@ -449,8 +453,8 @@ class App:
         self._set_icon("meeting")
         self.tray.update()
 
-    def _check_meeting_errors(self, session_dir) -> None:
-        if not self._meeting_active or self._meeting.session_dir != session_dir:
+    def _check_meeting_errors(self) -> None:
+        if not self._meeting_active:
             return
         errors = self._meeting.errors
         failures = []
@@ -460,12 +464,14 @@ class App:
                 self._meeting_errors_reported.add(failure)
                 failures.append(f"{label}: {error}")
         if failures:
+            self._meeting_degraded = True
             self._fail("meeting capture: " + "; ".join(failures))
 
     def _on_meeting_auto_stop(self, reason: str) -> None:
         if not self._meeting_active:
             return
         self._meeting_active = False
+        self._meeting_degraded = False
         self._fail(f"meeting stopped: {reason}")
         self.tray.update()
 
@@ -516,7 +522,11 @@ class App:
     def on_agent_listen(self, prompt="", timeout=45, mode="") -> dict:
         import concurrent.futures
         mode = mode or self.cfg.mcp_default_mode
-        if self._busy.locked() or self._pending_agent_listen is not None:
+        if (
+            self._meeting_active
+            or self._busy.locked()
+            or self._pending_agent_listen is not None
+        ):
             return {"status": "busy", "text": ""}
         if mode == "hands_free":
             return self._agent_listen_hands_free(prompt, timeout)
@@ -768,7 +778,7 @@ class App:
         while not self._stop.is_set():
             time.sleep(1.0)
             if self._meeting_active:
-                self._check_meeting_errors(self._meeting.session_dir)
+                self._check_meeting_errors()
             try:
                 mtime = config.CONFIG_PATH.stat().st_mtime
             except Exception:
@@ -796,6 +806,9 @@ class App:
         self.cfg = new  # hotkey/mode/output read live via lambdas
         self._meeting.device = config.device_arg(new)
         self._meeting.max_minutes = new.meeting_max_minutes
+        self._meeting.retention_sessions = max(
+            1, new.meeting_retention_sessions
+        )
 
         engine_keys = ("engine", "gemini_model", "groq_model", "openai_model",
                        "deepgram_model", "local_model_size", "local_device",
@@ -831,7 +844,7 @@ class App:
 
     def _set_icon(self, state: str) -> None:
         if self._meeting_active and state != "error":
-            state = "meeting"
+            state = "meeting_degraded" if self._meeting_degraded else "meeting"
         self.tray.set_state(state)
 
     def _fail(self, msg: str) -> None:

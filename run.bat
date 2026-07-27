@@ -11,11 +11,10 @@ if not exist ".venv" (
 
 set "REQ_HASH="
 for /f %%H in ('powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 'requirements.txt').Hash"') do set "REQ_HASH=%%H"
-if not defined REQ_HASH goto :setup_failed
 
 set "INSTALLED_HASH="
 if exist ".venv\requirements.sha256" set /p INSTALLED_HASH=<".venv\requirements.sha256"
-if /I not "!REQ_HASH!"=="!INSTALLED_HASH!" (
+if defined REQ_HASH if /I not "!REQ_HASH!"=="!INSTALLED_HASH!" (
     echo Installing updated dependencies...
     .venv\Scripts\python.exe -m pip install -r requirements.txt
     if errorlevel 1 (
@@ -30,7 +29,7 @@ if /I not "!REQ_HASH!"=="!INSTALLED_HASH!" (
 
 if not exist "assets\wisprlite.ico" (
     .venv\Scripts\python.exe assets\make_icon.py
-    if errorlevel 1 goto :launch_failed
+    if errorlevel 1 echo Icon generation failed; launching without a custom icon.
 )
 .venv\Scripts\python.exe -m wisprlite
 if errorlevel 1 goto :launch_failed

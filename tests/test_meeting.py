@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import re
 import sys
@@ -125,6 +126,10 @@ def test_meta_round_trip_and_elapsed():
                     value is not None for value in recorder._first_blocks.values()
                 )
             )
+            checkpoint_meta = json.loads(
+                (session / "meta.json").read_text(encoding="utf-8")
+            )
+            assert checkpoint_meta["stopped_at"] is None
             assert recorder.elapsed >= 0.0
             recorder.stop()
 
@@ -145,6 +150,71 @@ def test_meta_round_trip_and_elapsed():
                 assert audio.getnchannels() == 1
                 assert audio.getsampwidth() == 2
                 assert audio.getnframes() > 0
+
+
+def test_mid_recording_checkpoint_patches_wave_header():
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        path = pathlib.Path(tmp) / "mic.wav"
+        recorder._waves["mic"] = recorder._open_wave(path)
+        block = np.full((1_600, 1), 0.25, dtype=np.float32)
+
+        with patch.object(meeting.time, "monotonic", side_effect=(10.0, 16.0)):
+            recorder._write_block("mic", block)
+            recorder._write_block("mic", block)
+
+        with wave.open(str(path), "rb") as audio:
+            assert audio.getnframes() == 3_200
+        recorder._close_waves()
+
+
+def test_retention_prunes_all_but_newest_sessions():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        for index in range(5):
+            session = base / f"meeting-2026072{index + 1}-120000"
+            session.mkdir()
+            os.utime(session, (index, index))
+
+        recorder = MeetingRecorder(base, retention_sessions=3)
+        recorder._prune_sessions()
+
+        assert sorted(path.name for path in base.iterdir()) == [
+            "meeting-20260723-120000",
+            "meeting-20260724-120000",
+            "meeting-20260725-120000",
+        ]
+
+
+def test_retention_reserves_room_for_the_next_session():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        oldest = base / "meeting-20260725-120000"
+        newest = base / "meeting-20260726-120000"
+        oldest.mkdir()
+        newest.mkdir()
+        os.utime(oldest, (1, 1))
+        os.utime(newest, (2, 2))
+        recorder = MeetingRecorder(base, retention_sessions=2)
+        recorder._prune_sessions(reserve=1)
+
+        assert oldest.exists() is False
+        assert newest.exists()
+
+
+def test_default_meetings_dir_is_outside_roaming_profile():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+        roaming = root / "Roaming"
+        local = root / "Local"
+        with patch.object(meeting.sys, "platform", "win32"), patch.dict(
+            os.environ,
+            {"APPDATA": str(roaming), "LOCALAPPDATA": str(local)},
+        ):
+            recorder = MeetingRecorder()
+
+        assert recorder.base_dir == local / config.APP_NAME / "meetings"
+        assert roaming not in recorder.base_dir.parents
 
 
 def test_elapsed_uses_monotonic_time():
@@ -210,6 +280,7 @@ def test_numeric_config_values_are_coerced():
             json.dumps(
                 {
                     "meeting_max_minutes": "240",
+                    "meeting_retention_sessions": "12",
                     "min_seconds": "0.5",
                     "history_size": "75",
                     "deepgram_finish_timeout": "7.5",
@@ -224,6 +295,8 @@ def test_numeric_config_values_are_coerced():
 
     assert cfg.meeting_max_minutes == 240
     assert type(cfg.meeting_max_minutes) is int
+    assert cfg.meeting_retention_sessions == 12
+    assert type(cfg.meeting_retention_sessions) is int
     assert cfg.min_seconds == 0.5
     assert type(cfg.min_seconds) is float
     assert cfg.history_size == 75
@@ -258,6 +331,17 @@ def test_inactive_mic_stream_records_an_error():
             recorder.stop()
 
         assert "became inactive" in recorder.errors["mic"]
+
+
+def test_mic_callback_status_records_an_error():
+    recorder = MeetingRecorder(pathlib.Path("unused"))
+    recorder._on_mic_block(
+        np.empty((0, 1), dtype=np.float32),
+        0,
+        None,
+        "input overflow",
+    )
+    assert recorder.errors["mic"] == "RuntimeError: input overflow"
 
 
 def test_paused_meeting_can_stop_but_not_start():
@@ -331,6 +415,7 @@ def test_config_watcher_surfaces_a_late_meeting_error():
 
     assert app._meeting.checks == 2
     assert failures == ["meeting capture: desktop: RuntimeError: device lost"]
+    assert app._meeting_degraded is True
 
 
 def test_agent_hands_free_is_busy_during_meeting():
@@ -341,6 +426,30 @@ def test_agent_hands_free_is_busy_during_meeting():
 
     assert app._agent_listen_hands_free() == {"status": "busy", "text": ""}
     assert app._busy.locked() is False
+
+
+def test_agent_push_to_talk_is_busy_during_meeting():
+    App = app_class()
+    app = App.__new__(App)
+    app._meeting_active = True
+    app._busy = threading.Lock()
+    app._pending_agent_listen = None
+    app.cfg = types.SimpleNamespace(mcp_default_mode="push_to_talk")
+
+    assert app.on_agent_listen() == {"status": "busy", "text": ""}
+
+
+def test_degraded_meeting_icon_persists():
+    states = []
+    App = app_class()
+    app = App.__new__(App)
+    app._meeting_active = True
+    app._meeting_degraded = True
+    app.tray = types.SimpleNamespace(set_state=states.append)
+
+    app._set_icon("idle")
+
+    assert states == ["meeting_degraded"]
 
 
 def test_live_thread_blocks_a_second_session():
@@ -405,6 +514,10 @@ def test_session_limit_stops_and_records_reason():
 if __name__ == "__main__":
     test_session_directory_naming()
     test_meta_round_trip_and_elapsed()
+    test_mid_recording_checkpoint_patches_wave_header()
+    test_retention_prunes_all_but_newest_sessions()
+    test_retention_reserves_room_for_the_next_session()
+    test_default_meetings_dir_is_outside_roaming_profile()
     test_elapsed_uses_monotonic_time()
     test_one_stream_failure_keeps_the_other()
     test_missing_dependency_raises_from_start()
@@ -412,9 +525,12 @@ if __name__ == "__main__":
     test_numeric_config_values_are_coerced()
     test_configured_device_is_passed_to_input_stream()
     test_inactive_mic_stream_records_an_error()
+    test_mic_callback_status_records_an_error()
     test_paused_meeting_can_stop_but_not_start()
     test_config_watcher_surfaces_a_late_meeting_error()
     test_agent_hands_free_is_busy_during_meeting()
+    test_agent_push_to_talk_is_busy_during_meeting()
+    test_degraded_meeting_icon_persists()
     test_live_thread_blocks_a_second_session()
     test_session_limit_stops_and_records_reason()
     print("OK")

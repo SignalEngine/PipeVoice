@@ -9,6 +9,8 @@ packages still fail synchronously.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
 import threading
 import time
@@ -23,6 +25,21 @@ SAMPLE_WIDTH = 2
 MIC_BLOCKSIZE = 800
 DESKTOP_BLOCKSIZE = 1_600
 CAPTURE_JOIN_TIMEOUT = 3.0
+HEADER_PATCH_INTERVAL = 5.0
+DEFAULT_RETENTION_SESSIONS = 20
+
+
+def meetings_dir() -> Path:
+    """Return a machine-local recording directory, never the roaming profile."""
+    from .config import APP_NAME
+
+    if sys.platform == "win32":
+        base = os.getenv("LOCALAPPDATA")
+        if not base:
+            base = str(Path.home() / "AppData" / "Local")
+    else:
+        base = os.getenv("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / APP_NAME / "meetings"
 
 
 class MeetingRecorder:
@@ -32,15 +49,15 @@ class MeetingRecorder:
         *,
         device=None,
         max_minutes: int = 240,
+        retention_sessions: int = DEFAULT_RETENTION_SESSIONS,
         on_auto_stop: Callable[[str], None] | None = None,
     ) -> None:
         if base_dir is None:
-            from .config import config_dir
-
-            base_dir = config_dir() / "meetings"
+            base_dir = meetings_dir()
         self.base_dir = Path(base_dir)
         self.device = device
         self.max_minutes = max_minutes
+        self.retention_sessions = max(1, int(retention_sessions))
         self._on_auto_stop = on_auto_stop
         self.session_dir: Path | None = None
 
@@ -58,6 +75,10 @@ class MeetingRecorder:
             "mic": None,
             "desktop": None,
         }
+        self._last_header_patches = {
+            "mic": float("-inf"),
+            "desktop": float("-inf"),
+        }
         self._errors: dict[str, str | None] = {
             "mic": None,
             "desktop": None,
@@ -67,6 +88,7 @@ class MeetingRecorder:
         self._stop_reason: str | None = None
         self._state_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
+        self._meta_lock = threading.Lock()
 
     @property
     def active(self) -> bool:
@@ -104,11 +126,16 @@ class MeetingRecorder:
         import soundcard as sc
         import sounddevice as sd
 
+        self._prune_sessions(reserve=1)
         with self._state_lock:
             self.session_dir = self._create_session_dir()
             self._started_monotonic = time.monotonic()
             self._started_at = datetime.now(timezone.utc).isoformat()
             self._first_blocks = {"mic": None, "desktop": None}
+            self._last_header_patches = {
+                "mic": float("-inf"),
+                "desktop": float("-inf"),
+            }
             self._errors = {"mic": None, "desktop": None}
             self._stop_reason = None
             self._stop.clear()
@@ -124,6 +151,7 @@ class MeetingRecorder:
             with self._state_lock:
                 self._active = False
             raise
+        self._write_meta(stopped_at=None, duration=0.0)
 
         try:
             self._threads = [
@@ -235,6 +263,25 @@ class MeetingRecorder:
                 path = self.base_dir / f"{stem}-{suffix}"
                 suffix += 1
 
+    def _prune_sessions(self, reserve: int = 0) -> None:
+        """Keep room for the configured number of newest meeting sessions."""
+        try:
+            sessions = [
+                path
+                for path in self.base_dir.glob("meeting-*")
+                if path.is_dir()
+            ]
+            sessions.sort(
+                key=lambda path: (path.stat().st_mtime_ns, path.name),
+                reverse=True,
+            )
+            keep = max(0, self.retention_sessions - reserve)
+            for path in sessions[keep:]:
+                shutil.rmtree(path)
+        except Exception:
+            # Retention must never prevent recording.
+            pass
+
     @staticmethod
     def _open_wave(path: Path) -> wave.Wave_write:
         output = wave.open(str(path), "wb")
@@ -277,6 +324,8 @@ class MeetingRecorder:
                 self._mic_stream = None
 
     def _on_mic_block(self, indata, _frames, _time_info, _status) -> None:
+        if _status:
+            self._record_error("mic", RuntimeError(str(_status)))
         self._write_block("mic", indata)
 
     def _capture_desktop(self, sc) -> None:
@@ -321,6 +370,7 @@ class MeetingRecorder:
 
     def _write_block(self, label: str, block) -> None:
         arrived_at = time.monotonic()
+        checkpointed = False
         try:
             import numpy as np
 
@@ -335,8 +385,20 @@ class MeetingRecorder:
                 if self._first_blocks[label] is None:
                     self._first_blocks[label] = arrived_at
                 output.writeframesraw(pcm)
+                if (
+                    arrived_at - self._last_header_patches[label]
+                    >= HEADER_PATCH_INTERVAL
+                ):
+                    output._patchheader()
+                    output._file.flush()
+                    self._last_header_patches[label] = arrived_at
+                    checkpointed = True
         except Exception as exc:
             self._record_error(label, exc)
+        # The desktop capture runs on its own worker; keep JSON I/O out of the
+        # PortAudio realtime callback while still refreshing crash metadata.
+        if checkpointed and label == "desktop":
+            self._write_meta(stopped_at=None, duration=self.elapsed)
 
     def _record_error(self, label: str, exc: Exception) -> None:
         with self._state_lock:
@@ -354,7 +416,7 @@ class MeetingRecorder:
                 except Exception as exc:
                     self._record_error(label, exc)
 
-    def _write_meta(self, stopped_at: str, duration: float) -> None:
+    def _write_meta(self, stopped_at: str | None, duration: float) -> None:
         if self.session_dir is None:
             return
         meta = {
@@ -376,9 +438,10 @@ class MeetingRecorder:
             },
         }
         try:
-            (self.session_dir / "meta.json").write_text(
-                json.dumps(meta, indent=2),
-                encoding="utf-8",
-            )
+            with self._meta_lock:
+                path = self.session_dir / "meta.json"
+                pending = self.session_dir / "meta.json.tmp"
+                pending.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+                pending.replace(path)
         except Exception:
             pass

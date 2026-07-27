@@ -9,6 +9,7 @@ STATE_COLOR = {
     "idle": (148, 163, 184, 255),
     "recording": (52, 211, 153, 255),
     "meeting": (96, 165, 250, 255),
+    "meeting_degraded": (251, 146, 60, 255),
     "transcribing": (251, 191, 36, 255),
     "error": (248, 113, 113, 255),
 }
