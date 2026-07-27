@@ -17,9 +17,10 @@ from typing import Callable, Optional
 from .winui import PALETTE
 
 FRAME_MS = 33          # ~30 fps
-METER_N = 16           # number of VU bars
-METER_BW = 4           # bar width
-METER_GAP = 3          # gap between bars
+METER_N = 16           # samples of rolling level history behind the ribbon
+RIBBON_SPLINE = 20     # Bezier steps per span; higher = smoother, more work per frame
+RIBBON_FLOOR = 0.06    # a sliver of ribbon at silence, so the HUD never looks dead
+RIBBON_WOBBLE = 0.75   # depth of the travelling wave, scaled by level
 MEETING_METER_N = 7
 WIN_W, WIN_H = 380, 68
 TRANSPARENT = "#010203"  # Windows color key punched out for rounded corners
@@ -318,9 +319,14 @@ class Overlay:
         if "dot" not in items:
             items["ring"] = c.create_oval(0, 0, 0, 0, fill="", width=2)
             items["dot"] = c.create_oval(0, 0, 0, 0, outline="")
-            for i in range(METER_N):
-                items[f"bar_{i}"] = c.create_line(
-                    0, cy, 0, cy, width=METER_BW, capstyle="round",
+            # Three spline-smoothed polygons, back to front: two trailing echoes
+            # then the live ribbon. Created in draw order — Tk stacks by creation.
+            # 16 discrete rectangles could never look like audio; create_polygon's
+            # Bezier smoothing is what makes this read as a waveform at all.
+            for layer in ("echo2", "echo1", "wave"):
+                items[layer] = c.create_polygon(
+                    0, cy, 0, cy, 0, cy, smooth=True, splinesteps=RIBBON_SPLINE,
+                    outline="",
                 )
             items["text"] = c.create_text(
                 176, cy, anchor="w", fill=PALETTE["fg"],
@@ -330,21 +336,26 @@ class Overlay:
             level = max(0.0, float(self.level_provider()))
         except Exception:
             level = 0.0
-        normalized = min(1.0, level * 7.0)
+        normalized = meter_level(level)
+        # Smooth the INCOMING value once, then push it. The previous version
+        # lerped every history slot toward a shifting buffer, so the shift and
+        # the smoothing blurred each other and the ribbon flattened into a
+        # featureless lens — the time variation that makes it look like audio
+        # was being averaged away.
         targets = st["targets"]
+        smoothed = targets[-1] + (normalized - targets[-1]) * 0.45
         targets.pop(0)
-        targets.append(normalized)
-        hist = st["hist"]
-        for i, target in enumerate(targets):
-            hist[i] += (target - hist[i]) * 0.28
-            value = hist[i]
-            bx = 50 + i * (METER_BW + METER_GAP)
-            half_height = 1.5 + value * 15.5
-            c.coords(items[f"bar_{i}"], bx, cy - half_height, bx, cy + half_height)
-            c.itemconfigure(
-                items[f"bar_{i}"],
-                fill=self._blend(PALETTE["muted"], accent, value),
-            )
+        targets.append(smoothed)
+        hist = st["hist"] = list(targets)
+        peak = max(hist) if hist else 0.0
+        for layer, lag, amp, colour in (
+            ("echo2", 4, 13.0, self._blend(PALETTE["card"], accent, 0.22)),
+            ("echo1", 2, 14.5, self._blend(PALETTE["card"], accent, 0.45)),
+            ("wave", 0, 16.0, self._blend(PALETTE["muted"], accent, peak)),
+        ):
+            c.coords(items[layer], *self._ribbon_points(
+                hist, lag, 50, 120.0, cy, amp, st["phase"] - lag * 0.24))
+            c.itemconfigure(items[layer], fill=colour)
         breath = (math.sin(st["phase"] * 0.55) + 1.0) / 2.0
         ring_r = 10.0 + 2.5 * breath + 4.0 * normalized
         ring_colour = self._blend(PALETTE["bg"], accent, 0.3 + 0.35 * normalized)
@@ -461,6 +472,40 @@ class Overlay:
         if total >= 3600:
             return f"{total // 3600}:{(total % 3600) // 60:02d}:{total % 60:02d}"
         return f"{total // 60:02d}:{total % 60:02d}"
+
+    @staticmethod
+    def _ribbon_points(hist, lag: int, x0: float, span: float, cy: float,
+                       amp: float, phase: float = 0.0) -> list:
+        """Mirrored outline for one smoothed ribbon layer.
+
+        This is a VISUALISER, not an oscilloscope. Plotting the level history
+        literally gives a featureless lens: 16 samples of a slow-moving envelope,
+        mirrored and spline-smoothed, has no detail left to see. So the amplitude
+        comes from real audio and the *shape* comes from a travelling wave — the
+        same thing every music visualiser does, and what makes it read as sound
+        rather than as a progress bar.
+
+        `lag` reads further back through the history so a layer trails the live
+        one; that, plus the phase offset, is the entire echo effect.
+        """
+        count = len(hist)
+        if count < 2:
+            return [x0, cy, x0 + span, cy, x0 + span, cy]
+        step = span / (count - 1)
+        top, bottom = [], []
+        for i in range(count):
+            level = max(RIBBON_FLOOR, hist[max(0, i - lag)])
+            # Taper to the ends, or the mirrored shape is a flat-topped lozenge.
+            taper = math.sin(math.pi * i / (count - 1)) ** 0.55
+            # Travelling wave: quiet audio barely ripples, loud audio undulates.
+            wobble = 1.0 - RIBBON_WOBBLE * level * (
+                1.0 - math.sin(phase * 3.4 + i * 0.62)
+            ) / 2.0
+            x = x0 + i * step
+            half = level * amp * taper * wobble
+            top.extend((x, cy - half))
+            bottom[:0] = (x, cy + half)
+        return top + bottom
 
     @staticmethod
     def _blend(start: str, end: str, amount: float) -> str:
