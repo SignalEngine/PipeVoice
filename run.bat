@@ -11,23 +11,25 @@ if not exist ".venv" (
 
 set "REQ_HASH="
 for /f %%H in ('powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 'requirements.txt').Hash"') do set "REQ_HASH=%%H"
-if not defined REQ_HASH set "REQ_HASH=unknown"
+if not defined REQ_HASH goto :install
 
 set "INSTALLED_HASH="
 if exist ".venv\requirements.sha256" set /p INSTALLED_HASH=<".venv\requirements.sha256"
-if /I not "!REQ_HASH!"=="!INSTALLED_HASH!" (
-    echo Installing updated dependencies...
-    .venv\Scripts\python.exe -m pip install -r requirements.txt
-    if errorlevel 1 (
-        REM An existing environment may still be usable when the package index is offline.
-        .venv\Scripts\python.exe -m pip install --no-index -r requirements.txt >nul 2>&1
-        if errorlevel 1 goto :setup_failed
-        echo Dependency update unavailable; launching with the installed packages.
-    ) else (
-        >".venv\requirements.sha256" echo !REQ_HASH!
-    )
+if /I "!REQ_HASH!"=="!INSTALLED_HASH!" goto :dependencies_ready
+
+:install
+echo Installing updated dependencies...
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+if errorlevel 1 (
+    REM An existing environment may still be usable when the package index is offline.
+    .venv\Scripts\python.exe -m pip install --no-index -r requirements.txt >nul 2>&1
+    if errorlevel 1 goto :setup_failed
+    echo Dependency update unavailable; launching with the installed packages.
+) else (
+    if defined REQ_HASH >".venv\requirements.sha256" echo !REQ_HASH!
 )
 
+:dependencies_ready
 if not exist "assets\wisprlite.ico" (
     .venv\Scripts\python.exe assets\make_icon.py
     if errorlevel 1 echo Icon generation failed; launching without a custom icon.

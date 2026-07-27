@@ -168,6 +168,49 @@ def test_mid_recording_checkpoint_patches_wave_header():
         recorder._close_waves()
 
 
+def test_meta_checkpoint_preserves_transcription_keys():
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp) / "meeting-preserve-meta"
+        session.mkdir()
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder.session_dir = session
+        recorder._started_at = "2026-07-27T12:00:00+00:00"
+        transcription_meta = {
+            "status": "transcribed",
+            "transcript_file": "transcript.json",
+            "transcription_backend": "deepgram",
+            "transcription_error": None,
+        }
+        (session / "meta.json").write_text(
+            json.dumps(transcription_meta),
+            encoding="utf-8",
+        )
+
+        recorder._write_meta(stopped_at=None, duration=5.0)
+
+        meta = json.loads((session / "meta.json").read_text(encoding="utf-8"))
+        for key, value in transcription_meta.items():
+            assert meta[key] == value
+        assert meta["duration_seconds"] == 5.0
+
+
+def test_late_checkpoint_does_not_overwrite_final_meta():
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp) / "meeting-final-meta"
+        session.mkdir()
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder.session_dir = session
+        recorder._started_at = "2026-07-27T12:00:00+00:00"
+        stopped_at = "2026-07-27T12:30:00+00:00"
+        recorder._write_meta(stopped_at=stopped_at, duration=1800.0)
+
+        recorder._write_meta(stopped_at=None, duration=0.0)
+
+        meta = json.loads((session / "meta.json").read_text(encoding="utf-8"))
+        assert meta["stopped_at"] == stopped_at
+        assert meta["duration_seconds"] == 1800.0
+
+
 def test_retention_prunes_all_but_newest_sessions():
     with tempfile.TemporaryDirectory() as tmp:
         base = pathlib.Path(tmp)

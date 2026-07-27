@@ -41,10 +41,8 @@ def _read_json(path: Path) -> dict:
 
 
 def derive_status(session_dir: str | Path, meta: dict | None = None) -> str:
-    """Return the user-facing state: recorded, transcribed, or error."""
+    """Return the user-facing state: recording, recorded, transcribed, or error."""
     path = Path(session_dir)
-    if (path / "transcript.json").is_file():
-        return "transcribed"
     if meta is None:
         meta_path = path / "meta.json"
         if not meta_path.is_file():
@@ -52,6 +50,10 @@ def derive_status(session_dir: str | Path, meta: dict | None = None) -> str:
         meta = _read_json(meta_path)
     if not meta:
         return "error"
+    if not meta.get("stopped_at"):
+        return "recording"
+    if (path / "transcript.json").is_file():
+        return "transcribed"
     raw_status = str(meta.get("status") or "").lower()
     if (
         "error" in raw_status
@@ -151,6 +153,9 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
                 "duration_seconds": duration_seconds,
                 "duration": format_duration(duration_seconds),
                 "status": derive_status(path, meta),
+                "can_transcribe": bool(meta.get("stopped_at"))
+                and _has_audio(path)
+                and not (path / "transcript.json").is_file(),
                 "speaker_count": _speaker_count(transcript),
                 "error": meta.get("transcription_error")
                 or next(
@@ -478,22 +483,21 @@ def build(container, root, wheel=None) -> None:
         set_transcript(
             body_text
             or (
-                "No transcript yet. Choose Transcribe to process this recording."
-                if _has_audio(session["path"])
+                "Recording in progress. Transcription is available after it stops."
+                if session["status"] == "recording"
+                else "No transcript yet. Choose Transcribe to process this recording."
+                if session["can_transcribe"]
                 else "No transcript or usable audio was found for this session."
             )
         )
         search_var.set("")
-        can_transcribe = (
-            _has_audio(session["path"])
-            and not (session["path"] / "transcript.json").is_file()
-            and not state["busy"]
-        )
+        can_transcribe = session["can_transcribe"] and not state["busy"]
         transcribe_btn.config(state="normal" if can_transcribe else "disabled")
         copy_btn.config(state="normal" if body_text else "disabled")
         save_btn.config(state="normal" if body_text else "disabled")
         folder_btn.config(state="normal")
-        delete_btn.config(state="disabled" if state["busy"] else "normal")
+        can_delete = session["status"] != "recording" and not state["busy"]
+        delete_btn.config(state="normal" if can_delete else "disabled")
         status_label.config(
             text=session["error"] or "",
             fg=ACCENT if session["error"] else MUTED,
@@ -549,7 +553,13 @@ def build(container, root, wheel=None) -> None:
 
     def do_transcribe() -> None:
         path = selected_path()
-        if path is None or state["busy"]:
+        selected = state["selected"]
+        if (
+            path is None
+            or selected is None
+            or not selected["can_transcribe"]
+            or state["busy"]
+        ):
             return
         set_busy(True)
         status_label.config(
@@ -622,7 +632,13 @@ def build(container, root, wheel=None) -> None:
 
     def do_delete() -> None:
         path = selected_path()
-        if path is None or state["busy"]:
+        selected = state["selected"]
+        if (
+            path is None
+            or selected is None
+            or selected["status"] == "recording"
+            or state["busy"]
+        ):
             return
         if not messagebox.askyesno(
             "Delete meeting?",

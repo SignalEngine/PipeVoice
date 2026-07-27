@@ -10,11 +10,21 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from wisprlite import meetings_tab
 
 
-def _session(base, name, *, started_at, duration=0, status=None, error=None):
+def _session(
+    base,
+    name,
+    *,
+    started_at,
+    stopped_at="2026-07-27T12:00:00+00:00",
+    duration=0,
+    status=None,
+    error=None,
+):
     path = base / name
     path.mkdir()
     meta = {
         "started_at": started_at,
+        "stopped_at": stopped_at,
         "duration_seconds": duration,
         "mic": {"file": "mic.wav", "error": error},
         "desktop": {"file": "desktop.wav", "error": None},
@@ -95,6 +105,24 @@ def test_status_derivation_recorded_transcribed_and_error():
         }[malformed] == "error"
         listed = {item["path"]: item for item in meetings_tab.list_sessions(base)}
         assert listed[transcribed]["speaker_count"] == 2
+
+
+def test_live_session_is_recording_and_not_transcribable():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        live = _session(
+            base,
+            "meeting-live",
+            started_at="2026-07-27T12:00:00+00:00",
+            stopped_at=None,
+            duration=30,
+        )
+        (live / "desktop.wav").write_bytes(b"R" * 45)
+
+        [session] = meetings_tab.list_sessions(base)
+
+        assert session["status"] == "recording"
+        assert session["can_transcribe"] is False
 
 
 def test_duration_formatting():

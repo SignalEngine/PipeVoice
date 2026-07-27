@@ -589,7 +589,7 @@ class MeetingRecorder:
             self._record_error(label, exc)
         # The desktop capture runs on its own worker; keep JSON I/O out of the
         # PortAudio realtime callback while still refreshing crash metadata.
-        if checkpointed and label == "desktop":
+        if checkpointed and label == "desktop" and not self._stop.is_set():
             self._write_meta(stopped_at=None, duration=self.elapsed)
 
     def _record_error(
@@ -623,7 +623,7 @@ class MeetingRecorder:
     def _write_meta(self, stopped_at: str | None, duration: float) -> None:
         if self.session_dir is None:
             return
-        meta = {
+        recorder_meta = {
             "started_at": self._started_at,
             "stopped_at": stopped_at,
             "duration_seconds": duration,
@@ -645,6 +645,15 @@ class MeetingRecorder:
             with self._meta_lock:
                 path = self.session_dir / "meta.json"
                 pending = self.session_dir / "meta.json.tmp"
+                try:
+                    meta = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(meta, dict):
+                        meta = {}
+                except (OSError, ValueError, TypeError):
+                    meta = {}
+                if stopped_at is None and meta.get("stopped_at"):
+                    return
+                meta.update(recorder_meta)
                 pending.write_text(json.dumps(meta, indent=2), encoding="utf-8")
                 pending.replace(path)
         except Exception:
