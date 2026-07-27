@@ -83,7 +83,15 @@ class Handler(BaseHTTPRequestHandler):
         received["bytes"] = len(body)
         received["path"] = self.path
         received["chunked"] = length is None
-        payload = json.dumps(FAKE_RESPONSE).encode()
+        # Behave like the real API: these sections are only returned when the
+        # request asked for them. A permissive fake that always returns them
+        # hides a missing query flag (it hid a missing utterances=true once).
+        response = json.loads(json.dumps(FAKE_RESPONSE))
+        if "utterances=true" not in self.path:
+            response["results"].pop("utterances", None)
+        if "paragraphs=true" not in self.path and "smart_format=true" not in self.path:
+            response["results"]["channels"][0]["alternatives"][0].pop("paragraphs", None)
+        payload = json.dumps(response).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
@@ -127,9 +135,10 @@ def main():
     print(f"  ok  full file uploaded ({size} bytes, chunked={received['chunked']})")
 
     assert "/v1/listen" in received["path"], received["path"]
-    for flag in ("diarize=true", "paragraphs=true", "smart_format=true", "model=nova-2"):
+    for flag in ("diarize=true", "paragraphs=true", "smart_format=true",
+                 "utterances=true", "model=nova-2"):
         assert flag in received["path"], f"{flag} missing from {received['path']}"
-    print("  ok  request carries model + diarize + paragraphs + smart_format")
+    print("  ok  request carries model + diarize + paragraphs + smart_format + utterances")
 
     assert out["text"] == (
         "Speaker 0: Hello there.\n\n"

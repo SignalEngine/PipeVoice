@@ -101,8 +101,10 @@ def transcribe_file_deepgram(path: str, *, api_key: str, model: str = "nova-2",
     # v3 renamed .prerecorded -> .rest mid-series; accept either (see deepgram_engine).
     rest = (listen.rest if hasattr(listen, "rest") else listen.prerecorded).v("1")
 
+    # utterances must be explicit: the SDK omits None and Deepgram defaults it
+    # to false, which would silently return no `segments` at all.
     opts = {"model": model, "smart_format": True, "punctuate": True,
-            "paragraphs": True, "diarize": diarize}
+            "paragraphs": True, "diarize": diarize, "utterances": True}
     if language:
         opts["language"] = language
     # {"stream": fh}, NOT {"buffer": fh.read()} — measured on a 315 MB file, the
