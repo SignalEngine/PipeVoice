@@ -69,7 +69,12 @@ def _run(path: str, backend: str, cfg) -> dict:
             language=(lang or "en-US"))
     return T.transcribe_file(
         path, model_size=_local_model(cfg),
-        language=(lang.split("-")[0] or None))
+        language=(lang.split("-")[0] or None),
+        # honour the same device/precision dials dictation uses — a user who
+        # pinned local_device="cpu" to dodge a broken CUDA install must not get
+        # device="auto" here and fail on missing CUDA libs.
+        device=(getattr(cfg, "local_device", "") or "auto"),
+        compute_type=(getattr(cfg, "local_compute_type", "") or "int8"))
 
 
 def _pretty_duration(seconds: float) -> str:
@@ -112,7 +117,7 @@ def main() -> None:
                     borderwidth=0, arrowcolor=MUTED)
     style.map("Vertical.TScrollbar", background=[("active", SCROLL_HI)])
 
-    state = {"path": "", "text": "", "busy": False}
+    state = {"path": "", "busy": False}  # transcript lives in the Text widget
 
     # ---- header -------------------------------------------------------
     head = tk.Frame(root, bg=BG, padx=18, pady=14)
@@ -200,7 +205,6 @@ def main() -> None:
         state["path"] = path
         # Drop the previous transcript, or Copy/Save would hand back the OLD
         # file's text under the NEW file's name.
-        state["text"] = ""
         text.delete("1.0", "end")
         for b in (copy_btn, save_btn):
             b.config(state="disabled")
@@ -212,7 +216,6 @@ def main() -> None:
     def show_result(result: dict) -> None:
         set_busy(False)
         body_text = (result.get("text") or "").strip()
-        state["text"] = body_text
         text.delete("1.0", "end")
         text.insert("1.0", body_text or "(no speech detected)")
         dur = _pretty_duration(result.get("duration") or 0)
@@ -258,8 +261,13 @@ def main() -> None:
 
         threading.Thread(target=work, daemon=True).start()
 
+    def current_text() -> str:
+        """The widget is the single source of truth — it's editable, so a cached
+        copy would silently discard the user's corrections on Copy/Save."""
+        return text.get("1.0", "end-1c").strip()
+
     def copy() -> None:
-        ok = _copy_to_clipboard(root, state["text"])
+        ok = _copy_to_clipboard(root, current_text())
         copy_btn.config(text="Copied ✓" if ok else "Copy failed")
         root.after(1100, lambda: copy_btn.config(text="Copy"))
 
@@ -272,7 +280,7 @@ def main() -> None:
             return
         try:
             with open(dest, "w", encoding="utf-8") as fh:
-                fh.write(state["text"])
+                fh.write(current_text())
             status.config(text=f"Saved to {dest}", fg=GOOD)
         except Exception as exc:
             status.config(text=f"Could not save: {exc}", fg=ACCENT)

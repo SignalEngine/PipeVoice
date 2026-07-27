@@ -38,11 +38,13 @@ def _stub_engine():
 
 class Cfg:
     def __init__(self, transcribe_model_size="", local_model_size="base.en", language="",
-                 deepgram_model="nova-3"):
+                 deepgram_model="nova-3", local_device="", local_compute_type=""):
         self.transcribe_model_size = transcribe_model_size
         self.local_model_size = local_model_size
         self.language = language
         self.deepgram_model = deepgram_model
+        self.local_device = local_device
+        self.local_compute_type = local_compute_type
 
 
 def test_local_backend_uses_configured_model():
@@ -128,6 +130,22 @@ def test_deepgram_model_comes_from_config():
     would silently contradict the app's own setting for every user."""
     assert _cloud_call(Cfg(deepgram_model="nova-2"))["model"] == "nova-2"
     assert _cloud_call(Cfg(deepgram_model=""))["model"] == "nova-3"
+
+
+def test_local_device_and_precision_come_from_config():
+    """app.py passes local_device/local_compute_type to LocalEngine (lines 110,
+    367). Ignoring them here means a user who pinned device='cpu' to dodge a
+    broken CUDA install gets device='auto' and a missing-CUDA-lib failure."""
+    calls = _stub_engine()
+    W._run("a.wav", W.LOCAL, Cfg(local_device="cpu", local_compute_type="float32"))
+    kw = calls[0][2]
+    assert kw["device"] == "cpu", kw
+    assert kw["compute_type"] == "float32", kw
+
+    calls = _stub_engine()
+    W._run("a.wav", W.LOCAL, Cfg())  # blanks fall back to the library defaults
+    assert calls[0][2]["device"] == "auto", calls[0][2]
+    assert calls[0][2]["compute_type"] == "int8", calls[0][2]
 
 
 def test_pretty_duration():
