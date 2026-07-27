@@ -43,6 +43,7 @@ class App:
         self.overlay = Overlay(
             level_provider=lambda: self.recorder.level,
             meeting_provider=self._meeting_overlay_state,
+            on_meeting_click=self.toggle_meeting,
             enabled=self.cfg.overlay,
         )
         self.tray = Tray(self)

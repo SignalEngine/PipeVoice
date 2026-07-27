@@ -16,6 +16,63 @@ CHUNK_SEGMENTS = 120
 CHUNK_OVERLAP = 10
 MODES = ("bullets", "todos", "actions")
 
+
+def _inline_markdown_segments(text: str, base_tag: str) -> list[tuple[str, str]]:
+    """Return small Tk-independent inline Markdown segments.
+
+    This intentionally handles only the formatting produced by the meeting
+    prompts.  Keeping it as segments lets the Tk view apply tags without
+    changing the original Markdown kept in ``state["summaries"]``.
+    """
+    pattern = re.compile(r"(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_)")
+    result: list[tuple[str, str]] = []
+    position = 0
+    for match in pattern.finditer(text):
+        if match.start() > position:
+            result.append((text[position:match.start()], base_tag))
+        token = match.group(0)
+        if token.startswith(("**", "__")):
+            result.append((token[2:-2], "bold"))
+        else:
+            result.append((token[1:-1], "italic"))
+        position = match.end()
+    if position < len(text):
+        result.append((text[position:], base_tag))
+    return result or [("", base_tag)]
+
+
+def render_markdown_lines(markdown: str) -> list[list[tuple[str, str]]]:
+    """Render the supported meeting Markdown into tagged text segments.
+
+    The return value is one list per source line, with ``(text, tag)`` pairs.
+    It is deliberately Tk-free so the formatting contract can be tested on
+    Windows and headless development machines alike.
+    """
+    rendered: list[list[tuple[str, str]]] = []
+    for source_line in str(markdown or "").splitlines():
+        line = source_line.strip()
+        if not line:
+            rendered.append([])
+            continue
+        heading = re.match(r"^#{1,6}\s+(.*)$", line)
+        if heading:
+            rendered.append(_inline_markdown_segments(heading.group(1), "heading"))
+            continue
+        checkbox = re.match(r"^(?:[-*])\s+\[([ xX])\]\s+(.*)$", line)
+        if checkbox:
+            segments = [("☐ ", "checkbox")]
+            segments.extend(_inline_markdown_segments(checkbox.group(2), "bullet_text"))
+            rendered.append(segments)
+            continue
+        bullet = re.match(r"^(?:[-*])\s+(.*)$", line)
+        if bullet:
+            segments = [("• ", "bullet")]
+            segments.extend(_inline_markdown_segments(bullet.group(1), "bullet_text"))
+            rendered.append(segments)
+            continue
+        rendered.append(_inline_markdown_segments(line, "body"))
+    return rendered
+
 _COMMON_RAILS = (
     "Use only facts explicitly present in the transcript. Never invent tasks, "
     "owners, dates, deadlines, decisions, or agreements. Speaker labels are "

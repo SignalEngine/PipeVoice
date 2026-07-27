@@ -20,6 +20,7 @@ FRAME_MS = 33          # ~30 fps
 METER_N = 16           # number of VU bars
 METER_BW = 4           # bar width
 METER_GAP = 3          # gap between bars
+MEETING_METER_N = 7
 WIN_W, WIN_H = 380, 68
 TRANSPARENT = "#010203"  # Windows color key punched out for rounded corners
 
@@ -34,15 +35,40 @@ ACCENT = {
 }
 
 
+# Meter range in dBFS. Loudness is logarithmic, so a LINEAR map of RMS is useless:
+# the original `level * 7.0` left normal speech (RMS ~0.02-0.05) at a tenth of the
+# bar, and the first attempt to fix that saturated at 0.05 — pinning the meter full
+# the moment anyone spoke and only animating during near-silence. Both read to a user
+# as "the meter is broken". These bounds put room tone near the bottom, conversational
+# speech around the middle, and leave real headroom before clipping.
+METER_DB_FLOOR = -62.0
+METER_DB_CEIL = -8.0
+
+
+def meter_level(level: float) -> float:
+    """Map an RMS capture level to 0..1 for the meter, on a dB scale."""
+    try:
+        level = max(0.0, float(level))
+    except (TypeError, ValueError, OverflowError):
+        level = 0.0
+    if level <= 0.0:
+        return 0.0
+    db = 20.0 * math.log10(level)
+    span = METER_DB_CEIL - METER_DB_FLOOR
+    return min(1.0, max(0.0, (db - METER_DB_FLOOR) / span))
+
+
 class Overlay:
     def __init__(
         self,
         level_provider: Optional[Callable[[], float]] = None,
         enabled: bool = True,
         meeting_provider: Optional[Callable[[], dict]] = None,
+        on_meeting_click: Optional[Callable[[], None]] = None,
     ) -> None:
         self.level_provider = level_provider or (lambda: 0.0)
         self.meeting_provider = meeting_provider or (lambda: {})
+        self.on_meeting_click = on_meeting_click
         self.enabled = enabled
         self._q: "queue.Queue[tuple]" = queue.Queue()
         self._thread: Optional[threading.Thread] = None
@@ -109,6 +135,9 @@ class Overlay:
 
         canvas = tk.Canvas(root, width=WIN_W, height=WIN_H, bg=bg, highlightthickness=0)
         canvas.pack()
+        canvas.bind("<Button-1>", lambda _event: self._q.put(("meeting_click", None, "")))
+        canvas.bind("<Enter>", lambda _event: self._q.put(("hover", True, "")))
+        canvas.bind("<Leave>", lambda _event: self._q.put(("hover", False, "")))
         root.withdraw()
 
         st = {
@@ -117,6 +146,11 @@ class Overlay:
             "phase": 0.0,
             "hist": [0.0] * METER_N,
             "targets": [0.0] * METER_N,
+            "meeting_hist": {
+                "mic": [0.0] * MEETING_METER_N,
+                "desktop": [0.0] * MEETING_METER_N,
+            },
+            "hover": False,
             "visible": False,
             "hide_at": 0.0,
             "picker_title": "",
@@ -162,6 +196,12 @@ class Overlay:
                     if kind == "quit":
                         root.quit()
                         return False
+                    if kind == "meeting_click":
+                        if st["name"] == "meeting" and self.on_meeting_click:
+                            callback = self.on_meeting_click
+                            threading.Thread(target=callback, daemon=True).start()
+                    elif kind == "hover":
+                        st["hover"] = bool(state)
                     if kind == "hide":
                         st["name"] = "idle"
                         resize(WIN_H)
@@ -336,12 +376,12 @@ class Overlay:
                 )
                 items[f"{label}_track"] = c.create_line(
                     x1, cy + 9, x2, cy + 9, fill=PALETTE["meter_track"],
-                    width=4, capstyle="round",
+                    width=1,
                 )
-                items[f"{label}_level"] = c.create_line(
-                    x1, cy + 9, x1, cy + 9, fill=accent,
-                    width=4, capstyle="round",
-                )
+                for index in range(MEETING_METER_N):
+                    items[f"{label}_bar_{index}"] = c.create_line(
+                        0, cy + 9, 0, cy + 9, width=3, capstyle="round",
+                    )
         try:
             data = self.meeting_provider() or {}
         except Exception:
@@ -360,23 +400,35 @@ class Overlay:
         dot_r = 5.0 + 1.6 * breath
         c.coords(items["dot"], cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r)
         c.itemconfigure(items["dot"], fill=dot_colour)
-        c.itemconfigure(items["rec"], text=f"REC  {self._elapsed_text(elapsed)}")
+        c.itemconfigure(
+            items["rec"],
+            text="Click to stop" if st.get("hover") else f"REC  {self._elapsed_text(elapsed)}",
+        )
         for label, x1, x2 in (("mic", 174, 221), ("desktop", 292, 350)):
             dead = bool(errors.get(label))
-            normalized = min(1.0, max(0.0, float(levels.get(label, 0.0))) * 7.0)
+            try:
+                raw_level = float(levels.get(label, 0.0))
+            except (TypeError, ValueError, OverflowError):
+                raw_level = 0.0
+            normalized = meter_level(raw_level)
+            history = st["meeting_hist"][label]
+            history.pop(0)
+            history.append(normalized)
             if dead:
-                c.coords(items[f"{label}_level"], x1, cy + 9, x2, cy + 9)
                 colour = PALETTE["error"]
             else:
-                end = x1 + max(1.0, (x2 - x1) * normalized)
-                c.coords(items[f"{label}_level"], x1, cy + 9, end, cy + 9)
                 colour = self._blend(PALETTE["muted"], accent, normalized)
-            c.itemconfigure(items[f"{label}_level"], fill=colour)
+            gap = (x2 - x1 - MEETING_METER_N * 3) / max(1, MEETING_METER_N - 1)
+            for index, value in enumerate(history):
+                bar_x = x1 + index * (3 + gap)
+                half_height = 1.0 if dead else 1.0 + value * 7.0
+                item = items[f"{label}_bar_{index}"]
+                c.coords(item, bar_x, cy + 9 - half_height, bar_x, cy + 9 + half_height)
+                c.itemconfigure(item, fill=colour)
             c.itemconfigure(
                 items[f"{label}_label"],
                 fill=PALETTE["error"] if dead else PALETTE["muted"],
             )
-
     def _draw_status(self, c, st, H: int, accent: str) -> None:
         items = self._base_scene(c, st, "status", H, accent)
         cy = WIN_H // 2

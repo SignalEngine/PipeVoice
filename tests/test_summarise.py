@@ -177,6 +177,18 @@ def test_rewriting_a_section_survives_backslashes_in_model_output():
             "pipevoice-summary:bullets:start") == 1
 
 
+def test_render_markdown_lines_formats_headings_bullets_checkboxes_and_plain_text():
+    rendered = summary.render_markdown_lines(
+        "### Wedding Details\n* **Venue** confirmed\n- [ ] _Send invite_\nPlain text"
+    )
+    assert rendered[0] == [("Wedding Details", "heading")]
+    assert rendered[1][0] == ("• ", "bullet")
+    assert ("Venue", "bold") in rendered[1]
+    assert rendered[2][0] == ("☐ ", "checkbox")
+    assert ("Send invite", "italic") in rendered[2]
+    assert rendered[3] == [("Plain text", "body")]
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

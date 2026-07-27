@@ -28,7 +28,12 @@ from .meeting import (
     transcribe_session,
     write_wav_window,
 )
-from .summarise import provider_ready, read_summaries, summarise
+from .summarise import (
+    provider_ready,
+    read_summaries,
+    render_markdown_lines,
+    summarise,
+)
 from .winui import PALETTE, tooltip
 
 BG = PALETTE["bg"]
@@ -605,6 +610,15 @@ def build(container, root, wheel=None) -> None:
     transcript.tag_configure(
         "search_current", background=SEARCH_CURRENT, foreground=BG
     )
+    summary_text.tag_configure(
+        "heading", foreground=ACCENT, font=("Segoe UI", 9, "bold"), spacing1=5
+    )
+    summary_text.tag_configure("bullet", foreground=ACCENT, lmargin1=14, lmargin2=14)
+    summary_text.tag_configure("checkbox", foreground=ACCENT, lmargin1=14, lmargin2=14)
+    summary_text.tag_configure("bullet_text", foreground=FG, lmargin1=14, lmargin2=30)
+    summary_text.tag_configure("body", foreground=FG)
+    summary_text.tag_configure("bold", foreground=FG, font=("Segoe UI", 9, "bold"))
+    summary_text.tag_configure("italic", foreground=FG, font=("Segoe UI", 9, "italic"))
 
     actions = tk.Frame(right, bg=BG)
     actions.pack(fill="x", pady=(10, 0))
@@ -641,7 +655,7 @@ def build(container, root, wheel=None) -> None:
             "Actions": "actions",
         }.get(summary_mode_var.get(), "bullets")
 
-    def name_speaker(raw_speaker: str) -> None:
+    def name_speaker(raw_speaker: str, anchor_event=None, speaker_colour=None) -> None:
         """Open the inline naming dialog for one remote diarization label."""
         if raw_speaker.casefold() == "you" or state["busy"]:
             return
@@ -652,31 +666,24 @@ def build(container, root, wheel=None) -> None:
         if path is None:
             return
         dialog = tk.Toplevel(root)
-        dialog.title(f"Name {raw_speaker}")
-        dialog.transient(root)
-        dialog.resizable(False, False)
-        dialog.configure(bg=CARD)
+        dialog.overrideredirect(True)
+        dialog.configure(bg=PALETTE["border"])
+        panel = tk.Frame(dialog, bg=CARD, padx=9, pady=7)
+        panel.pack(fill="both", expand=True, padx=1, pady=1)
         tk.Label(
-            dialog, text=f"Name {raw_speaker}", bg=CARD, fg=FG,
-            font=("Segoe UI", 10, "bold"), padx=18, pady=14,
-        ).pack(anchor="w")
-        entry = ttk.Entry(dialog, width=30)
+            panel, text=raw_speaker, bg=CARD, fg=speaker_colour or ACCENT,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=(0, 6))
+        entry = ttk.Entry(panel, width=22)
         entry.insert(0, state["speaker_map"].get(raw_speaker, ""))
-        entry.pack(fill="x", padx=18, pady=4)
-        sample_row = tk.Frame(dialog, bg=CARD)
-        sample_row.pack(fill="x", padx=18, pady=8)
-        play_btn = ttk.Button(sample_row, text="Play clearest sample", state="disabled")
+        play_btn = ttk.Button(panel, text="▶", width=2, state="disabled", takefocus=False)
         play_btn.pack(side="left")
+        entry.pack(side="left", padx=(0, 6))
         if sys.platform != "win32":
             tooltip(play_btn, "Audio preview is only available on Windows.")
-        sample_status = tk.Label(sample_row, text="Finding a clear sample…", bg=CARD, fg=MUTED)
-        sample_status.pack(side="left", padx=8)
-        buttons = tk.Frame(dialog, bg=CARD)
-        buttons.pack(fill="x", padx=18, pady=14)
-        cancel_btn = ttk.Button(buttons, text="Cancel")
-        cancel_btn.pack(side="right")
-        save_btn = ttk.Button(buttons, text="Save")
-        save_btn.pack(side="right", padx=7)
+        save_btn = ttk.Button(panel, text="Save", style="Accent.TButton", takefocus=False)
+        save_btn.pack(side="left")
+        sample_status = tk.Label(panel, text="", bg=CARD, fg=MUTED)
         temp_path = {"value": None}
         closed = {"value": False}
 
@@ -687,6 +694,8 @@ def build(container, root, wheel=None) -> None:
                     winsound.PlaySound(None, 0)
                 except Exception:
                     pass
+
+        outside_binding = {"id": None}
 
         def close() -> None:
             if closed["value"]:
@@ -699,9 +708,20 @@ def build(container, root, wheel=None) -> None:
                 except OSError:
                     pass
             dialog.destroy()
+            try:
+                root.unbind_all("<Button-1>", outside_binding["id"])
+            except Exception:
+                pass
 
-        dialog.protocol("WM_DELETE_WINDOW", close)
-        cancel_btn.config(command=close)
+        def outside_click(event) -> None:
+            try:
+                if event.widget.winfo_toplevel() == dialog:
+                    return
+            except tk.TclError:
+                pass
+            close()
+
+        outside_binding["id"] = root.bind_all("<Button-1>", outside_click, add="+")
 
         def play_sample() -> None:
             sample = temp_path["value"]
@@ -734,11 +754,29 @@ def build(container, root, wheel=None) -> None:
             regenerate_summaries(path, updated)
 
         save_btn.config(command=save_name)
-        try:
-            dialog.grab_set()
-        except tk.TclError:
-            pass
+        dialog.update_idletasks()
+        if anchor_event is not None:
+            x = int(anchor_event.x_root) + 5
+            y = int(anchor_event.y_root) + 20
+        else:
+            x = root.winfo_rootx() + 20
+            y = root.winfo_rooty() + 20
+        x = min(max(0, x), max(0, dialog.winfo_screenwidth() - dialog.winfo_width()))
+        y = min(max(0, y), max(0, dialog.winfo_screenheight() - dialog.winfo_height()))
+        dialog.geometry(f"+{x}+{y}")
         entry.focus_set()
+        dialog.bind("<Escape>", lambda _event: close())
+        entry.bind("<Return>", lambda _event: save_name())
+
+        def dismiss_if_outside(_event=None) -> None:
+            try:
+                focused = dialog.focus_get()
+                if focused is None or focused.winfo_toplevel() != dialog:
+                    close()
+            except tk.TclError:
+                close()
+
+        dialog.bind("<FocusOut>", lambda event: dialog.after_idle(dismiss_if_outside, event))
 
         def prepare_sample() -> None:
             transcript_data = _read_json(path / "transcript.json")
@@ -861,7 +899,12 @@ def build(container, root, wheel=None) -> None:
         summary_text.config(state="normal")
         summary_text.delete("1.0", "end")
         if value:
-            summary_text.insert("1.0", value)
+            lines = render_markdown_lines(value)
+            for line_index, segments in enumerate(lines):
+                for text, tag in segments:
+                    summary_text.insert("end", text, tag)
+                if line_index < len(lines) - 1:
+                    summary_text.insert("end", "\n")
         summary_text.config(state="disabled")
         summary_copy_btn.config(state="normal" if value else "disabled")
         if value:
@@ -920,21 +963,32 @@ def build(container, root, wheel=None) -> None:
                         foreground=transcript.tag_cget(speaker_tag, "foreground"),
                         font=("Segoe UI", 10, "bold"),
                         spacing1=8,
+                        # NO cursor= : a Text TAG has no -cursor option (only the
+                        # widget does). Passing it raises TclError: unknown option
+                        # "-cursor" and kills the window before it draws. The hover
+                        # cursor is set on the widget by the <Enter> binding below.
                     )
                     transcript.tag_bind(
                         click_tag,
                         "<Enter>",
-                        lambda _event: transcript.config(cursor="hand2"),
+                        lambda _event, tag=click_tag: (
+                            transcript.config(cursor="hand2"),
+                            transcript.tag_configure(tag, underline=True),
+                        ),
                     )
                     transcript.tag_bind(
                         click_tag,
                         "<Leave>",
-                        lambda _event: transcript.config(cursor=""),
+                        lambda _event, tag=click_tag: (
+                            transcript.config(cursor=""),
+                            transcript.tag_configure(tag, underline=False),
+                        ),
                     )
                     transcript.tag_bind(
                         click_tag,
                         "<Button-1>",
-                        lambda _event, raw=raw_speaker: name_speaker(raw),
+                        lambda event, raw=raw_speaker, colour=transcript.tag_cget(speaker_tag, "foreground"):
+                            name_speaker(raw, event, colour),
                     )
                 try:
                     elapsed = max(0, int(float(block["time"] or 0)))
@@ -947,7 +1001,11 @@ def build(container, root, wheel=None) -> None:
                     if elapsed >= 3600
                     else f"{elapsed // 60}:{elapsed % 60:02d}"
                 )
-                transcript.insert("end", speaker, click_tag if speaker_tag != "speaker_you" else speaker_tag)
+                speaker_display = speaker if speaker_tag == "speaker_you" else f"{speaker}  ✎"
+                transcript.insert(
+                    "end", speaker_display,
+                    click_tag if speaker_tag != "speaker_you" else speaker_tag,
+                )
                 transcript.insert("end", f"  ·  {stamp}\n", "timestamp")
                 transcript.insert("end", block["text"] + "\n\n", "body")
         elif value:
