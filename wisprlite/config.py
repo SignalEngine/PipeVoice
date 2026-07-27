@@ -62,6 +62,7 @@ class Config:
     mode: str = "ptt"               # ptt | toggle
     hotkey: str = "ctrl+\\"          # any key/combo, e.g. "ctrl+alt", "f9"
     clipboard_hotkey: str = "right ctrl+right shift"  # 2nd hotkey -> dictate to clipboard (no typing); safe to hold. "" = off
+    meeting_hotkey: str = ""        # toggle meeting capture; "" = disabled
     output_mode: str = "type"       # type | paste
     language: str = ""              # "" = auto-detect; else ISO code e.g. "en"
     device: str = ""                # mic index or name substring; "" = default

@@ -12,6 +12,7 @@ import time
 from . import autostart, config
 from .audio import Recorder
 from .hotkey import HotkeyManager
+from .meeting import MeetingRecorder
 from .overlay import Overlay
 from .tray import Tray
 from .typer import apply_replacements, copy_clipboard, type_text
@@ -28,6 +29,8 @@ class App:
     def __init__(self) -> None:
         self.cfg = config.Config.load()
         self.paused = False
+        self._meeting = MeetingRecorder()
+        self._meeting_active = False
 
         self.recorder = Recorder(device=config.device_arg(self.cfg))
         self.overlay = Overlay(level_provider=lambda: self.recorder.level, enabled=self.cfg.overlay)
@@ -37,7 +40,7 @@ class App:
             get_mode=lambda: self.cfg.mode,
             on_start=lambda: self._on_start(clipboard=False),
             on_stop=self._on_stop,
-            is_paused=lambda: self.paused,
+            is_paused=lambda: self.paused or self._meeting_active,
         )
         # second hotkey: same record flow, but the result goes to the clipboard
         self.clip_hotkeys = HotkeyManager(
@@ -45,7 +48,14 @@ class App:
             get_mode=lambda: self.cfg.mode,
             on_start=lambda: self._on_start(clipboard=True),
             on_stop=self._on_stop,
-            is_paused=lambda: self.paused,
+            is_paused=lambda: self.paused or self._meeting_active,
+        )
+        self.meeting_hotkeys = HotkeyManager(
+            get_hotkey=lambda: self.cfg.meeting_hotkey,
+            get_mode=lambda: "toggle",
+            on_start=self.toggle_meeting,
+            on_stop=self.toggle_meeting,
+            is_paused=lambda: False,
         )
 
         self._armed_voice = None      # a Voice armed by the picker, consumed by the next utterance
@@ -152,7 +162,7 @@ class App:
                 get_mode=lambda: self.cfg.mode,
                 on_start=(lambda v=vn: self._on_start(voice=v)),
                 on_stop=self._on_stop,
-                is_paused=lambda: self.paused,
+                is_paused=lambda: self.paused or self._meeting_active,
             )
             self._voice_mgrs.append(mgr)
         pk = (self.cfg.voice_picker_hotkey or "").strip()
@@ -404,6 +414,31 @@ class App:
 
     def toggle_pause(self) -> None:
         self.paused = not self.paused
+        self.tray.update()
+
+    @property
+    def meeting_active(self) -> bool:
+        return self._meeting_active
+
+    def toggle_meeting(self) -> None:
+        if self._meeting_active:
+            try:
+                self._meeting.stop()
+            finally:
+                self._meeting_active = False
+                self._set_icon("idle")
+                self.tray.update()
+            return
+
+        self._meeting_active = True
+        try:
+            self._meeting.start()
+        except Exception as exc:
+            self._meeting_active = False
+            self._fail(f"meeting: {exc}")
+            self.tray.update()
+            return
+        self._set_icon("meeting")
         self.tray.update()
 
     # ---- agent MCP -------------------------------------------------------
@@ -682,10 +717,17 @@ class App:
         self._stop.set()
         self.stop_mcp_bridge()
         self.hotkeys.stop()
+        self.clip_hotkeys.stop()
+        self.meeting_hotkeys.stop()
         for m in self._voice_mgrs:
             m.stop()
         if self._picker_mgr:
             self._picker_mgr.stop()
+        if self._meeting_active:
+            try:
+                self._meeting.stop()
+            finally:
+                self._meeting_active = False
         self.overlay.stop()
         self.tray.stop()
 
@@ -756,6 +798,8 @@ class App:
             pass
 
     def _set_icon(self, state: str) -> None:
+        if self._meeting_active and state != "error":
+            state = "meeting"
         self.tray.set_state(state)
 
     def _fail(self, msg: str) -> None:
@@ -814,6 +858,7 @@ class App:
         self.tray.start()
         self.hotkeys.start()
         self.clip_hotkeys.start()
+        self.meeting_hotkeys.start()
         self._start_voice_hotkeys()
         if self.cfg.mcp_enabled:
             self.start_mcp_bridge()

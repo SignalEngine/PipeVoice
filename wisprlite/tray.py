@@ -8,6 +8,7 @@ import webbrowser
 STATE_COLOR = {
     "idle": (148, 163, 184, 255),
     "recording": (52, 211, 153, 255),
+    "meeting": (96, 165, 250, 255),
     "transcribing": (251, 191, 36, 255),
     "error": (248, 113, 113, 255),
 }
@@ -93,6 +94,8 @@ class Tray:
             Item("History…", lambda i, it: app.open_history()),
             Item("Transcribe a file…", lambda i, it: app.open_transcribe()),
             Item("App profiles…", lambda i, it: app.open_profiles()),
+            Item("Record meeting", lambda i, it: app.toggle_meeting(),
+                 checked=lambda it: app.meeting_active),
             Item("Show overlay", lambda i, it: app.toggle_overlay(),
                  checked=lambda it: app.cfg.overlay),
             Item("Sounds", lambda i, it: app.toggle_sounds(),
