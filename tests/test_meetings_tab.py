@@ -19,6 +19,7 @@ def _session(
     duration=0,
     status=None,
     error=None,
+    backend=None,
 ):
     path = base / name
     path.mkdir()
@@ -31,6 +32,8 @@ def _session(
     }
     if status:
         meta["status"] = status
+    if backend:
+        meta["transcription_backend"] = backend
     if status == "transcription_failed":
         meta["transcription_error"] = "RuntimeError: failed"
     (path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
@@ -73,6 +76,7 @@ def test_status_derivation_recorded_transcribed_and_error():
             "meeting-transcribed",
             started_at="2026-07-27T10:00:00+00:00",
             error="RuntimeError: one stream failed",
+            backend="deepgram",
         )
         (transcribed / "transcript.json").write_text(
             json.dumps(
@@ -105,6 +109,8 @@ def test_status_derivation_recorded_transcribed_and_error():
         }[malformed] == "error"
         listed = {item["path"]: item for item in meetings_tab.list_sessions(base)}
         assert listed[transcribed]["speaker_count"] == 2
+        assert listed[transcribed]["speaker_names"] == ["You", "Them"]
+        assert listed[transcribed]["transcription_backend"] == "Deepgram"
 
 
 def test_live_session_is_recording_and_not_transcribable():

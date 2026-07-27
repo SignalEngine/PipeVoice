@@ -18,7 +18,7 @@ from pathlib import Path
 from . import config
 from .history import _copy_to_clipboard
 from .meeting import meetings_dir, render_transcript, transcribe_session
-from .winui import PALETTE
+from .winui import PALETTE, tooltip
 
 BG = PALETTE["bg"]
 CARD = PALETTE["card"]
@@ -26,7 +26,13 @@ FG = PALETTE["fg"]
 MUTED = PALETTE["muted"]
 ACCENT = PALETTE["accent"]
 DIV = PALETTE["div"]
-GOOD = PALETTE["accent_hi"]
+GOOD = PALETTE["good"]
+AMBER = PALETTE["amber"]
+POPOVER = PALETTE["popover"]
+ROW_HOVER = PALETTE["row_hover"]
+SEARCH_MATCH = PALETTE["search_match"]
+SEARCH_CURRENT = PALETTE["search_current"]
+SPEAKER_COLOURS = tuple(PALETTE[f"speaker_{number}"] for number in range(1, 5))
 ON_ACCENT = PALETTE["bg"]
 SCROLL = PALETTE["border"]
 SCROLL_HI = PALETTE["muted"]
@@ -112,21 +118,39 @@ def _display_started(meta: dict, timestamp: float, path: Path) -> str:
                 started = started.astimezone()
         else:
             started = datetime.fromtimestamp(timestamp)
-        return started.strftime("%d %b %Y  %H:%M")
+        today = datetime.now().astimezone().date()
+        if started.date() == today:
+            day = "Today"
+        elif (today - started.date()).days == 1:
+            day = "Yesterday"
+        else:
+            day = started.strftime("%d %b")
+        return f"{day} {started:%H:%M}"
     except (TypeError, ValueError, OverflowError, OSError):
         return path.name
 
 
-def _speaker_count(transcript: dict) -> int | None:
+def _speaker_names(transcript: dict) -> list[str]:
     segments = transcript.get("segments")
     if not isinstance(segments, list):
-        return None
-    speakers = {
-        str(segment.get("speaker") or "").strip()
-        for segment in segments
-        if isinstance(segment, dict) and str(segment.get("speaker") or "").strip()
-    }
-    return len(speakers) or None
+        return []
+    speakers = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        speaker = str(segment.get("speaker") or "").strip()
+        if speaker and speaker not in speakers:
+            speakers.append(speaker)
+    return speakers
+
+
+def _backend_label(value: object) -> str:
+    backend = str(value or "").strip().lower()
+    if backend == "deepgram":
+        return "Deepgram"
+    if backend == "local":
+        return "Local whisper"
+    return str(value or "").strip()
 
 
 def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
@@ -143,6 +167,7 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
         transcript = _read_json(path / "transcript.json")
         timestamp = _started_timestamp(meta, path)
         duration_seconds = meta.get("duration_seconds", 0)
+        speaker_names = _speaker_names(transcript)
         sessions.append(
             {
                 "path": path,
@@ -156,7 +181,11 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
                 "can_transcribe": bool(meta.get("stopped_at"))
                 and _has_audio(path)
                 and not (path / "transcript.json").is_file(),
-                "speaker_count": _speaker_count(transcript),
+                "speaker_count": len(speaker_names) or None,
+                "speaker_names": speaker_names,
+                "transcription_backend": _backend_label(
+                    meta.get("transcription_backend")
+                ) if (path / "transcript.json").is_file() else "",
                 "error": meta.get("transcription_error")
                 or next(
                     (
@@ -238,6 +267,7 @@ def build(container, root, wheel=None) -> None:
     state = {
         "sessions": [],
         "selected": None,
+        "rows": [],
         "matches": [],
         "match_index": -1,
         "busy": False,
@@ -276,30 +306,35 @@ def build(container, root, wheel=None) -> None:
     ).pack(fill="x")
     list_wrap = tk.Frame(left, bg=CARD)
     list_wrap.pack(fill="both", expand=True)
-    session_list = tk.Listbox(
+    session_canvas = tk.Canvas(
         list_wrap,
         bg=CARD,
-        fg=FG,
-        selectbackground=ACCENT,
-        selectforeground=ON_ACCENT,
-        activestyle="none",
-        relief="flat",
-        borderwidth=0,
         highlightthickness=0,
-        exportselection=False,
-        font=("Consolas", 9),
-        # 52, not 39: a row is "27 Jul 2026  16:15" + right-aligned duration +
-        # status + speaker count. At 39 the longest status ("transcribed") and
-        # the speaker suffix were clipped off the right edge.
-        width=52,
+        borderwidth=0,
+        width=380,
+        takefocus=True,
     )
     list_bar = ttk.Scrollbar(
-        list_wrap, orient="vertical", command=session_list.yview
+        list_wrap, orient="vertical", command=session_canvas.yview
     )
-    session_list.configure(yscrollcommand=list_bar.set)
+    session_canvas.configure(yscrollcommand=list_bar.set)
     list_bar.pack(side="right", fill="y")
-    session_list.pack(side="left", fill="both", expand=True)
-    wheel(session_list)
+    session_canvas.pack(side="left", fill="both", expand=True)
+    session_rows = tk.Frame(session_canvas, bg=CARD)
+    rows_window = session_canvas.create_window(
+        (0, 0), window=session_rows, anchor="nw"
+    )
+    session_rows.bind(
+        "<Configure>",
+        lambda _event: session_canvas.configure(
+            scrollregion=session_canvas.bbox("all")
+        ),
+    )
+    session_canvas.bind(
+        "<Configure>",
+        lambda event: session_canvas.itemconfigure(rows_window, width=event.width),
+    )
+    wheel(session_canvas)
 
     right = tk.Frame(body, bg=BG)
     right.pack(side="left", fill="both", expand=True, padx=(14, 0))
@@ -367,9 +402,31 @@ def build(container, root, wheel=None) -> None:
     transcript_bar.pack(side="right", fill="y")
     transcript.pack(side="left", fill="both", expand=True)
     wheel(transcript)
-    transcript.tag_configure("search_match", background=DIV, foreground=FG)
+    transcript.tag_configure("speaker_you", foreground=ACCENT,
+                             font=("Segoe UI", 10, "bold"), spacing1=8)
+    for index, colour in enumerate(SPEAKER_COLOURS):
+        transcript.tag_configure(
+            f"speaker_{index}",
+            foreground=colour,
+            font=("Segoe UI", 10, "bold"),
+            spacing1=8,
+        )
     transcript.tag_configure(
-        "search_current", background=ACCENT, foreground=ON_ACCENT
+        "timestamp", foreground=MUTED, font=("Segoe UI", 8)
+    )
+    transcript.tag_configure(
+        "body", foreground=FG, font=("Segoe UI", 10),
+        spacing1=4, spacing2=2, spacing3=8,
+    )
+    transcript.tag_configure(
+        "placeholder", foreground=MUTED, font=("Segoe UI", 10),
+        spacing1=4, spacing2=2, spacing3=8,
+    )
+    transcript.tag_configure(
+        "search_match", background=SEARCH_MATCH, foreground=FG
+    )
+    transcript.tag_configure(
+        "search_current", background=SEARCH_CURRENT, foreground=BG
     )
 
     actions = tk.Frame(right, bg=BG)
@@ -400,11 +457,63 @@ def build(container, root, wheel=None) -> None:
         selected = state["selected"]
         return selected["path"] if selected else None
 
-    def set_transcript(value: str) -> None:
+    def set_transcript(
+        value: str,
+        segments: list[dict] | None = None,
+        *,
+        placeholder: bool = False,
+    ) -> None:
         transcript.config(state="normal")
         transcript.delete("1.0", "end")
-        if value:
-            transcript.insert("1.0", value)
+        valid_segments = [
+            segment for segment in (segments or [])
+            if isinstance(segment, dict)
+            and str(segment.get("text") or "").strip()
+        ]
+        if valid_segments:
+            blocks = []
+            for segment in valid_segments:
+                speaker = str(segment.get("speaker") or "Speaker").strip()
+                body_text = str(segment.get("text") or "").strip()
+                if blocks and blocks[-1]["speaker"] == speaker:
+                    blocks[-1]["text"] += " " + body_text
+                else:
+                    blocks.append(
+                        {
+                            "speaker": speaker,
+                            "text": body_text,
+                            "time": segment.get("t", segment.get("start", 0)),
+                        }
+                    )
+            remote_tags = {}
+            for block in blocks:
+                speaker = block["speaker"]
+                if speaker.casefold() == "you":
+                    speaker_tag = "speaker_you"
+                else:
+                    if speaker not in remote_tags:
+                        remote_tags[speaker] = (
+                            f"speaker_{len(remote_tags) % len(SPEAKER_COLOURS)}"
+                        )
+                    speaker_tag = remote_tags[speaker]
+                try:
+                    elapsed = max(0, int(float(block["time"] or 0)))
+                except (TypeError, ValueError, OverflowError):
+                    elapsed = 0
+                stamp = (
+                    f"{elapsed // 3600}:"
+                    f"{(elapsed % 3600) // 60:02d}:"
+                    f"{elapsed % 60:02d}"
+                    if elapsed >= 3600
+                    else f"{elapsed // 60}:{elapsed % 60:02d}"
+                )
+                transcript.insert("end", speaker, speaker_tag)
+                transcript.insert("end", f"  ·  {stamp}\n", "timestamp")
+                transcript.insert("end", block["text"] + "\n\n", "body")
+        elif value:
+            transcript.insert(
+                "1.0", value, "placeholder" if placeholder else "body"
+            )
         transcript.config(state="disabled")
 
     def apply_current_match() -> None:
@@ -455,40 +564,61 @@ def build(container, root, wheel=None) -> None:
         )
         apply_current_match()
 
-    def select_session(_event=None, preferred: Path | None = None) -> None:
-        if preferred is not None:
-            for index, session in enumerate(state["sessions"]):
-                if session["path"] == preferred:
-                    session_list.selection_clear(0, "end")
-                    session_list.selection_set(index)
-                    session_list.activate(index)
-                    session_list.see(index)
-                    break
-        selection = session_list.curselection()
-        if not selection:
+    def paint_row(row_info: dict, colour: str) -> None:
+        for widget in row_info["widgets"]:
+            widget.config(bg=colour)
+
+    def select_session(index: int, *, reveal: bool = False) -> None:
+        if state["busy"] or not 0 <= index < len(state["sessions"]):
             return
-        session = state["sessions"][selection[0]]
+        session = state["sessions"][index]
         state["selected"] = session
-        speaker_count = session["speaker_count"]
-        speaker_text = (
-            f" · {speaker_count} speaker{'s' if speaker_count != 1 else ''}"
-            if speaker_count is not None
-            else ""
-        )
-        session_title.config(text=session["display_started"])
-        session_meta.config(
-            text=f"{session['duration']} · {session['status']}{speaker_text}"
-        )
-        body_text = _transcript_text(session["path"])
-        set_transcript(
-            body_text
-            or (
-                "Recording in progress. Transcription is available after it stops."
-                if session["status"] == "recording"
-                else "No transcript yet. Choose Transcribe to process this recording."
-                if session["can_transcribe"]
-                else "No transcript or usable audio was found for this session."
+        for row_index, row_info in enumerate(state["rows"]):
+            row_info["selected"] = row_index == index
+            paint_row(row_info, POPOVER if row_info["selected"] else CARD)
+        if reveal:
+            session_canvas.update_idletasks()
+            row_y = state["rows"][index]["frame"].winfo_y()
+            content_height = max(1, session_rows.winfo_height())
+            session_canvas.yview_moveto(row_y / content_height)
+
+        speaker_names = session["speaker_names"]
+        has_you = any(name.casefold() == "you" for name in speaker_names)
+        other_count = len(speaker_names) - (1 if has_you else 0)
+        if has_you and other_count:
+            speaker_text = (
+                f"You + {other_count} other{'s' if other_count != 1 else ''}"
             )
+        elif has_you:
+            speaker_text = "You"
+        elif other_count:
+            speaker_text = (
+                f"{other_count} other{'s' if other_count != 1 else ''}"
+            )
+        else:
+            speaker_text = ""
+        meta_bits = [session["duration"], session["status"]]
+        if speaker_text:
+            meta_bits.append(speaker_text)
+        if session["transcription_backend"]:
+            meta_bits.append(session["transcription_backend"])
+        session_title.config(text=session["display_started"])
+        session_meta.config(text=" · ".join(meta_bits))
+
+        transcript_data = _read_json(session["path"] / "transcript.json")
+        segments = transcript_data.get("segments")
+        body_text = _transcript_text(session["path"])
+        fallback = (
+            "Recording in progress. Transcription is available after it stops."
+            if session["status"] == "recording"
+            else "No transcript yet. Choose Transcribe to process this recording."
+            if session["can_transcribe"]
+            else "No transcript or usable audio was found for this session."
+        )
+        set_transcript(
+            body_text or fallback,
+            segments if isinstance(segments, list) else None,
+            placeholder=not bool(body_text),
         )
         search_var.set("")
         can_transcribe = session["can_transcribe"] and not state["busy"]
@@ -503,30 +633,99 @@ def build(container, root, wheel=None) -> None:
             fg=ACCENT if session["error"] else MUTED,
         )
 
+    def add_session_row(session: dict, index: int) -> None:
+        row = tk.Frame(session_rows, bg=CARD, padx=12, pady=10, cursor="hand2")
+        row.pack(fill="x")
+        top = tk.Frame(row, bg=CARD)
+        top.pack(fill="x")
+        dot_colour = {
+            "transcribed": GOOD,
+            "recorded": MUTED,
+            "recording": AMBER,
+            "error": ACCENT,
+        }.get(session["status"], MUTED)
+        dot = tk.Label(
+            top, text="●", bg=CARD, fg=dot_colour,
+            font=("Segoe UI Symbol", 9), cursor="hand2",
+        )
+        dot.pack(side="left", padx=(0, 7))
+        tooltip(dot, session["status"].capitalize())
+        title = tk.Label(
+            top, text=session["display_started"], bg=CARD, fg=FG,
+            font=("Segoe UI", 10, "bold"), anchor="w", cursor="hand2",
+        )
+        title.pack(side="left", fill="x", expand=True)
+        duration = tk.Label(
+            top, text=session["duration"], bg=CARD, fg=FG,
+            font=("Segoe UI", 9, "bold"), anchor="e", cursor="hand2",
+        )
+        duration.pack(side="right")
+
+        secondary_bits = []
+        speakers = session["speaker_count"]
+        if speakers is not None:
+            secondary_bits.append(
+                f"{speakers} speaker{'s' if speakers != 1 else ''}"
+            )
+        if session["transcription_backend"]:
+            secondary_bits.append(session["transcription_backend"])
+        if not secondary_bits:
+            secondary_bits.append(
+                "Recording in progress"
+                if session["status"] == "recording"
+                else "No transcript yet"
+            )
+        secondary = tk.Label(
+            row, text=" · ".join(secondary_bits), bg=CARD, fg=MUTED,
+            font=("Segoe UI", 8), anchor="w", cursor="hand2",
+        )
+        secondary.pack(fill="x", padx=(19, 0), pady=(3, 0))
+
+        widgets = (row, top, dot, title, duration, secondary)
+        row_info = {"frame": row, "widgets": widgets, "selected": False}
+        state["rows"].append(row_info)
+
+        def enter(_event) -> None:
+            if not row_info["selected"] and not state["busy"]:
+                paint_row(row_info, ROW_HOVER)
+
+        def leave(_event) -> None:
+            paint_row(row_info, POPOVER if row_info["selected"] else CARD)
+
+        def choose(_event) -> None:
+            session_canvas.focus_set()
+            select_session(index)
+
+        for widget in widgets:
+            widget.bind("<Button-1>", choose, add="+")
+            widget.bind("<Enter>", enter, add="+")
+            widget.bind("<Leave>", leave, add="+")
+
+        tk.Frame(session_rows, bg=DIV, height=1).pack(fill="x", padx=12)
+
     def refresh(preferred: Path | None = None) -> None:
         state["sessions"] = list_sessions()
-        session_list.delete(0, "end")
-        for session in state["sessions"]:
-            speakers = session["speaker_count"]
-            speaker_text = f"  {speakers}spk" if speakers is not None else ""
-            session_list.insert(
-                "end",
-                f"{session['display_started']}  {session['duration']:>8}  "
-                f"{session['status']}{speaker_text}",
-            )
+        state["rows"] = []
+        for child in session_rows.winfo_children():
+            child.destroy()
+        for index, session in enumerate(state["sessions"]):
+            add_session_row(session, index)
         count_label.config(
             text=f"{len(state['sessions'])} session"
             f"{'' if len(state['sessions']) == 1 else 's'}"
         )
         if not state["sessions"]:
             state["selected"] = None
-            session_list.insert("end", "No meetings recorded yet.")
-            session_list.config(state="disabled")
+            tk.Label(
+                session_rows, text="No meetings recorded yet.", bg=CARD, fg=MUTED,
+                font=("Segoe UI", 9), padx=14, pady=20,
+            ).pack(anchor="w")
             session_title.config(text="No meetings yet")
             session_meta.config(text="")
             set_transcript(
                 "Set a meeting hotkey in Settings, then press it once to start "
-                "recording and again to stop."
+                "recording and again to stop.",
+                placeholder=True,
             )
             for button in (
                 transcribe_btn,
@@ -541,15 +740,34 @@ def build(container, root, wheel=None) -> None:
             match_label.config(text="0/0")
             status_label.config(text="")
             return
-        session_list.config(state="normal")
         target = preferred or state["sessions"][0]["path"]
-        select_session(preferred=target)
+        target_index = next(
+            (
+                index for index, session in enumerate(state["sessions"])
+                if session["path"] == target
+            ),
+            0,
+        )
+        select_session(target_index, reveal=True)
 
     def set_busy(busy: bool) -> None:
         state["busy"] = busy
-        session_list.config(state="disabled" if busy else "normal")
         for button in (transcribe_btn, delete_btn):
             button.config(state="disabled")
+
+    def move_session(step: int) -> str:
+        if not state["sessions"] or state["busy"]:
+            return "break"
+        current = next(
+            (
+                index for index, session in enumerate(state["sessions"])
+                if state["selected"] and session["path"] == state["selected"]["path"]
+            ),
+            0,
+        )
+        target = min(max(0, current + step), len(state["sessions"]) - 1)
+        select_session(target, reveal=True)
+        return "break"
 
     def do_transcribe() -> None:
         path = selected_path()
@@ -655,7 +873,14 @@ def build(container, root, wheel=None) -> None:
                 status_label.config(
                     text=f"Could not delete session: {error}", fg=ACCENT
                 )
-                select_session(preferred=path)
+                current_index = next(
+                    (
+                        index for index, session in enumerate(state["sessions"])
+                        if session["path"] == path
+                    ),
+                    0,
+                )
+                select_session(current_index)
                 return
             state["selected"] = None
             refresh()
@@ -673,8 +898,11 @@ def build(container, root, wheel=None) -> None:
 
         threading.Thread(target=work, daemon=True).start()
 
-    session_list.bind("<<ListboxSelect>>", select_session)
     search_var.trace_add("write", update_search)
+    session_canvas.bind("<Up>", lambda _event: move_session(-1))
+    session_canvas.bind("<Down>", lambda _event: move_session(1))
+    session_canvas.bind("<Home>", lambda _event: move_session(-len(state["sessions"])))
+    session_canvas.bind("<End>", lambda _event: move_session(len(state["sessions"])))
     search_entry.bind("<Return>", lambda _event: move_match(1))
     prev_btn.config(command=lambda: move_match(-1))
     next_btn.config(command=lambda: move_match(1))

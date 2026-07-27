@@ -12,6 +12,10 @@ DARK = "#13151d"
 PALETTE = {
     "bg": "#13151d", "card": "#1b1e29", "popover": "#20242c", "fg": "#e5e7eb",
     "muted": "#94a3b8", "accent": "#e06c75", "accent_hi": "#e8838b", "div": "#272b37",
+    "good": "#98c379", "amber": "#e5c07b", "row_hover": "#242936",
+    "speaker_1": "#61afef", "speaker_2": "#c678dd", "speaker_3": "#56b6c2",
+    "speaker_4": "#d19a66", "search_match": "#3a4050",
+    "search_current": "#e5c07b",
     # subtle field border instead of clam's default WHITE bevel; coral on focus.
     "border": "#39414f",
 }
