@@ -252,9 +252,16 @@ def main():
     # survive; each stream's own skew is measured against the same wall clock.
     if mic_ok and desk_ok:
         rel = results["mic"]["skew"] - results["desktop"]["skew"]
-        print(f"\nrelative mic-vs-desktop skew over {args.seconds:g}s: {rel:+.3f}s"
-              f"  -> extrapolates to ~{rel * (3600 / max(args.seconds, 1e-9)):+.1f}s/hour")
-        print("(a merge that assumes sample-count == elapsed time drifts by this much)")
+        print(f"\nrelative mic-vs-desktop skew over {args.seconds:g}s: {rel:+.3f}s")
+        # Deliberately NOT extrapolated to s/hour. A single run cannot tell a
+        # fixed start/stop offset from a real drift rate, and presenting one as
+        # the other is a fabricated metric: measured 2026-07-27, this value was
+        # -0.072s at 20s and -0.060s at 120s. As a rate that would have implied
+        # -13.0s/hr then -1.8s/hr; it is in fact a constant ~-0.065s offset with
+        # no measurable drift. Run at two durations and compare.
+        print("NOTE: this is one sample. Re-run with a very different --seconds:")
+        print("  roughly unchanged -> fixed offset (correct it once at merge time)")
+        print("  scales with duration -> real drift (merge needs re-anchoring)")
     passed = mic_ok and desk_ok and audible and not interrupted and not write_errors
     print(f"\nWAV output: {outdir.resolve()}")
     print("\n========== VERDICT ==========")
