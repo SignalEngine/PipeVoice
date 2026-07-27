@@ -223,6 +223,7 @@ CI (`build.yml`) runs on `windows-latest`: `pip install -r requirements.txt pyin
 **Gotchas:**
 - **Three version strings.** `wisprlite/__init__.py` `__version__` (currently `2.30.2`) is the only one the updater compares; the `.iss` `AppVersion` (`2.25.0`) is just the installer's Add/Remove-Programs label and is already stale. Bump `__init__.py` for a release; don't trust `.iss` as the source of truth.
 - **`Pipevoice` vs `PipeVoice` is load-bearing.** Renaming the asset/UA/`--name` to the "PipeVoice" display casing breaks the updater's `name == ASSET` match and the release filename CI uploads. Display copy may say PipeVoice; identifiers stay lowercase-v.
+- **`--collect-all` imports every submodule, so an optional extra can break the build with no code change.** `mcp` is pinned only `>=1.2`; CI drifted onto 1.28.1, whose `mcp.cli` calls `sys.exit(1)` when `typer` (the `[cli]` extra) is absent — so `collect_all('mcp')` hard-failed and main went red on a commit that touched no build inputs (2026-07-27; last green was v2.30.3, 2026-06-25). CI now installs `mcp[cli]` as a **build-time** dep. Any other loosely-pinned `--collect-all` target can do the same; `deepgram-sdk>=3,<4` is pinned for exactly this reason.
 - **`--onedir`, never `--onefile`.** The comment in `.iss` is a scar: onefile's `_MEI` extraction breaks self-update. The `[Files]` section bundles the whole `dist/Pipevoice/` folder (exe + `_internal/`).
 - The theme bevel fix is fragile; the `--collect-all` list is fragile (see above).
 

@@ -24,7 +24,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          # mcp[cli] is a BUILD-time need, not a runtime one: --collect-all mcp
+          # makes PyInstaller import every mcp submodule, and mcp.cli does
+          # `sys.exit(1)` when typer is absent (typer ships only in the [cli]
+          # extra). requirements.txt pins `mcp>=1.2`, so CI drifted onto 1.28.1
+          # and the build broke with no code change — first seen 2026-07-27,
+          # last green build was v2.30.3 on 2026-06-25.
+          pip install -r requirements.txt pyinstaller "mcp[cli]"
 
       - name: Generate icon
         run: python assets/make_icon.py
