@@ -22,8 +22,15 @@ RIBBON_SPLINE = 20     # Bezier steps per span; higher = smoother, more work per
 RIBBON_FLOOR = 0.06    # a sliver of ribbon at silence, so the HUD never looks dead
 RIBBON_WOBBLE = 0.75   # depth of the travelling wave, scaled by level
 # Per-stream auto-gain for the meeting meters (see _draw_meeting).
-METER_PEAK_DECAY = 0.995      # ~4s to halve at 30fps: holds through a pause
-METER_MIN_REFERENCE = 0.004   # never amplify pure silence into a full meter
+METER_PEAK_DECAY = 0.99      # ~2.3s half-life at 30fps: long enough that a pause
+                              # between words does not collapse the reference,
+                              # short enough that the meter recovers within a few
+                              # seconds after a loud passage rather than ~20s.
+METER_MIN_REFERENCE = 0.02    # floor the reference: without this ANY sustained
+                              # level converges peak->level and every stationary
+                              # stream reads an identical 0.666, with room tone
+                              # (0.002) landing at 0.555 — inside the speech band.
+                              # A fan on the wrong mic would have read as healthy.
 METER_REFERENCE_RMS = 0.05    # a stream at its own recent peak reads as loud speech
 MEETING_METER_N = 7
 WIN_W, WIN_H = 380, 68
@@ -63,6 +70,17 @@ def meter_level(level: float) -> float:
     return min(1.0, max(0.0, (db - METER_DB_FLOOR) / span))
 
 
+def update_peak(peak: float, raw: float) -> float:
+    """Advance a stream's decaying peak reference by one frame."""
+    try:
+        peak, raw = float(peak), float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    if not (math.isfinite(peak) and math.isfinite(raw)):
+        return 0.0
+    return max(max(0.0, raw), max(0.0, peak) * METER_PEAK_DECAY)
+
+
 def auto_gain(raw: float, peak: float) -> float:
     """Meter value for one stream, judged against that stream's OWN recent peak.
 
@@ -73,10 +91,15 @@ def auto_gain(raw: float, peak: float) -> float:
     stream alive?", so each is scaled to its own range instead.
     """
     try:
-        raw = max(0.0, float(raw))
-        peak = max(0.0, float(peak))
+        raw = float(raw)
+        peak = float(peak)
     except (TypeError, ValueError, OverflowError):
         return 0.0
+    # inf does not raise, and max(raw, inf * decay) == inf forever — the meter
+    # would die for the process lifetime with no recovery.
+    if not (math.isfinite(raw) and math.isfinite(peak)):
+        return 0.0
+    raw, peak = max(0.0, raw), max(0.0, peak)
     reference = max(peak, METER_MIN_REFERENCE)
     return meter_level(raw / reference * METER_REFERENCE_RMS)
 
@@ -307,6 +330,17 @@ class Overlay:
             c.itemconfigure(items["pill"], outline=accent)
             return items
         c.delete("all")
+        if scene == "meeting":
+            # Reset the auto-gain references when a meeting scene opens. They
+            # only decay inside _draw_meeting, so BETWEEN meetings they are
+            # frozen, not decaying: after recording a podcast (peak ~0.25), the
+            # first ~20s of the next, quieter meeting showed a near-dead meter —
+            # precisely the symptom auto-gain was added to fix.
+            st["meeting_peak"] = {"mic": 0.0, "desktop": 0.0}
+            st["meeting_hist"] = {
+                "mic": [0.0] * MEETING_METER_N,
+                "desktop": [0.0] * MEETING_METER_N,
+            }
         st["scene"] = scene
         st["items"] = {
             "pill": self._round_rect(
@@ -452,7 +486,7 @@ class Overlay:
             # stream ALIVE?", so each is judged against its OWN recent peak:
             # a reference that rises instantly and decays slowly.
             peaks = st["meeting_peak"]
-            peaks[label] = max(raw_level, peaks[label] * METER_PEAK_DECAY)
+            peaks[label] = update_peak(peaks[label], raw_level)
             normalized = auto_gain(raw_level, peaks[label])
             history = st["meeting_hist"][label]
             history.pop(0)
