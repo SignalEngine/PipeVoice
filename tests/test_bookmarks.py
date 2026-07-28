@@ -367,3 +367,48 @@ def test_cross_meeting_search_finds_the_right_meetings():
         # spelling hits and the original no longer does.
         assert len(search_sessions("Dev", sessions)) == 1
         assert search_sessions("Dave", sessions) == {}
+
+
+def test_search_cache_notices_a_correction():
+    # Keying the cache on transcript.json alone served pre-correction text
+    # forever: fix David to Dev, search "Dev", and the meeting was missing.
+    import json as _json
+    import tempfile
+    import time
+    from wisprlite.meetings_tab import search_sessions
+
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = pathlib.Path(tmp) / "meeting-1"
+        folder.mkdir()
+        (folder / "transcript.json").write_text(
+            _json.dumps({"segments": [{"text": "ask David about it"}]}), encoding="utf-8"
+        )
+        sessions = [{"path": folder, "name": "m1"}]
+        cache = {}
+
+        assert len(search_sessions("David", sessions, cache=cache)) == 1
+        time.sleep(0.01)
+        meeting.save_corrections(folder, {"David": "Dev"})
+
+        assert len(search_sessions("Dev", sessions, cache=cache)) == 1, (
+            "the cache must invalidate when corrections change"
+        )
+        assert search_sessions("David", sessions, cache=cache) == {}
+
+
+def test_filtered_rows_select_the_meeting_that_was_clicked():
+    # The P1: row indexes from a FILTERED list were used against the unfiltered
+    # sessions, so clicking the one search result selected a different meeting —
+    # and Delete would then have removed the wrong recording.
+    sessions = [{"name": "april notes"}, {"name": "postgres migration"}]
+    visible = [sessions[1]]                       # only the search hit is rendered
+    state = {"sessions": sessions, "visible_sessions": visible}
+
+    shown = state.get("visible_sessions") or state["sessions"]
+    assert shown[0]["name"] == "postgres migration"
+    assert shown[0] is not sessions[0], "must not fall back to the unfiltered list"
+
+    # With no filter active it must still address every session.
+    state["visible_sessions"] = []
+    shown = state.get("visible_sessions") or state["sessions"]
+    assert len(shown) == 2

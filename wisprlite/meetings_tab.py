@@ -445,12 +445,19 @@ def search_sessions(query: str, sessions: list[dict], *, cache: dict | None = No
         path = session.get("path")
         if path is None:
             continue
-        transcript_file = Path(path) / "transcript.json"
-        try:
-            stamp = transcript_file.stat().st_mtime
-        except OSError:
+        # Key on EVERY file the visible text is built from. Keying on
+        # transcript.json alone served pre-correction text forever: fix David to
+        # Dev, search "Dev", and the meeting was missing.
+        stamps = []
+        for filename in ("transcript.json", "corrections.json", "polished.json",
+                         "speaker_map.json"):
+            try:
+                stamps.append(round((Path(path) / filename).stat().st_mtime, 3))
+            except OSError:
+                stamps.append(None)
+        if stamps[0] is None:
             continue
-        key = (str(path), stamp)
+        key = (str(path), tuple(stamps))
         if cache is not None and key in cache:
             text = cache[key]
         else:
@@ -643,6 +650,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         "speaker_map": {},
         "corrections": {},
         "search_cache": {},
+        "visible_sessions": [],
         "search_hits": {},
         "show_polished": True,
         "correction_tags": {},
@@ -1613,9 +1621,14 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     def select_session(
         index: int, *, reveal: bool = False, preserve_search: bool = False
     ) -> None:
-        if state["busy"] or not 0 <= index < len(state["sessions"]):
+        # Index the list that was RENDERED. Cross-meeting search filters the
+        # rows, so a row index is meaningless against the unfiltered sessions —
+        # clicking the one search result selected a different meeting, and
+        # Delete would then have removed the wrong recording.
+        shown = state.get("visible_sessions") or state["sessions"]
+        if state["busy"] or not 0 <= index < len(shown):
             return
-        session = state["sessions"][index]
+        session = shown[index]
         state["selected"] = session
         for row_index, row_info in enumerate(state["rows"]):
             row_info["selected"] = row_index == index
@@ -1872,6 +1885,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             visible = [s for s in state["sessions"] if str(s["path"]) in hits]
         else:
             state["search_hits"] = {}
+        state["visible_sessions"] = visible
         for index, session in enumerate(visible):
             add_session_row(session, index)
         if state["search_hits"]:
@@ -1885,6 +1899,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             )
         if not state["sessions"]:
             state["selected"] = None
+            state["visible_sessions"] = []
             tk.Label(
                 session_rows, text="No meetings recorded yet.", bg=CARD, fg=MUTED,
                 font=("Segoe UI", 9), padx=14, pady=20,
