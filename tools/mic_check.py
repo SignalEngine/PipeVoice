@@ -174,7 +174,17 @@ def main() -> int:
         return 2
     if not state["hits"]:
         print("OK    the microphone works, but no double clap registered.")
-        print("      Raise Snap sensitivity and clap harder, twice, ~0.2s apart.")
+        print()
+        print("      The usual cause is Windows filtering the clap out before")
+        print("      Pipevoice ever sees it. Audio enhancements — called Windows")
+        print("      Studio Effects or Voice Focus on Copilot+ PCs — strip claps,")
+        print("      snaps and keyboard noise BY DESIGN, and ship enabled on many")
+        print("      laptops. Confirmed as the cause on a Snapdragon machine.")
+        print("      Turn them off: Windows Sound settings > your microphone >")
+        print("      Audio enhancements > Off, then run this again.")
+        print()
+        print("      If they are already off, raise Snap sensitivity and clap")
+        print("      twice about 0.2s apart.")
         return 1
     print("PASS  microphone works and double claps are detected.")
     return 0

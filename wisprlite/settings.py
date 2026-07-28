@@ -199,6 +199,19 @@ def _build_guide(parent, wheel) -> None:
          "Click a “Them 1” label in the transcript. Pipevoice plays the clearest two "
          "seconds of that person talking so you can recognise them, then you type their "
          "name. Names are per-meeting and never overwrite the original transcript.")
+    item("Bookmark a moment", "Set a Bookmark hotkey under Hotkeys, then tap it during a "
+         "call to mark what was just said. Bookmarked moments appear as Highlights above the "
+         "transcript once you have transcribed it.", badge="NEW", badge_color=GOOD)
+    item("Clap twice instead", "You can also bookmark hands-free with a double clap or double "
+         "snap — microphone only, so nothing on the call can trigger it. Turn it on under "
+         "Hotkeys and press Test first.", badge="OFF BY DEFAULT", badge_color=MUTED)
+    body("Important: Windows Audio enhancements REMOVE claps, snaps and keyboard noise on "
+         "purpose — that is what they are for — and they are switched on by default on many "
+         "laptops, especially Copilot+ PCs where the feature is called Windows Studio Effects "
+         "or Voice Focus. While that is on, no amount of clapping will register. Turn it off "
+         "under Windows Sound settings for your microphone. The Test button tells you when "
+         "this is what is happening.")
+
     item("6 · Summarise",
          "Choose Bullets, To-dos or Actions and press Summarise. Actions lists tasks with "
          "an owner — which is why naming people first is worth the ten seconds.")
@@ -628,7 +641,9 @@ def main(first_run: bool = False) -> None:
 
     check(c, "Bookmark on a double clap or snap", bookmark_acoustic_var,
           "Off by default. Listens to your microphone only — never the call audio — for a\n"
-          "deliberate double clap or double snap. Use Test to find your sensitivity.")
+          "deliberate double clap or double snap. Press Test first: Windows Audio\n"
+          "enhancements (Studio Effects / Voice Focus) strip claps out on purpose and\n"
+          "are ON by default on many laptops, so this cannot work until they are off.")
     r = row(c, "Snap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
     ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
               orient="horizontal", length=130).pack(side="left")
@@ -718,13 +733,20 @@ def main(first_run: bool = False) -> None:
                     fg=WARN,
                 )
             elif detector.last_peak:
-                # The interesting failure: loud enough, but not sharp enough.
-                # Laptop voice-isolation flattens a clap exactly this way.
+                # Loud but smooth IS the Windows Studio Effects signature: Voice
+                # Focus is built to strip non-speech transients — claps, snaps and
+                # keyboard noise — so the clap arrives loud and flattened. Confirmed
+                # on a Copilot+ machine where it is on by default. Name it, because
+                # no amount of clapping harder will ever fix it.
                 result.config(
-                    text=f"heard {detector.last_peak:.2f} loud but crest "
-                         f"{detector.last_crest:.1f} (needs {detector.need_crest:.1f}) "
-                         "— raise sensitivity",
+                    text=f"Heard it ({detector.last_peak:.2f} loud) but too smooth — "
+                         f"crest {detector.last_crest:.1f}, needs "
+                         f"{detector.need_crest:.1f}.\nWindows is filtering the clap "
+                         "out. Sound settings → your mic → turn OFF Audio "
+                         "enhancements\n(Copilot+ PCs: Windows Studio Effects → "
+                         "Voice Focus).",
                     fg=WARN,
+                    justify="left",
                 )
             elif shared["blocks"]:
                 result.config(
