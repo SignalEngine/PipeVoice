@@ -6,6 +6,10 @@ import json
 
 from .cleanup import PROVIDERS, chat_completion, provider_ready
 
+
+class ProviderNotReady(RuntimeError):
+    """The chosen AI provider has no key / is not configured."""
+
 SYSTEM = (
     "Tidy this meeting transcript one segment at a time. Remove only fillers "
     "such as um and uh, false starts, and repeated words; fix punctuation, "
@@ -22,6 +26,25 @@ SYSTEM = (
 CHUNK_SEGMENTS = 80
 
 
+def _strip_fence(answer: object) -> str:
+    """Unwrap a ```json ... ``` block.
+
+    Gemini in particular returns JSON inside a markdown fence by default, which
+    json.loads rejects — the whole reply was being discarded as "unsafe" when it
+    was perfectly good. Nothing else in the codebase asks a model for JSON, so
+    this had no prior art to copy.
+    """
+    text = str(answer or "").strip()
+    if not text.startswith("```"):
+        return text
+    body = text[3:]
+    newline = body.find("\n")
+    if newline != -1 and body[:newline].strip().isalpha():
+        body = body[newline + 1:]          # drop a language tag such as "json"
+    end = body.rfind("```")
+    return (body[:end] if end != -1 else body).strip()
+
+
 def _polish_chunk(source: list[str], provider: str, model: str, completion):
     """Polish one chunk, or return None when the reply cannot be trusted."""
     messages = [
@@ -30,7 +53,7 @@ def _polish_chunk(source: list[str], provider: str, model: str, completion):
     ]
     answer = (completion or chat_completion)(messages, provider, model)
     try:
-        value = json.loads(answer or "")
+        value = json.loads(_strip_fence(answer))
     except (TypeError, ValueError):
         return None
     if not isinstance(value, list) or len(value) != len(source):
@@ -48,7 +71,10 @@ def polish_segments(segments: list[dict], provider: str, model: str = "", *, com
         return None
     provider = (provider or "").strip().lower()
     if provider not in PROVIDERS or not provider_ready(provider):
-        return None
+        # Distinct from a bad reply: this is "no key configured", which the user
+        # fixes somewhere completely different. Blending the two into one
+        # message left James unable to tell which had happened.
+        raise ProviderNotReady(provider or "none")
 
     polished: list[str] = []
     for start in range(0, len(source), CHUNK_SEGMENTS):

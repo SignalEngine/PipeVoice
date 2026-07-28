@@ -212,3 +212,44 @@ def test_merge_transcripts_actually_applies_bleed_removal():
     merged = meeting.merge_transcripts(mic, desktop, mic_offset=0.0, desktop_offset=0.0)
     speakers = [segment["speaker"] for segment in merged]
     assert speakers == ["Them"], f"the mic echo should be gone, got {speakers}"
+
+
+def test_polish_unwraps_a_fenced_json_reply():
+    # Gemini returns JSON inside a ```json fence by default, which json.loads
+    # rejects — the whole reply was discarded as "unsafe" when it was fine.
+    # This is what made Polish fail on a correctly-configured Gemini setup.
+    import json as _json
+    from wisprlite import polish
+
+    original_ready = polish.provider_ready
+    polish.provider_ready = lambda provider: True
+    try:
+        segments = [{"speaker": "You", "text": "Um, hello there everyone"}]
+        for reply in (
+            '```json\n["Hello there everyone"]\n```',
+            '```\n["Hello there everyone"]\n```',
+            _json.dumps(["Hello there everyone"]),
+        ):
+            overlay = polish.polish_segments(
+                segments, "gemini", "", completion=lambda *a, **k: reply
+            )
+            assert overlay == {0: "Hello there everyone"}, f"failed on {reply!r}"
+    finally:
+        polish.provider_ready = original_ready
+
+
+def test_polish_names_a_missing_key_rather_than_blaming_the_model():
+    from wisprlite import polish
+
+    original_ready = polish.provider_ready
+    polish.provider_ready = lambda provider: False
+    try:
+        segments = [{"speaker": "You", "text": "Um, hello there everyone"}]
+        raised = False
+        try:
+            polish.polish_segments(segments, "gemini", "", completion=lambda *a, **k: "[]")
+        except polish.ProviderNotReady:
+            raised = True
+        assert raised, "an unconfigured provider must be distinguishable from a bad reply"
+    finally:
+        polish.provider_ready = original_ready

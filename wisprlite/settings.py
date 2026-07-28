@@ -515,6 +515,7 @@ def main(first_run: bool = False) -> None:
     dg_timeout_var = tk.StringVar(value=str(cfg.deepgram_finish_timeout))
     meeting_max_minutes_var = tk.StringVar(value=str(cfg.meeting_max_minutes))
     meetings_keep_var = tk.StringVar(value=str(cfg.meetings_keep))
+    meetings_dir_var = tk.StringVar(value=cfg.meetings_dir)
     paste_speed_var = tk.StringVar(value=dict(PASTE_SPEEDS).get(cfg.paste_speed, PASTE_SPEEDS[1][1]))
     fixes_var = tk.StringVar(value=", ".join(f"{k}={v}" for k, v in cfg.replacements.items()))
     speech_notes_var = tk.StringVar(value=cfg.speech_notes)
@@ -1028,6 +1029,23 @@ def main(first_run: bool = False) -> None:
         meetings_keep_var,
         width=7,
     )
+    _mr = row(c, "Save meetings to",
+              "Recordings are large — put them on another drive if you like.\n"
+              "Blank uses this PC's default folder. Existing recordings stay where they are.")
+    entry(_mr, meetings_dir_var, width=30)
+
+    def _browse_meetings():
+        from tkinter import filedialog
+        chosen = filedialog.askdirectory(
+            parent=root, title="Where should meeting recordings be saved?",
+            initialdir=meetings_dir_var.get().strip() or str(meeting.meetings_dir()),
+        )
+        if chosen:
+            meetings_dir_var.set(chosen)
+
+    ttk.Button(_mr, text="Browse", width=8,
+               command=_browse_meetings).pack(side="left", padx=(8, 0))
+
     combo(row(c, "Paste speed", "Slower is more reliable in some apps."),
           paste_speed_var, [l for _, l in PASTE_SPEEDS], width=10)
 
@@ -1104,6 +1122,7 @@ def main(first_run: bool = False) -> None:
             cfg.meetings_keep = max(1, int(meetings_keep_var.get()))
         except ValueError:
             pass
+        cfg.meetings_dir = meetings_dir_var.get().strip()
         cfg.paste_speed = value_for(paste_speed_var, PASTE_SPEEDS)
         cfg.speech_notes = speech_notes_var.get().strip()
         fixes = {}

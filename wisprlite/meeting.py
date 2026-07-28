@@ -209,8 +209,29 @@ def smooth_level(current: float, rms: float) -> float:
 
 
 def meetings_dir() -> Path:
-    """Return a machine-local recording directory, never the roaming profile."""
-    from .config import APP_NAME
+    """Return the recording directory: the user's choice, else machine-local.
+
+    Recordings are large, so people reasonably want them on another drive. A
+    configured path wins, but it must still be USABLE — an unplugged external
+    disk or a path that cannot be created would otherwise lose a recording
+    mid-meeting, so fall back to the default rather than fail.
+    """
+    from .config import APP_NAME, Config
+
+    try:
+        chosen = str(Config.load().meetings_dir or "").strip()
+    except Exception:
+        chosen = ""
+    if chosen:
+        candidate = Path(chosen).expanduser()
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            probe = candidate / ".pipevoice-write-test"
+            probe.touch()
+            probe.unlink()
+            return candidate
+        except OSError:
+            pass          # unwritable or unplugged — use the default below
 
     if sys.platform == "win32":
         base = os.getenv("LOCALAPPDATA")

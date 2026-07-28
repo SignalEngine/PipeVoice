@@ -112,6 +112,7 @@ class Config:
     mcp_default_mode: str = "push_to_talk"  # push_to_talk | hands_free  (for `listen`)
     hands_free_silence_ms: int = 800  # trailing silence that ends a hands-free capture
     transcribe_model_size: str = ""   # blank = reuse local_model_size
+    meetings_dir: str = ""            # where recordings are stored; blank = machine-local default
 
     @property
     def meetings_keep(self) -> int:

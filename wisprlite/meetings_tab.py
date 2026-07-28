@@ -42,7 +42,7 @@ from .summarise import (
     render_markdown_lines,
     summarise,
 )
-from .polish import polish_segments
+from .polish import ProviderNotReady, polish_segments
 from .winui import PALETTE, tooltip
 
 BG = PALETTE["bg"]
@@ -50,6 +50,7 @@ CARD = PALETTE["card"]
 FG = PALETTE["fg"]
 MUTED = PALETTE["muted"]
 ACCENT = PALETTE["accent"]
+WARN = PALETTE["amber"]
 DIV = PALETTE["div"]
 GOOD = PALETTE["good"]
 AMBER = PALETTE["amber"]
@@ -1922,8 +1923,19 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         status_label.config(text="Polishing transcript…", fg=MUTED)
 
         def work() -> None:
-            overlay = polish_segments(raw, cfg.cleanup_provider, cfg.cleanup_model)
-            error = None if overlay is not None else "no provider was ready or the model returned an unsafe result"
+            # Two failures the user fixes in completely different places, so name
+            # which one happened rather than blending them into one message.
+            try:
+                overlay = polish_segments(raw, cfg.cleanup_provider, cfg.cleanup_model)
+            except ProviderNotReady as exc:
+                overlay = None
+                error = (f"no API key set for {exc}. Settings \u2192 Transcription \u2192 "
+                         "AI polish provider, then add its key.")
+            else:
+                error = None if overlay is not None else (
+                    f"{cfg.cleanup_provider or 'the provider'} replied with something "
+                    "this could not use safely, so nothing was changed."
+                )
             try:
                 if overlay is not None:
                     save_polished(path, overlay)
@@ -2064,6 +2076,18 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         path = selected_path()
         if path is None:
             return
+        # The selected session can be gone by now — retention prunes older
+        # recordings when a new one starts, and the list holds a path captured
+        # earlier. Handing Windows a dead path raises a modal "Location is not
+        # available" that looks like a crash. Fall back to the meetings folder.
+        if not path.exists():
+            status_label.config(
+                text="That recording is no longer on disk — opening the meetings "
+                     "folder instead.",
+                fg=WARN,
+            )
+            refresh()
+            path = meetings_dir()
         try:
             _open_folder(path)
         except (OSError, subprocess.SubprocessError) as exc:
