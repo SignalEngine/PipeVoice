@@ -21,6 +21,7 @@ from pathlib import Path
 from . import config
 from .history import _copy_to_clipboard
 from .meeting import (
+    apply_speaker_map,
     count_speaker_bleed,
     default_meetings_dir,
     find_loudest_speaker_window,
@@ -422,11 +423,23 @@ def session_search_text(session_dir) -> str:
     path = Path(session_dir)
     transcript = _read_json(path / "transcript.json")
     segments = transcript.get("segments")
+    corrections = load_corrections(path)
     if isinstance(segments, list) and segments:
         visible = apply_polished(segments, load_polished(path))
-        visible = apply_corrections(visible, load_corrections(path))
-        return " ".join(str(s.get("text") or "") for s in visible if isinstance(s, dict))
-    return str(transcript.get("text") or "")
+        visible = apply_corrections(visible, corrections)
+        # Speaker NAMES are searchable too — "what did Dev say" is a real query,
+        # and the sidebar already lists them.
+        visible = apply_speaker_map(visible, load_speaker_map(path))
+        return " ".join(
+            f"{s.get('speaker') or ''} {s.get('text') or ''}"
+            for s in visible if isinstance(s, dict)
+        )
+    # The fallback text path needs the same overlay, or a corrected word is
+    # findable in one meeting and not in another purely by transcript shape.
+    fallback = str(transcript.get("text") or "")
+    if fallback:
+        return apply_corrections([{"text": fallback}], corrections)[0]["text"]
+    return fallback
 
 
 def search_sessions(query: str, sessions: list[dict], *, cache: dict | None = None) -> dict:
@@ -1866,6 +1879,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         preferred: Path | None = None,
         *,
         preserve_scroll: float | None = None,
+        preserve_search: bool = False,
     ) -> None:
         search_query = search_var.get()
         search_match_index = state["match_index"]
@@ -1946,10 +1960,19 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             bleed_banner.pack_forget()
             highlights_panel.pack_forget()
             return
-        target = preferred or state["sessions"][0]["path"]
+        # Resolve against the RENDERED list. Computing this over all sessions and
+        # then indexing the filtered one left a hidden meeting selected while a
+        # different one was on screen — and Delete acted on the hidden one.
+        addressable = state["visible_sessions"]
+        if addressable is None:
+            addressable = state["sessions"]
+        if not addressable:
+            state["selected"] = None
+            return
+        target = preferred or addressable[0]["path"]
         target_index = next(
             (
-                index for index, session in enumerate(state["sessions"])
+                index for index, session in enumerate(addressable)
                 if session["path"] == target
             ),
             0,
@@ -2041,16 +2064,21 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         summary_mode.config(state=widget_state)
 
     def move_session(step: int) -> str:
-        if not state["sessions"] or state["busy"]:
+        # Walk the RENDERED list, or Up/Down computes a position in one list and
+        # applies it to another — a filtered result became unreachable.
+        walkable = state["visible_sessions"]
+        if walkable is None:
+            walkable = state["sessions"]
+        if not walkable or state["busy"]:
             return "break"
         current = next(
             (
-                index for index, session in enumerate(state["sessions"])
+                index for index, session in enumerate(walkable)
                 if state["selected"] and session["path"] == state["selected"]["path"]
             ),
             0,
         )
-        target = min(max(0, current + step), len(state["sessions"]) - 1)
+        target = min(max(0, current + step), len(walkable) - 1)
         select_session(target, reveal=True)
         return "break"
 

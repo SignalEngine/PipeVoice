@@ -96,3 +96,64 @@ def test_overlay_renders_a_meeting_frame_without_raising():
         assert tops[0].winfo_ismapped(), "the warning was created but never shown"
     finally:
         root.destroy()
+
+
+def test_toggling_all_meetings_search_does_not_raise():
+    # The harness built windows but never CLICKED anything, so a feature whose
+    # callback raised TypeError on first use shipped: refresh() had no
+    # preserve_search parameter and "All meetings" died the moment it was
+    # ticked. Building is not exercising.
+    _skip_if_headless()
+    import tkinter as tk
+
+    from wisprlite import settings
+
+    errors = []
+    real_report = tk.Tk.report_callback_exception
+
+    def capture(_self, exc_type, exc_value, _tb):
+        errors.append(f"{exc_type.__name__}: {exc_value}")
+
+    tk.Tk.report_callback_exception = capture
+    try:
+        import os
+
+        os.environ["PV_TAB"] = "Meetings"
+        captured = {}
+        real_mainloop = tk.Misc.mainloop
+
+        def drive(self, _n=0):
+            self.update_idletasks()
+            self.update()
+            # Find the "All meetings" checkbox and the search entry, then USE them.
+            checks, entries = [], []
+
+            def walk(widget):
+                for child in widget.winfo_children():
+                    if isinstance(child, tk.Checkbutton) and "All meetings" in str(
+                        child.cget("text")
+                    ):
+                        checks.append(child)
+                    if child.winfo_class() == "TEntry":
+                        entries.append(child)
+                    walk(child)
+
+            walk(self)
+            captured["found_toggle"] = bool(checks)
+            for check in checks:
+                check.invoke()          # tick it — this is what raised TypeError
+                self.update()
+                check.invoke()          # and untick
+                self.update()
+            self.destroy()
+
+        tk.Misc.mainloop = drive
+        try:
+            settings.main()
+        finally:
+            tk.Misc.mainloop = real_mainloop
+
+        assert captured.get("found_toggle"), "the All meetings toggle was not rendered"
+        assert not errors, f"toggling cross-meeting search raised: {errors}"
+    finally:
+        tk.Tk.report_callback_exception = real_report
