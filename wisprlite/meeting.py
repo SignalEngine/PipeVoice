@@ -32,6 +32,7 @@ HEADER_PATCH_INTERVAL = 5.0
 DEFAULT_RETENTION_SESSIONS = 20
 SPEAKER_MAP_FILE = "speaker_map.json"
 CORRECTIONS_FILE = "corrections.json"
+BOOKMARKS_FILE = "bookmarks.json"
 
 
 def load_speaker_map(session_dir: str | Path) -> dict[str, str]:
@@ -342,7 +343,49 @@ def _wav_has_frames(path: Path) -> bool:
         return False
 
 
-def _write_json(path: Path, value: dict) -> None:
+def load_bookmarks(session_dir: str | Path) -> list[dict]:
+    """Load the optional timestamp overlay; malformed files fail closed."""
+    try:
+        value = json.loads((Path(session_dir) / BOOKMARKS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return []
+    if not isinstance(value, list):
+        return []
+    clean = []
+    for item in value:
+        if not isinstance(item, dict) or not isinstance(item.get("t"), (int, float)):
+            return []
+        try:
+            timestamp = max(0.0, float(item["t"]))
+        except (TypeError, ValueError, OverflowError):
+            return []
+        source = item.get("source")
+        if source not in {"hotkey", "acoustic"}:
+            return []
+        clean.append({"t": timestamp, "source": source})
+    return clean
+
+
+def save_bookmarks(session_dir: str | Path, bookmarks: list[dict]) -> None:
+    """Atomically save sorted bookmarks, collapsing marks within half a second."""
+    clean = []
+    for item in bookmarks:
+        if not isinstance(item, dict) or item.get("source") not in {"hotkey", "acoustic"}:
+            continue
+        try:
+            timestamp = max(0.0, float(item.get("t", 0)))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        clean.append({"t": timestamp, "source": item["source"]})
+    clean.sort(key=lambda item: item["t"])
+    deduped = []
+    for item in clean:
+        if not deduped or item["t"] - deduped[-1]["t"] >= 0.5:
+            deduped.append(item)
+    _write_json(Path(session_dir) / BOOKMARKS_FILE, deduped)
+
+
+def _write_json(path: Path, value) -> None:
     pending = path.with_suffix(path.suffix + ".tmp")
     pending.write_text(json.dumps(value, indent=2), encoding="utf-8")
     pending.replace(path)
@@ -440,6 +483,9 @@ class MeetingRecorder:
         device=None,
         max_minutes: int = 240,
         retention_sessions: int = DEFAULT_RETENTION_SESSIONS,
+        bookmark_hotkey: str = "",
+        bookmark_acoustic: bool = False,
+        bookmark_sensitivity: float = 0.5,
         on_auto_stop: Callable[[str], None] | None = None,
     ) -> None:
         if base_dir is None:
@@ -449,6 +495,9 @@ class MeetingRecorder:
         self.max_minutes = max_minutes
         self.retention_sessions = max(1, int(retention_sessions))
         self._on_auto_stop = on_auto_stop
+        self.bookmark_hotkey = bookmark_hotkey
+        self.bookmark_acoustic = bool(bookmark_acoustic)
+        self.bookmark_sensitivity = max(0.0, min(1.0, float(bookmark_sensitivity)))
         self.session_dir: Path | None = None
 
         self._active = False
@@ -486,6 +535,12 @@ class MeetingRecorder:
         self._meta_lock = threading.Lock()
         self._heartbeat_lock = threading.Lock()
         self._last_meta_heartbeat = float("-inf")
+        self._bookmarks: list[dict] = []
+        self._bookmark_lock = threading.Lock()
+        self._checkpoint_wakeup = threading.Event()
+        self._checkpoint_thread: threading.Thread | None = None
+        self._snap_detector = None
+        self._pending_acoustic_t: float | None = None
 
     @property
     def active(self) -> bool:
@@ -514,6 +569,25 @@ class MeetingRecorder:
     def levels(self) -> dict[str, float]:
         with self._state_lock:
             return dict(self._levels)
+
+    @property
+    def bookmarks(self) -> list[dict]:
+        with self._bookmark_lock:
+            return [dict(item) for item in self._bookmarks]
+
+    def mark_bookmark(self, source: str = "hotkey") -> bool:
+        """Queue a bookmark while recording; disk persistence is checkpointed."""
+        if source not in {"hotkey", "acoustic"} or not self.active:
+            return False
+        return self._append_bookmark(max(0.0, self.elapsed), source)
+
+    def _append_bookmark(self, timestamp: float, source: str) -> bool:
+        with self._bookmark_lock:
+            if self._bookmarks and timestamp - self._bookmarks[-1]["t"] < 0.5:
+                return False
+            self._bookmarks.append({"t": timestamp, "source": source})
+        self._checkpoint_wakeup.set()
+        return True
 
     def start(self) -> Path:
         with self._lifecycle_lock:
@@ -544,12 +618,21 @@ class MeetingRecorder:
                 "desktop": float("-inf"),
             }
             self._last_meta_heartbeat = time.monotonic()
+            self._bookmarks = []
+            self._pending_acoustic_t = None
             self._errors = {"mic": None, "desktop": None}
             self._fatal_errors = {"mic": None, "desktop": None}
             self._levels = {"mic": 0.0, "desktop": 0.0}
             self._stop_reason = None
             self._stop.clear()
             self._active = True
+        if self.bookmark_acoustic:
+            from .snap import SnapDetector
+            self._snap_detector = SnapDetector(
+                SAMPLE_RATE, sensitivity=self.bookmark_sensitivity
+            )
+        else:
+            self._snap_detector = None
 
         try:
             self._waves = {
@@ -562,6 +645,10 @@ class MeetingRecorder:
                 self._active = False
             raise
         self._write_meta(stopped_at=None, duration=0.0)
+        self._checkpoint_thread = threading.Thread(
+            target=self._checkpoint_loop, name="meeting-checkpoint", daemon=True
+        )
+        self._checkpoint_thread.start()
 
         try:
             self._threads = [
@@ -619,6 +706,7 @@ class MeetingRecorder:
             self._stop_reason = reason
 
         self._stop.set()
+        self._checkpoint_wakeup.set()
         timer = self._limit_timer
         self._limit_timer = None
         if timer is not None:
@@ -637,14 +725,43 @@ class MeetingRecorder:
                     recoverable=True,
                 )
 
+        if self._checkpoint_thread is not None:
+            self._checkpoint_thread.join(timeout=1.0)
+            self._checkpoint_thread = None
+
         self._close_waves()
         stopped_at = datetime.now(timezone.utc)
         duration = max(0.0, time.monotonic() - started) if started is not None else 0.0
         self._write_meta(stopped_at.isoformat(), duration)
+        pending = self._pending_acoustic_t
+        self._pending_acoustic_t = None
+        if pending is not None:
+            self._append_bookmark(pending, "acoustic")
+        with self._bookmark_lock:
+            bookmarks = list(self._bookmarks)
+        if self.session_dir is not None:
+            save_bookmarks(self.session_dir, bookmarks)
         if not any(thread.is_alive() for thread in self._threads):
             self._threads = []
         self._mic_stream = None
         return self.session_dir
+
+    def _checkpoint_loop(self) -> None:
+        while not self._stop.is_set():
+            self._checkpoint_wakeup.wait(HEADER_PATCH_INTERVAL)
+            self._checkpoint_wakeup.clear()
+            if self.session_dir is None:
+                continue
+            self._write_meta(stopped_at=None, duration=self.elapsed)
+            with self._bookmark_lock:
+                bookmarks = list(self._bookmarks)
+            pending = self._pending_acoustic_t
+            self._pending_acoustic_t = None
+            if pending is not None:
+                self._append_bookmark(pending, "acoustic")
+                with self._bookmark_lock:
+                    bookmarks = list(self._bookmarks)
+            save_bookmarks(self.session_dir, bookmarks)
 
     def _stop_at_limit(
         self,
@@ -757,7 +874,13 @@ class MeetingRecorder:
                 RuntimeError(str(_status)),
                 recoverable=True,
             )
-        self._write_block("mic", indata)
+        detector = self._snap_detector
+        if detector is not None and detector.feed(indata):
+            # Only hand a scalar to the checkpoint thread. In particular, this
+            # callback never allocates a bookmark dict or performs JSON I/O.
+            self._pending_acoustic_t = max(0.0, self.elapsed)
+            self._checkpoint_wakeup.set()
+        self._write_block("mic", indata, realtime=True)
 
     def _capture_desktop(self, sc) -> None:
         com_initialized = False
@@ -799,7 +922,7 @@ class MeetingRecorder:
             if com_initialized:
                 ctypes.windll.ole32.CoUninitialize()
 
-    def _write_block(self, label: str, block) -> None:
+    def _write_block(self, label: str, block, *, realtime: bool = False) -> None:
         arrived_at = time.monotonic()
         checkpointed = False
         try:
@@ -829,14 +952,14 @@ class MeetingRecorder:
                     checkpointed = True
         except Exception as exc:
             self._record_error(label, exc)
-        # Either stream can be the one still alive after the other fails. Keep
-        # JSON I/O out of the realtime callback and share one heartbeat budget
-        # so two healthy streams do not double the metadata writes.
         if checkpointed and not self._stop.is_set():
-            with self._heartbeat_lock:
-                if arrived_at - self._last_meta_heartbeat >= HEADER_PATCH_INTERVAL:
-                    self._last_meta_heartbeat = arrived_at
-                    self._write_meta(stopped_at=None, duration=self.elapsed)
+            if realtime:
+                self._checkpoint_wakeup.set()
+            else:
+                with self._heartbeat_lock:
+                    if arrived_at - self._last_meta_heartbeat >= HEADER_PATCH_INTERVAL:
+                        self._last_meta_heartbeat = arrived_at
+                        self._write_meta(stopped_at=None, duration=self.elapsed)
 
     def _record_error(
         self,

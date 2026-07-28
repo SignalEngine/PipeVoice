@@ -63,6 +63,9 @@ class Config:
     hotkey: str = "ctrl+\\"          # any key/combo, e.g. "ctrl+alt", "f9"
     clipboard_hotkey: str = "right ctrl+right shift"  # 2nd hotkey -> dictate to clipboard (no typing); safe to hold. "" = off
     meeting_hotkey: str = ""        # toggle meeting capture; "" = disabled
+    bookmark_hotkey: str = ""       # mark the current moment while a meeting records
+    bookmark_acoustic: bool = False # double-snap detector, opt-in
+    bookmark_sensitivity: float = 0.5
     meeting_max_minutes: int = 240  # safety cap for an unattended meeting capture
     meeting_retention_sessions: int = 20  # newest local meeting sessions to keep
     output_mode: str = "type"       # type | paste
