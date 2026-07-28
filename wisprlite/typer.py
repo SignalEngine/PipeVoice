@@ -5,21 +5,48 @@ from __future__ import annotations
 import re
 import time
 
-import keyboard
+try:
+    import keyboard
+except ImportError:  # Keep pure post-processing usable on headless test machines.
+    keyboard = None
 
 
 def apply_replacements(text: str, mapping: dict) -> str:
     """Apply user word-fixes (case-insensitive, word-boundary aware)."""
     if not text or not mapping:
         return text
-    for find, repl in mapping.items():
-        if not find:
-            continue
-        try:
-            text = re.sub(rf"\b{re.escape(find)}\b", repl, text, flags=re.IGNORECASE)
-        except re.error:
-            pass
-    return text
+    usable = {str(find): str(repl) for find, repl in mapping.items() if str(find)}
+    if not usable:
+        return text
+    # One capture group per key, so the group INDEX identifies which key matched.
+    # Do not map the matched text back through casefold(): re.IGNORECASE uses
+    # simple case folding while str.casefold() uses full folding, and they
+    # disagree (Turkish dotted/dotless i), which both raised KeyError and, once
+    # guarded, silently skipped replacements the old code performed.
+    #
+    # sorted() is stable, so longest-first ordering preserves insertion order on
+    # ties, and the regex takes the leftmost alternative — meaning ambiguous
+    # case-variant keys resolve FIRST-wins, as the original sequential re.sub did.
+    keys = sorted(usable, key=len, reverse=True)
+    try:
+        pattern = re.compile(
+            r"\b(?:" + "|".join(f"({re.escape(find)})" for find in keys) + r")\b",
+            re.IGNORECASE,
+        )
+    except (re.error, AssertionError, OverflowError):
+        # AssertionError/OverflowError: too many groups for the regex engine.
+        return text
+
+    def _resolve(match: re.Match) -> str:
+        for index, find in enumerate(keys, start=1):
+            if match.group(index) is not None:
+                return usable[find]
+        return match.group(0)
+
+    try:
+        return pattern.sub(_resolve, text)
+    except re.error:
+        return text
 
 
 PASTE_TIMINGS = {

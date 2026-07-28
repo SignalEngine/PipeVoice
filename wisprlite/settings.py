@@ -10,10 +10,11 @@ trouble.
 from __future__ import annotations
 
 import os
+import json
 import threading
 import webbrowser
 
-from . import about, autostart, cleanup, config, history, meetings_tab, voices, winui
+from . import about, autostart, cleanup, config, history, meeting, meetings_tab, voices, vocab_mine, winui
 
 ENGINES = [("gemini", "Gemini — free, one key does it all"),
            ("groq", "Groq Whisper — fast & cheap, top accuracy"),
@@ -365,7 +366,13 @@ def main(first_run: bool = False) -> None:
     frm.bind("<Configure>", lambda e: _canvas.configure(scrollregion=_canvas.bbox("all")))
     _wheel(_canvas)
     history.build(tab_history, root, _wheel)
-    meetings_tab.build(tab_meetings, root, _wheel)
+    def sync_meeting_replacements(replacements):
+        fixes_var.set(", ".join(f"{k}={v}" for k, v in replacements.items()))
+
+    meetings_tab.build(
+        tab_meetings, root, _wheel,
+        on_replacements_changed=sync_meeting_replacements,
+    )
     _build_guide(tab_guide, _wheel)
     about.build(tab_about, root, _wheel)
     _build_voices_tab(tab_voices, _show_tab, _wheel)
@@ -686,11 +693,100 @@ def main(first_run: bool = False) -> None:
         for i in reversed(vocab_list.curselection()):
             vocab_list.delete(i)
 
+    def _vocab_from_meetings():
+        """Offer local meeting candidates; only checked rows are returned."""
+        from tkinter import messagebox  # module-level tkinter isn't imported here
+
+        sessions = []
+        corrections = []
+        for row in meetings_tab.list_sessions():
+            path = row.get("path")
+            if not path:
+                continue
+            try:
+                transcript = json.loads((path / "transcript.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                continue
+            if not isinstance(transcript, dict):
+                continue
+            sessions.append({
+                "name": row.get("name") or str(path),
+                "segments": transcript.get("segments", []),
+            })
+            corrections.append(meeting.load_corrections(path))
+        candidates = vocab_mine.mine_candidates(
+            sessions, list(vocab_list.get(0, "end")), corrections
+        )
+        if not candidates:
+            # Say so. A button that does nothing is indistinguishable from a crash.
+            messagebox.showinfo(
+                "Vocabulary from meetings",
+                "No new terms found yet. Record and transcribe a few meetings, or "
+                "correct some wording in a transcript, and try again.",
+                parent=root,
+            )
+            return
+
+        picker = tk.Toplevel(root)
+        picker.title("Vocabulary from meetings")
+        picker.configure(bg=BG)
+        picker.transient(root)
+        tk.Label(picker, text="Choose terms to add", bg=BG, fg=FG,
+                 font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=18, pady=(16, 4))
+        tk.Label(picker, text="Nothing is added unless you tick it.", bg=BG, fg=MUTED,
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=18, pady=(0, 10))
+        # Buttons pack to the BOTTOM first, so the expanding body can never starve
+        # them: in the old order 21+ candidates left "Add selected" unrendered
+        # entirely, and a realistic corpus produces 30+.
+        buttons = tk.Frame(picker, bg=BG)
+        buttons.pack(side="bottom", fill="x", padx=18, pady=14)
+
+        outer = tk.Frame(picker, bg=CARD)
+        outer.pack(fill="both", expand=True, padx=18)
+        canvas = tk.Canvas(outer, bg=CARD, highlightthickness=0, bd=0)
+        bar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        body = tk.Frame(canvas, bg=CARD, padx=14, pady=8)
+        window = canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>",
+                  lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(window, width=e.width))
+        _wheel(canvas)
+        choices = []
+        for candidate in candidates:
+            selected = tk.BooleanVar(value=False)
+            label = (f"{candidate['term']} — seen {candidate['count']}x in "
+                     f"{candidate['sessions']} meeting{'s' if candidate['sessions'] != 1 else ''}")
+            tk.Checkbutton(body, text=label, variable=selected, bg=CARD, fg=FG,
+                           activebackground=CARD, activeforeground=FG, selectcolor=BG,
+                           anchor="w").pack(fill="x", pady=2)
+            choices.append((candidate, selected))
+
+        def confirm():
+            existing = {str(value).casefold() for value in vocab_list.get(0, "end")}
+            for candidate, selected in choices:
+                term = candidate["term"]
+                if selected.get() and term.casefold() not in existing:
+                    vocab_list.insert("end", term)
+                    existing.add(term.casefold())
+            picker.destroy()
+
+        ttk.Button(buttons, text="Add selected", command=confirm).pack(side="right")
+        ttk.Button(buttons, text="Cancel", command=picker.destroy).pack(side="right", padx=(0, 8))
+        picker.geometry(f"520x{min(620, 150 + 30 * len(candidates))}")
+        picker.grab_set()
+
     _vadd.bind("<Return>", _vocab_add)
     _vrow = tk.Frame(vside, bg=CARD)
     _vrow.pack(anchor="w", pady=(6, 0))
     ttk.Button(_vrow, text="Add", command=_vocab_add, width=7).pack(side="left")
     ttk.Button(_vrow, text="Remove", command=_vocab_remove, width=8).pack(side="left", padx=(6, 0))
+    ttk.Button(_vrow, text="From meetings", command=_vocab_from_meetings).pack(
+        side="left", padx=(6, 0)
+    )
 
     entry(row(c, "Word fixes", "Auto-corrections as wrong=right, comma separated."), fixes_var, width=24)
     entry(row(c, "Speech notes", "Describe your accent, stutter or fillers to guide AI cleanup."),

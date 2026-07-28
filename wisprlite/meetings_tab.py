@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -21,10 +22,13 @@ from . import config
 from .history import _copy_to_clipboard
 from .meeting import (
     find_loudest_speaker_window,
+    apply_corrections,
     load_speaker_map,
+    load_corrections,
     meetings_dir,
     render_transcript,
     save_speaker_map,
+    save_corrections,
     transcribe_session,
     write_wav_window,
 )
@@ -55,6 +59,39 @@ LIVE_HEARTBEAT_SECONDS = 15.0
 ON_ACCENT = PALETTE["bg"]
 SCROLL = PALETTE["border"]
 SCROLL_HI = PALETTE["muted"]
+
+
+def _replacement_key_allowed(key: str) -> bool:
+    """Whether a correction key can survive Settings' comma-separated format."""
+    return "," not in key and "=" not in key
+
+
+def _replacement_value_allowed(value: str) -> bool:
+    """Both halves ride the same "k=v, k=v" string, so both must stay clean.
+
+    Guarding only the key still loses data: "ACME" -> "ACME, Inc." survives in
+    corrections.json but the next Settings save parses it back as "ACME".
+    """
+    return "," not in value and "=" not in value
+
+
+def keeping_fix_for_dictation_allowed(key: str, value: str) -> bool:
+    """Whether this pair may be promoted into the GLOBAL cfg.replacements store.
+
+    Only the global store rides Settings' flat "k=v, k=v" string. corrections.json
+    is JSON and holds anything, so this must never gate a session-only fix — that
+    asymmetry is easy to get wrong, hence one named rule both sides call.
+    """
+    return _replacement_key_allowed(key) and _replacement_value_allowed(value)
+
+
+def _selection_contains_click(first: str, click: str, last: str) -> bool:
+    """Return whether a Tk Text click index is inside a non-empty selection."""
+    def offset(index: str) -> tuple[int, int]:
+        line, column = index.split(".", 1)
+        return int(line), int(column)
+
+    return offset(first) <= offset(click) < offset(last)
 
 
 def _read_json(path: Path) -> dict:
@@ -311,10 +348,17 @@ def _transcript_text(session_dir: str | Path) -> str:
     transcript = _read_json(Path(session_dir) / "transcript.json")
     segments = transcript.get("segments")
     if isinstance(segments, list):
-        rendered = render_transcript(segments, speaker_map=load_speaker_map(session_dir))
+        rendered = render_transcript(
+            segments,
+            speaker_map=load_speaker_map(session_dir),
+            corrections=load_corrections(session_dir),
+        )
         if rendered:
             return rendered
-    return str(transcript.get("text") or "").strip()
+    fallback = str(transcript.get("text") or "").strip()
+    if fallback:
+        return apply_corrections([{"text": fallback}], load_corrections(session_dir))[0]["text"]
+    return fallback
 
 
 def _has_audio(session_dir: str | Path) -> bool:
@@ -323,6 +367,57 @@ def _has_audio(session_dir: str | Path) -> bool:
         return any(wav.is_file() and wav.stat().st_size > 44 for wav in path.glob("*.wav"))
     except OSError:
         return False
+
+
+def _correction_parts(text: str, corrections: dict[str, str]) -> list[tuple[str, bool, str | None]]:
+    """Split raw text into display pieces, marking wording replacements."""
+    usable = {
+        str(find): str(replacement).strip()
+        for find, replacement in (corrections or {}).items()
+        if str(find).strip() and str(replacement).strip()
+    }
+    if not text or not usable:
+        return [(text, False, None)]
+    # Group INDEX identifies the matched key — same reasoning as
+    # typer.apply_replacements, and it must stay identical to it or the widget
+    # underlines a different fix than copy/export/summaries actually apply.
+    keys = sorted(usable, key=len, reverse=True)
+    try:
+        pattern = re.compile(
+            r"\b(?:" + "|".join(f"({re.escape(find)})" for find in keys) + r")\b",
+            re.IGNORECASE,
+        )
+    except (re.error, AssertionError, OverflowError):
+        return [(text, False, None)]
+    parts = []
+    cursor = 0
+    for match in pattern.finditer(text):
+        if match.start() > cursor:
+            parts.append((text[cursor:match.start()], False, None))
+        find = next(
+            (k for index, k in enumerate(keys, start=1) if match.group(index) is not None),
+            None,
+        )
+        if find is None:
+            parts.append((match.group(0), False, None))
+        else:
+            parts.append((usable[find], True, find))
+        cursor = match.end()
+    if cursor < len(text):
+        parts.append((text[cursor:], False, None))
+    return parts or [(text, False, None)]
+
+
+def _joined_correction_parts(
+    segments: list[str], corrections: dict[str, str]
+) -> list[tuple[str, bool, str | None]]:
+    """Correct each raw segment before joining consecutive same-speaker text."""
+    parts: list[tuple[str, bool, str | None]] = []
+    for index, text in enumerate(segments):
+        if index:
+            parts.append((" ", False, None))
+        parts.extend(_correction_parts(text, corrections))
+    return parts or [("", False, None)]
 
 
 def _open_folder(path: Path) -> None:
@@ -345,7 +440,7 @@ def _wheel_global(widget) -> None:
     widget.bind("<Leave>", lambda _event: widget.unbind_all("<MouseWheel>"))
 
 
-def build(container, root, wheel=None) -> None:
+def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     """Populate ``container`` with the reusable Meetings browser."""
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -380,6 +475,8 @@ def build(container, root, wheel=None) -> None:
         "summary_expanded": True,
         "summary_ready": False,
         "speaker_map": {},
+        "corrections": {},
+        "correction_tags": {},
     }
 
     head = tk.Frame(container, bg=BG, padx=18, pady=14)
@@ -772,7 +869,7 @@ def build(container, root, wheel=None) -> None:
             state["speaker_map"] = updated
             close()
             refresh(preferred=path, preserve_scroll=transcript.yview()[0])
-            regenerate_summaries(path, updated)
+            regenerate_summaries(path, updated, state["corrections"])
 
         save_btn.config(command=save_name)
         dialog.update_idletasks()
@@ -860,7 +957,11 @@ def build(container, root, wheel=None) -> None:
 
         threading.Thread(target=sample_work, daemon=True).start()
 
-    def regenerate_summaries(path: Path, speaker_map: dict[str, str]) -> None:
+    def regenerate_summaries(
+        path: Path,
+        speaker_map: dict[str, str],
+        corrections: dict[str, str] | None = None,
+    ) -> None:
         existing = read_summaries(path)
         if not existing:
             return
@@ -889,6 +990,7 @@ def build(container, root, wheel=None) -> None:
             try:
                 transcript_data = _read_json(path / "transcript.json")
                 segments = transcript_data.get("segments") or []
+                segments = apply_corrections(segments, corrections)
                 for mode in existing:
                     value = summarise(
                         segments, mode, cfg.cleanup_provider, cfg.cleanup_model,
@@ -945,6 +1047,7 @@ def build(container, root, wheel=None) -> None:
     ) -> None:
         transcript.config(state="normal")
         transcript.delete("1.0", "end")
+        state["correction_tags"] = {}
         valid_segments = [
             segment for segment in (segments or [])
             if isinstance(segment, dict)
@@ -956,13 +1059,13 @@ def build(container, root, wheel=None) -> None:
                 raw_speaker = str(segment.get("speaker") or "Speaker").strip()
                 body_text = str(segment.get("text") or "").strip()
                 if blocks and blocks[-1]["raw_speaker"] == raw_speaker:
-                    blocks[-1]["text"] += " " + body_text
+                    blocks[-1]["segment_texts"].append(body_text)
                 else:
                     blocks.append(
                         {
                             "raw_speaker": raw_speaker,
                             "speaker": state["speaker_map"].get(raw_speaker, raw_speaker),
-                            "text": body_text,
+                            "segment_texts": [body_text],
                             "time": segment.get("t", segment.get("start", 0)),
                         }
                     )
@@ -1028,12 +1131,186 @@ def build(container, root, wheel=None) -> None:
                     click_tag if speaker_tag != "speaker_you" else speaker_tag,
                 )
                 transcript.insert("end", f"  ·  {stamp}\n", "timestamp")
-                transcript.insert("end", block["text"] + "\n\n", "body")
+                for piece_index, (piece, corrected, find) in enumerate(
+                    _joined_correction_parts(block["segment_texts"], state["corrections"])
+                ):
+                    if corrected:
+                        tag = f"correction_{block_index}_{piece_index}"
+                        state["correction_tags"][tag] = find
+                        transcript.tag_configure(tag, underline=True)
+                        transcript.insert("end", piece, ("body", tag))
+                    else:
+                        transcript.insert("end", piece, "body")
+                transcript.insert("end", "\n\n", "body")
         elif value:
             transcript.insert(
                 "1.0", value, "placeholder" if placeholder else "body"
             )
         transcript.config(state="disabled")
+
+    def _word_at(event) -> str:
+        index = transcript.index(f"@{event.x},{event.y}")
+        line, column = index.split(".", 1)
+        text = transcript.get(f"{line}.0", f"{line}.end")
+        if "·" in text:
+            return ""
+        column = int(column)
+        left = right = column
+        while left > 0 and not text[left - 1].isspace():
+            left -= 1
+        while right < len(text) and not text[right].isspace():
+            right += 1
+        return text[left:right].strip(".,!?;:()[]{}\"'")
+
+    def _correction_target(event) -> tuple[str, str | None]:
+        tags = transcript.tag_names(transcript.index(f"@{event.x},{event.y}"))
+        existing = next(
+            (state["correction_tags"].get(tag) for tag in tags
+             if tag in state["correction_tags"]),
+            None,
+        )
+        try:
+            selection = transcript.get("sel.first", "sel.last")
+        except tk.TclError:
+            selection = ""
+        click_index = transcript.index(f"@{event.x},{event.y}")
+        try:
+            contains_click = _selection_contains_click(
+                transcript.index("sel.first"), click_index, transcript.index("sel.last")
+            )
+        except tk.TclError:
+            contains_click = False
+        if (
+            contains_click
+            and selection
+            and "\n" not in selection
+            and "·" not in selection
+        ):
+            return selection.strip(), existing
+        return _word_at(event), existing
+
+    def undo_correction(find: str) -> None:
+        path = selected_path()
+        if path is None:
+            return
+        updated = dict(state["corrections"])
+        updated.pop(find, None)
+        try:
+            save_corrections(path, updated)
+        except OSError as exc:
+            status_label.config(text=f"Could not save: {exc}", fg=ACCENT)
+            return
+        state["corrections"] = updated
+        refresh(preferred=path, preserve_scroll=transcript.yview()[0])
+        regenerate_summaries(path, state["speaker_map"], updated)
+
+    def fix_wording(original: str, anchor_event=None) -> None:
+        path = selected_path()
+        if path is None or not original.strip():
+            return
+        dialog = tk.Toplevel(root)
+        dialog.overrideredirect(True)
+        dialog.configure(bg=PALETTE["border"])
+        panel = tk.Frame(dialog, bg=CARD, padx=9, pady=7)
+        panel.pack(fill="both", expand=True, padx=1, pady=1)
+        tk.Label(panel, text=original, bg=CARD, fg=ACCENT).pack(side="left", padx=(0, 6))
+        entry = ttk.Entry(panel, width=max(18, min(36, len(original) + 8)))
+        entry.insert(0, original)
+        entry.pack(side="left", padx=(0, 7))
+        future_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            panel, text="Also fix this in future dictation", variable=future_var
+        ).pack(side="left", padx=(0, 7))
+        save_btn = ttk.Button(panel, text="Save", style="Accent.TButton")
+        save_btn.pack(side="left")
+        closed = {"value": False}
+
+        def close() -> None:
+            if not closed["value"]:
+                closed["value"] = True
+                dialog.destroy()
+
+        def save_fix() -> None:
+            replacement = entry.get().strip()
+            if not replacement or replacement.casefold() == original.casefold():
+                close()
+                return
+            # Only the GLOBAL store rides Settings' flat "k=v, k=v" string, so only
+            # it needs clean delimiters. corrections.json is JSON and holds anything,
+            # so a session-only fix to "C=64" must still be allowed.
+            if future_var.get() and not keeping_fix_for_dictation_allowed(
+                original, replacement
+            ):
+                status_label.config(
+                    text="A fix kept for future dictation cannot contain a comma "
+                         "or an equals sign. Untick the box to fix it here only.",
+                    fg=ACCENT,
+                )
+                return
+            # Corrections are applied per segment, so a phrase the user dragged
+            # across a segment boundary matches nothing. Saving it anyway looks
+            # like it worked and silently changes nothing — say so instead.
+            raw_segments = _read_json(path / "transcript.json").get("segments") or []
+            if isinstance(raw_segments, list) and raw_segments:
+                if apply_corrections(raw_segments, {original: replacement}) == raw_segments:
+                    status_label.config(
+                        text=f"Could not find “{original}” as a whole phrase in one "
+                             "part of the transcript, so nothing was changed.",
+                        fg=ACCENT,
+                    )
+                    return
+            updated = dict(state["corrections"])
+            updated[original] = replacement
+            try:
+                save_corrections(path, updated)
+            except OSError as exc:
+                status_label.config(text=f"Could not save: {exc}", fg=ACCENT)
+                return
+            if future_var.get():
+                cfg = config.Config.load()
+                replacements = dict(cfg.replacements or {})
+                replacements[original] = replacement
+                cfg.replacements = replacements
+                cfg.save()
+                if on_replacements_changed is not None:
+                    on_replacements_changed(replacements)
+            state["corrections"] = updated
+            close()
+            refresh(preferred=path, preserve_scroll=transcript.yview()[0])
+            regenerate_summaries(path, state["speaker_map"], updated)
+
+        save_btn.config(command=save_fix)
+        dialog.update_idletasks()
+        x = int(anchor_event.x_root) + 5 if anchor_event is not None else root.winfo_rootx() + 20
+        y = int(anchor_event.y_root) + 20 if anchor_event is not None else root.winfo_rooty() + 20
+        x = min(max(0, x), max(0, dialog.winfo_screenwidth() - dialog.winfo_width()))
+        y = min(max(0, y), max(0, dialog.winfo_screenheight() - dialog.winfo_height()))
+        dialog.geometry(f"+{x}+{y}")
+        entry.focus_set()
+        dialog.bind("<Escape>", lambda _event: close())
+        entry.bind("<Return>", lambda _event: save_fix())
+
+    # One reusable menu, rebuilt per click, so nothing leaks. Do NOT create-and-destroy
+    # per right-click: tk::MenuInvoke runs MenuUnpost BEFORE [$w invoke], so destroying
+    # on <Unmap> kills the widget before its own command fires and the entry silently
+    # does nothing at all.
+    transcript_menu = tk.Menu(root, tearoff=False)
+
+    def show_transcript_menu(event) -> str:
+        if state["busy"] or selected_path() is None:
+            return "break"
+        target, existing = _correction_target(event)
+        menu = transcript_menu
+        menu.delete(0, "end")
+        if existing and existing in state["corrections"]:
+            menu.add_command(label="Undo this fix", command=lambda: undo_correction(existing))
+        elif target:
+            menu.add_command(label="Fix wording…", command=lambda: fix_wording(target, event))
+        if menu.index("end") is not None:
+            menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
+    transcript.bind("<Button-3>", show_transcript_menu, add="+")
 
     def apply_current_match() -> None:
         transcript.tag_remove("search_current", "1.0", "end")
@@ -1127,6 +1404,7 @@ def build(container, root, wheel=None) -> None:
         session_meta.config(text=" · ".join(meta_bits))
 
         state["speaker_map"] = load_speaker_map(session["path"])
+        state["corrections"] = load_corrections(session["path"])
         transcript_data = _read_json(session["path"] / "transcript.json")
         segments = transcript_data.get("segments")
         body_text = _transcript_text(session["path"])
@@ -1485,6 +1763,10 @@ def build(container, root, wheel=None) -> None:
         segments = transcript_data.get("segments")
         if not isinstance(segments, list) or not segments:
             return
+        # Summarise what the user can SEE. Without this the first summary of a
+        # meeting is built from the raw transcript, so it quotes the wording the
+        # user already corrected. regenerate_summaries does the same for reruns.
+        segments = apply_corrections(segments, load_corrections(path))
         mode = selected_summary_mode()
         cfg = config.Config.load()
         set_busy(True)
