@@ -361,12 +361,18 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
     return sessions
 
 
-def _transcript_text(session_dir: str | Path) -> str:
+def _transcript_text(session_dir: str | Path, *, polished: bool = True) -> str:
+    """Render a session for Copy/Save.
+
+    ``polished`` MUST follow the Show raw toggle. Exporting polished text while
+    the screen says raw hands the user a tidied record they believe is the
+    original — the one thing an overlay must never do.
+    """
     transcript = _read_json(Path(session_dir) / "transcript.json")
     segments = transcript.get("segments")
     if isinstance(segments, list):
         rendered = render_transcript(
-            apply_polished(segments, load_polished(session_dir)),
+            apply_polished(segments, load_polished(session_dir)) if polished else segments,
             speaker_map=load_speaker_map(session_dir),
             corrections=load_corrections(session_dir),
         )
@@ -420,6 +426,11 @@ def resolve_bookmarks(bookmarks: list[dict], segments: list[dict] | None) -> lis
             "t": timestamp,
             "source": bookmark.get("source"),
             "text": " ".join(texts),
+            # The joined window NEVER appears literally in the rendered transcript,
+            # because rendering inserts speaker labels and blank lines between
+            # segments — so searching for it to scroll there always failed. One
+            # whole segment does appear verbatim; jump with that.
+            "first_text": texts[0] if texts else "",
             "window_start": window_start,
             "window_end": window_end,
         })
@@ -1139,12 +1150,14 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
                               justify="left", wraplength=560, padx=5, pady=4)
             button.pack(fill="x")
             if text:
-                button.bind("<Button-1>", lambda _event, needle=text: _see_transcript(needle))
+                button.bind("<Button-1>",
+                            lambda _event, needle=item.get("first_text") or text:
+                            _see_transcript(needle))
         highlights_panel.pack(fill="x", pady=(0, 8), before=transcript_wrap)
 
     def _see_transcript(needle):
         transcript.config(state="normal")
-        found = transcript.search(needle, "1.0", "end")
+        found = transcript.search(str(needle or ""), "1.0", "end")
         transcript.config(state="disabled")
         if found:
             transcript.see(found)
@@ -1525,7 +1538,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         visible_segments = apply_corrections(visible_segments, state["corrections"])
         body_text = render_transcript(
             visible_segments, speaker_map=state["speaker_map"]
-        ) or _transcript_text(session["path"])
+        ) or _transcript_text(session["path"], polished=state["show_polished"])
         fallback = (
             "Recording in progress. Transcription is available after it stops."
             if session["status"] == "recording"
@@ -1993,7 +2006,10 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         threading.Thread(target=work, daemon=True).start()
 
     def do_copy() -> None:
-        value = _transcript_text(selected_path()) if selected_path() else ""
+        # Follow the Show raw toggle: exporting polished text while the screen
+        # says raw would hand over a tidied record believed to be the original.
+        value = (_transcript_text(selected_path(), polished=state["show_polished"])
+                 if selected_path() else "")
         ok = _copy_to_clipboard(root, value)
         copy_btn.config(text="Copied ✓" if ok else "Copy failed")
         root.after(1100, lambda: copy_btn.config(text="Copy"))
@@ -2008,7 +2024,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         path = selected_path()
         if path is None:
             return
-        value = _transcript_text(path)
+        value = _transcript_text(path, polished=state["show_polished"])
         if not value:
             return
         destination = filedialog.asksaveasfilename(
