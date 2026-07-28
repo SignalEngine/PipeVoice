@@ -157,3 +157,58 @@ def test_sustained_applause_does_not_fire():
     for i in range(25):
         _burst(signal, int((1.0 + i * 0.14) * 16_000), 0.7, 0.03, rng)
     assert _fires(signal) == 0
+
+
+def test_speaker_bleed_is_dropped_but_real_conversation_is_not():
+    # Recorded through SPEAKERS rather than headphones, the mic also hears the
+    # far end, so their words are transcribed twice — once from the desktop
+    # capture and again attributed to "You". Verbatim from a real session.
+    real = [
+        {"t": 29.0, "speaker": "Them", "text": "At Manchester's Nordic Muse, they love "
+         "the hand picked stuff. A weird sight that would be if you were just going out "
+         "to do the red run at the top and you wanna lift with a bunch of trout."},
+        {"t": 30.0, "speaker": "You", "text": "Manchester's Nordic muse. They love the "
+         "handpicked stuff. The weird sight that would be if you were just going up to "
+         "do the red run at the top, and you're gonna lift with a bunch of trout."},
+    ]
+    kept = meeting.drop_speaker_bleed(real)
+    assert len(kept) == 1
+    assert kept[0]["speaker"] == "Them", "the desktop capture is the original, keep it"
+
+    # Two people genuinely talking must survive. Character-level similarity
+    # cannot tell these apart from the pair above (0.341 vs 0.180 — overlapping);
+    # word-level can (0.814 vs 0.087), which is why the metric is word-based.
+    both = [
+        {"t": 10.0, "speaker": "Them", "text": "I think we should ship the pricing change on Friday afternoon"},
+        {"t": 12.0, "speaker": "You", "text": "Agreed, but let us tell the support team first thing that morning"},
+    ]
+    assert len(meeting.drop_speaker_bleed(both)) == 2
+
+    # A short agreement is not an echo, however close it lands.
+    short = [
+        {"t": 10.0, "speaker": "Them", "text": "So the deploy is going out on Friday at four"},
+        {"t": 11.0, "speaker": "You", "text": "Yeah, exactly"},
+    ]
+    assert len(meeting.drop_speaker_bleed(short)) == 2
+
+    # Deliberately repeating a number back, well outside the echo window, stays.
+    later = [
+        {"t": 10.0, "speaker": "Them", "text": "The number you want is four hundred and twenty seven pounds"},
+        {"t": 40.0, "speaker": "You", "text": "The number you want is four hundred and twenty seven pounds"},
+    ]
+    assert len(meeting.drop_speaker_bleed(later)) == 2
+
+
+def test_merge_transcripts_actually_applies_bleed_removal():
+    # The test above proves the FUNCTION works; this proves it is WIRED IN.
+    # Without it, deleting the call from merge_transcripts leaves the suite
+    # green — a test guarding a path production never takes.
+    mic = [{"start": 30.0, "text": "Manchester's Nordic muse. They love the handpicked "
+            "stuff. The weird sight that would be if you were just going up to do the "
+            "red run at the top with a bunch of trout."}]
+    desktop = [{"start": 29.0, "speaker": 0, "text": "At Manchester's Nordic Muse, they "
+                "love the hand picked stuff. A weird sight that would be if you were "
+                "just going out to do the red run at the top with a bunch of trout."}]
+    merged = meeting.merge_transcripts(mic, desktop, mic_offset=0.0, desktop_offset=0.0)
+    speakers = [segment["speaker"] for segment in merged]
+    assert speakers == ["Them"], f"the mic echo should be gone, got {speakers}"

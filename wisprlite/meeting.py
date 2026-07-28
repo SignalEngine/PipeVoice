@@ -274,7 +274,77 @@ def merge_transcripts(
             )
 
     merged.sort(key=lambda segment: segment["t"])
-    return merged
+    return drop_speaker_bleed(merged)
+
+
+# How far apart the same words may land on the two streams and still be one
+# sound. Speaker -> air -> mic is near-instant; the slack is for the two engines
+# segmenting the audio differently.
+BLEED_WINDOW = 6.0
+# Compare WORDS, not characters. Measured on a real bleed pair against real
+# two-sided conversation: word-sequence similarity scores 0.814 vs 0.087, which
+# separates cleanly, while character similarity gives 0.341 vs 0.180 — ranges
+# that overlap, so no threshold can split them. The engines transcribe the same
+# audio slightly differently ("hand picked" / "handpicked", a leading "At"), and
+# a single inserted word shifts every later character while leaving the word
+# sequence almost intact.
+BLEED_SIMILARITY = 0.55
+BLEED_MIN_WORDS = 6
+
+
+def drop_speaker_bleed(segments: list[dict]) -> list[dict]:
+    """Remove the mic's echo of audio that came out of the speakers.
+
+    On headphones the two streams are independent. Through SPEAKERS the
+    microphone also hears the far end, so their words get transcribed twice —
+    once from the desktop capture and again, a second later, attributed to the
+    local user. Seen live: "At Manchester's Nordic Muse, they love the hand
+    picked stuff" appeared as Them at 0:29 and again as You at 0:30.
+
+    The echo only ever runs desktop -> mic: loopback records what the machine
+    PLAYS, and the local voice is never played back. So a near-duplicate pair is
+    resolved by dropping the "You" copy, which is both the wrong attribution and
+    the poorer signal.
+    """
+    from difflib import SequenceMatcher
+
+    remote = [s for s in segments if str(s.get("speaker") or "") != "You"]
+    if not remote:
+        return segments
+
+    def key(text: object) -> str:
+        return " ".join(str(text or "").lower().split())
+
+    kept = []
+    for segment in segments:
+        if str(segment.get("speaker") or "") != "You":
+            kept.append(segment)
+            continue
+        mine = key(segment.get("text")).split()
+        if len(mine) < BLEED_MIN_WORDS:
+            # Too short to tell an echo from a genuine "yeah, exactly".
+            kept.append(segment)
+            continue
+        echo = False
+        for other in remote:
+            try:
+                gap = abs(float(other.get("t", 0.0)) - float(segment.get("t", 0.0)))
+            except (TypeError, ValueError):
+                continue
+            if gap > BLEED_WINDOW:
+                continue
+            theirs = key(other.get("text")).split()
+            if len(theirs) < BLEED_MIN_WORDS:
+                continue
+            # Compare over the shorter overlap: the engines rarely cut the audio
+            # at the same word, so one copy is often a prefix of the other.
+            span = min(len(mine), len(theirs))
+            if SequenceMatcher(None, mine[:span], theirs[:span]).ratio() >= BLEED_SIMILARITY:
+                echo = True
+                break
+        if not echo:
+            kept.append(segment)
+    return kept
 
 
 def _format_elapsed(value: object) -> str:

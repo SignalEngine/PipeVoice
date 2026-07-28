@@ -1135,8 +1135,19 @@ def main(first_run: bool = False) -> None:
         if close:
             root.destroy()
 
-    ttk.Button(footer, text="Save", style="Accent.TButton", command=save).pack(side="right")
-    ttk.Button(footer, text="Cancel", command=root.destroy).pack(side="right", padx=(0, 8))
+    # Save keeps the window OPEN. Closing on save makes it impossible to change
+    # two things in a row, and forces a reopen just to check the change stuck.
+    # X and Close are what close it.
+    save_btn = ttk.Button(footer, text="Save", style="Accent.TButton")
+    save_btn.pack(side="right")
+
+    def save_and_stay():
+        save(close=False)
+        save_btn.config(text="Saved \u2713")
+        root.after(1200, lambda: save_btn.config(text="Save"))
+
+    save_btn.config(command=save_and_stay)
+    ttk.Button(footer, text="Close", command=root.destroy).pack(side="right", padx=(0, 8))
     ttk.Button(footer, text="⭐ Star on GitHub",
                command=lambda: webbrowser.open(_URLS["github"])).pack(side="left")
     ttk.Label(footer, text="Free & open-source — a star really helps.",
@@ -1151,6 +1162,13 @@ def main(first_run: bool = False) -> None:
     x = max(0, (sw - win_w) // 2)
     y = max(16, (sh - win_h) // 5)          # sit near the top so the bottom stays on-screen
     root.geometry(f"{win_w}x{win_h}+{x}+{y}")
+    # The Meetings tab is a two-pane layout with a transcript in it and is much
+    # more usable with the whole screen. Maximise, but keep the geometry above as
+    # the restore size so un-maximising still lands somewhere sensible.
+    try:
+        root.state("zoomed")
+    except Exception:
+        pass
     winui.dark_titlebar(root)
     root.mainloop()
 

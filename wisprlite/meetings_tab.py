@@ -684,6 +684,19 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     )
     summarise_btn.pack(side="left", padx=(7, 0))
 
+    # A recording with no transcript has nothing to show and no obvious next
+    # step — the Transcribe control was one small grey button among six at the
+    # bottom edge. This banner puts the next action where the eye already is.
+    needs_transcribe = tk.Frame(right, bg=CARD)
+    _nt_inner = tk.Frame(needs_transcribe, bg=CARD, padx=14, pady=12)
+    _nt_inner.pack(fill="x")
+    tk.Label(_nt_inner, text="This recording has not been transcribed yet",
+             bg=CARD, fg=FG, font=("Segoe UI", 10, "bold"),
+             anchor="w").pack(side="left")
+    transcribe_cta = ttk.Button(_nt_inner, text="Transcribe now",
+                                style="Accent.TButton")
+    transcribe_cta.pack(side="right")
+
     highlights_panel = tk.Frame(right, bg=CARD)
     highlights_title = tk.Label(highlights_panel, text="Highlights", bg=CARD, fg=ACCENT,
                                 font=("Segoe UI", 9, "bold"), anchor="w")
@@ -1573,6 +1586,11 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             search_var.set("")
         can_transcribe = session["can_transcribe"] and not state["busy"]
         transcribe_btn.config(state="normal" if can_transcribe else "disabled")
+        transcribe_cta.config(state="normal" if can_transcribe else "disabled")
+        if session["can_transcribe"]:
+            needs_transcribe.pack(fill="x", pady=(0, 8), before=highlights_panel)
+        else:
+            needs_transcribe.pack_forget()
         copy_btn.config(state="normal" if body_text else "disabled")
         save_btn.config(state="normal" if body_text else "disabled")
         folder_btn.config(state="normal")
@@ -1830,7 +1848,8 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     def set_busy(busy: bool) -> None:
         state["busy"] = busy
         widget_state = "disabled" if busy else "normal"
-        for button in (transcribe_btn, polish_btn, toggle_polish_btn, summarise_btn, delete_btn):
+        for button in (transcribe_btn, transcribe_cta, polish_btn, toggle_polish_btn,
+                       summarise_btn, delete_btn):
             button.config(state=widget_state)
         summary_mode.config(state=widget_state)
 
@@ -2109,6 +2128,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     prev_btn.config(command=lambda: move_match(-1))
     next_btn.config(command=lambda: move_match(1))
     transcribe_btn.config(command=do_transcribe)
+    transcribe_cta.config(command=do_transcribe)
     summarise_btn.config(command=do_summarise)
     polish_btn.config(command=do_polish)
     toggle_polish_btn.config(command=toggle_polish)
