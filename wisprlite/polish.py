@@ -45,21 +45,53 @@ def _strip_fence(answer: object) -> str:
     return (body[:end] if end != -1 else body).strip()
 
 
+class PolishFailed(RuntimeError):
+    """Carries WHY polishing failed, so the UI can show something actionable."""
+
+
+def _extract_array(text: str) -> str:
+    """Pull the first JSON array out of a reply that may be wrapped in prose."""
+    start = text.find("[")
+    end = text.rfind("]")
+    return text[start:end + 1] if 0 <= start < end else text
+
+
 def _polish_chunk(source: list[str], provider: str, model: str, completion):
-    """Polish one chunk, or return None when the reply cannot be trusted."""
+    """Polish one chunk. Raises PolishFailed with the real reason."""
     messages = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content": json.dumps(source, ensure_ascii=False)},
     ]
-    answer = (completion or chat_completion)(messages, provider, model)
+    if completion is not None:
+        answer = completion(messages, provider, model)
+    else:
+        # raise_errors=True, or an API failure (rate limit, token cap, bad model
+        # name) comes back as a bare None and gets reported as "the model replied
+        # with something unusable" — blaming the reply for a transport error and
+        # hiding the one detail that would fix it.
+        try:
+            answer = chat_completion(messages, provider, model, raise_errors=True)
+        except Exception as exc:
+            raise PolishFailed(f"{type(exc).__name__}: {exc}") from exc
+
+    if not str(answer or "").strip():
+        raise PolishFailed(f"{provider} returned an empty response")
+
+    text = _extract_array(_strip_fence(answer))
     try:
-        value = json.loads(_strip_fence(answer))
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(value, list) or len(value) != len(source):
-        return None
-    if not all(isinstance(text, str) for text in value):
-        return None
+        value = json.loads(text)
+    except (TypeError, ValueError) as exc:
+        snippet = " ".join(str(answer).split())[:110]
+        raise PolishFailed(f"could not read the reply as JSON ({exc}). It began: {snippet}")
+    if not isinstance(value, list):
+        raise PolishFailed(f"expected a list of {len(source)} lines, got {type(value).__name__}")
+    if len(value) != len(source):
+        raise PolishFailed(
+            f"got {len(value)} lines back for {len(source)} segments — discarded "
+            "rather than risk putting one person's words under another's name"
+        )
+    if not all(isinstance(item, str) for item in value):
+        raise PolishFailed("the reply contained something that was not text")
     return value
 
 
@@ -78,13 +110,11 @@ def polish_segments(segments: list[dict], provider: str, model: str = "", *, com
 
     polished: list[str] = []
     for start in range(0, len(source), CHUNK_SEGMENTS):
-        value = _polish_chunk(source[start:start + CHUNK_SEGMENTS],
-                              provider, model, completion)
         # One bad chunk discards the WHOLE result. Keeping the good chunks would
         # leave a transcript half tidied and half raw with no way to tell which,
         # and this is a record of what people actually said.
-        if value is None:
-            return None
+        value = _polish_chunk(source[start:start + CHUNK_SEGMENTS],
+                              provider, model, completion)
         polished.extend(value)
     if len(polished) != len(source):
         return None

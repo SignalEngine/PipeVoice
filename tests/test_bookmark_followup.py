@@ -76,11 +76,20 @@ def test_both_summary_entry_points_pass_bookmark_windows():
 
 
 def test_polish_wrong_segment_count_is_discarded():
+    # Still discarded — misaligning segments would put one person's words under
+    # another's name — but now it says WHY instead of failing silently, because
+    # "unusable reply" hid an API error, an empty response, unparseable text and
+    # a count mismatch behind one sentence.
     segments = [{"t": 0, "text": "um hello"}, {"t": 1, "text": "bye"}]
-    result = polish.polish_segments(
-        segments, "ollama", completion=lambda *_: json.dumps(["Hello"])
-    )
-    assert result is None
+    raised = None
+    try:
+        polish.polish_segments(
+            segments, "ollama", completion=lambda *_: json.dumps(["Hello"])
+        )
+    except polish.PolishFailed as exc:
+        raised = str(exc)
+    assert raised is not None, "a count mismatch must never be applied"
+    assert "1" in raised and "2" in raised, f"the message should name both counts: {raised}"
 
 
 def test_polish_overlay_deletion_restores_raw_text():
@@ -90,3 +99,24 @@ def test_polish_overlay_deletion_restores_raw_text():
         assert meeting.apply_polished(raw, meeting.load_polished(tmp))[0]["text"] == "Hello."
         (pathlib.Path(tmp) / meeting.POLISHED_FILE).unlink()
         assert meeting.apply_polished(raw, meeting.load_polished(tmp))[0]["text"] == "um hello"
+
+
+def test_polish_reports_a_transport_error_instead_of_blaming_the_reply():
+    # chat_completion defaults to raise_errors=False, so a rate limit or bad
+    # model name returned a bare None and the UI said "the model replied with
+    # something unusable" — blaming the reply for a transport failure and hiding
+    # the one detail that would fix it.
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("429 rate limit exceeded")
+
+    original = polish.chat_completion
+    polish.chat_completion = explode
+    try:
+        raised = ""
+        try:
+            polish.polish_segments([{"t": 0, "text": "um hello there everyone"}], "ollama")
+        except polish.PolishFailed as exc:
+            raised = str(exc)
+        assert "429" in raised, f"the real error must reach the user: {raised!r}"
+    finally:
+        polish.chat_completion = original

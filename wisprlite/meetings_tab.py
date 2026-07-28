@@ -44,7 +44,7 @@ from .summarise import (
     render_markdown_lines,
     summarise,
 )
-from .polish import ProviderNotReady, polish_segments
+from .polish import PolishFailed, ProviderNotReady, polish_segments
 from .winui import PALETTE, tooltip
 
 BG = PALETTE["bg"]
@@ -1983,11 +1983,14 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
                 overlay = None
                 error = (f"no API key set for {exc}. Settings \u2192 Transcription \u2192 "
                          "AI polish provider, then add its key.")
+            except PolishFailed as exc:
+                # Say exactly what went wrong. "replied with something unusable"
+                # covered an API error, an empty response, unparseable text and a
+                # count mismatch — four different fixes behind one sentence.
+                overlay = None
+                error = str(exc)
             else:
-                error = None if overlay is not None else (
-                    f"{cfg.cleanup_provider or 'the provider'} replied with something "
-                    "this could not use safely, so nothing was changed."
-                )
+                error = None
             try:
                 if overlay is not None:
                     save_polished(path, overlay)
@@ -2132,16 +2135,27 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         # recordings when a new one starts, and the list holds a path captured
         # earlier. Handing Windows a dead path raises a modal "Location is not
         # available" that looks like a crash. Fall back to the meetings folder.
-        if not path.exists():
+        # is_dir(), not exists(): os.startfile is fire-and-forget on Windows, so
+        # Explorer raises its own "Location is not available" dialog and the
+        # except below can never see it. Everything must be checked BEFORE the
+        # call, and whatever we do open has to be named in the status bar —
+        # otherwise a failure here is indistinguishable from doing nothing.
+        if not path.is_dir():
+            fallback = meetings_dir()
             status_label.config(
-                text="That recording is no longer on disk — opening the meetings "
-                     "folder instead.",
+                text=f"That recording is no longer on disk. Opening {fallback} instead.",
                 fg=WARN,
             )
             refresh()
-            path = meetings_dir()
+            path = fallback
+        if not path.is_dir():
+            status_label.config(
+                text=f"Could not open {path} — the folder does not exist.", fg=ACCENT
+            )
+            return
         try:
             _open_folder(path)
+            status_label.config(text=f"Opened {path}", fg=MUTED)
         except (OSError, subprocess.SubprocessError) as exc:
             status_label.config(text=f"Could not open folder: {exc}", fg=ACCENT)
 
