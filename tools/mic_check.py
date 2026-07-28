@@ -18,6 +18,55 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def scan(sd, selected) -> int:
+    """Open every input device in turn and report which ones deliver real audio.
+
+    Windows exposes the same physical microphone several times, once per host
+    API (MME, DirectSound, WASAPI). They are not equivalent: one can hand back
+    a silent stream while another works perfectly. Rather than reason about
+    which, measure all of them.
+    """
+    import numpy as np
+
+    print("Scanning every input device — KEEP TALKING while this runs.")
+    print("-" * 72)
+    print(f"  {'idx':>3}  {'peak':>8}  {'host API':<12} name")
+    results = []
+    for index, info in enumerate(sd.query_devices()):
+        if info.get("max_input_channels", 0) <= 0:
+            continue
+        try:
+            api = sd.query_hostapis(info["hostapi"])["name"]
+        except Exception:
+            api = "?"
+        peak = 0.0
+        try:
+            with sd.InputStream(samplerate=16_000, channels=1, dtype="float32",
+                                blocksize=800, device=index) as stream:
+                for _ in range(15):                      # ~1.2s of audio
+                    block, _overflowed = stream.read(800)
+                    value = float(np.max(np.abs(block))) if block.size else 0.0
+                    peak = max(peak, value)
+            mark = "  <- currently selected" if str(selected) == str(index) else ""
+            state = "SILENT" if peak < 0.002 else "audio"
+            print(f"  {index:>3}  {peak:>8.4f}  {api:<12} {info['name'][:34]} [{state}]{mark}")
+            results.append((peak, index, info["name"], api))
+        except Exception as exc:
+            print(f"  {index:>3}  {'--':>8}  {api:<12} {info['name'][:34]} "
+                  f"({type(exc).__name__})")
+    print("-" * 72)
+    working = sorted((r for r in results if r[0] >= 0.002), reverse=True)
+    if not working:
+        print("FAIL  every input device was silent. That points at Windows rather")
+        print("      than Pipevoice: check Settings > Privacy & security >")
+        print("      Microphone, and any Studio Effects / voice-isolation feature.")
+        return 2
+    peak, index, name, api = working[0]
+    print(f"PASS  loudest working device is [{index}] {name} ({api}), peak {peak:.4f}")
+    print(f"      Set Settings > Audio > Microphone to [{index}] and retest.")
+    return 0
+
+
 def main() -> int:
     try:
         import sounddevice as sd
@@ -73,6 +122,9 @@ def main() -> int:
                 print(f"  ** double clap/snap detected at {state['blocks'] * 0.05:.1f}s")
         except Exception as exc:
             state["error"] = f"{type(exc).__name__}: {exc}"
+
+    if "--scan" in sys.argv:
+        return scan(sd, device)
 
     print("Opening the microphone for 8 seconds.")
     print("TALK, then CLAP TWICE, then clap twice again.")
