@@ -650,13 +650,18 @@ def main(first_run: bool = False) -> None:
         result.pack(padx=18, pady=(0, 12))
         detector = SnapDetector(16_000, sensitivity=float(bookmark_sensitivity_var.get()))
         stream = None
+        # Name the device in every message. "No microphone showing" is impossible
+        # to act on without knowing which device the test actually opened.
+        _dev = config.device_arg(cfg)
+        device_label = "the system default microphone" if _dev is None else f"device {_dev}"
         # The audio callback runs on PortAudio's thread and Tk is not thread-safe,
         # so it only ever writes into this dict — exactly what MeetingRecorder does
         # with self._levels. The UI polls on the main thread below.
-        shared = {"level": 0.0, "hits": 0, "error": ""}
+        shared = {"level": 0.0, "hits": 0, "error": "", "blocks": 0, "peak": 0.0}
 
         def callback(block, _frames, _time, _status):
             try:
+                shared["blocks"] += 1
                 total = 0.0
                 count = 0
                 for value in block:
@@ -664,6 +669,8 @@ def main(first_run: bool = False) -> None:
                     total += sample * sample
                     count += 1
                 rms = (total / count) ** 0.5 if count else 0.0
+                if rms > shared["peak"]:
+                    shared["peak"] = rms
                 # Fast attack, slow release, then the same dB curve the REC meter
                 # uses. A linear bar reads as dead: speech peaks near 0.05.
                 shared["level"] = smooth_level(shared["level"], rms)
@@ -673,17 +680,40 @@ def main(first_run: bool = False) -> None:
                 shared["error"] = f"{type(exc).__name__}: {exc}"
 
         seen_hits = 0
+        ticks = 0
 
         def tick():
-            nonlocal seen_hits
+            # Never leave a silent bar again: say WHICH of the three states we are
+            # in — no audio arriving at all, audio arriving but too quiet, or
+            # working. A dead bar with "Listening..." under it is indistinguishable
+            # from a crash, which is exactly how this wasted a debugging round.
+            nonlocal seen_hits, ticks
             if not dialog.winfo_exists():
                 return
+            ticks += 1
             level.configure(value=meter_level(shared["level"]))
             if shared["error"]:
                 result.config(text=shared["error"], fg=ACCENT)
             elif shared["hits"] > seen_hits:
                 seen_hits = shared["hits"]
                 result.config(text=f"Detected · {seen_hits}", fg=GOOD)
+            elif shared["blocks"] == 0 and ticks > 30:      # ~1.5s with no callback
+                result.config(
+                    text=f"No audio from {device_label}. Pick a different microphone "
+                         "under Audio, then reopen this test.",
+                    fg=ACCENT,
+                )
+            elif shared["blocks"] and shared["peak"] < 0.002 and ticks > 60:
+                result.config(
+                    text=f"{device_label} is connected but silent — check it is not "
+                         "muted, and that it is the mic you are speaking into.",
+                    fg=WARN,
+                )
+            elif shared["blocks"]:
+                result.config(
+                    text=f"Listening · {device_label} · peak {shared['peak']:.3f}",
+                    fg=MUTED,
+                )
             dialog.after(50, tick)
         def close():
             nonlocal stream
