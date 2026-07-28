@@ -75,6 +75,16 @@ def _replacement_value_allowed(value: str) -> bool:
     return "," not in value and "=" not in value
 
 
+def keeping_fix_for_dictation_allowed(key: str, value: str) -> bool:
+    """Whether this pair may be promoted into the GLOBAL cfg.replacements store.
+
+    Only the global store rides Settings' flat "k=v, k=v" string. corrections.json
+    is JSON and holds anything, so this must never gate a session-only fix — that
+    asymmetry is easy to get wrong, hence one named rule both sides call.
+    """
+    return _replacement_key_allowed(key) and _replacement_value_allowed(value)
+
+
 def _selection_contains_click(first: str, click: str, last: str) -> bool:
     """Return whether a Tk Text click index is inside a non-empty selection."""
     def offset(index: str) -> tuple[int, int]:
@@ -1222,15 +1232,15 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             if not replacement or replacement.casefold() == original.casefold():
                 close()
                 return
-            if not _replacement_key_allowed(original):
-                status_label.config(
-                    text="Word fixes cannot contain commas or equals signs.", fg=ACCENT
-                )
-                return
-            if future_var.get() and not _replacement_value_allowed(replacement):
+            # Only the GLOBAL store rides Settings' flat "k=v, k=v" string, so only
+            # it needs clean delimiters. corrections.json is JSON and holds anything,
+            # so a session-only fix to "C=64" must still be allowed.
+            if future_var.get() and not keeping_fix_for_dictation_allowed(
+                original, replacement
+            ):
                 status_label.config(
                     text="A fix kept for future dictation cannot contain a comma "
-                         "or an equals sign.",
+                         "or an equals sign. Untick the box to fix it here only.",
                     fg=ACCENT,
                 )
                 return

@@ -147,3 +147,20 @@ def test_a_correction_that_changes_nothing_is_detectable():
 
     real = [{"text": "Dave will approve"}]
     assert meeting.apply_corrections(real, {"Dave": "Dev"}) != real
+
+
+def test_delimiter_rule_gates_only_the_global_store():
+    # The bug this locks: the key check was unconditional while the value check
+    # was gated on the checkbox, so a session-only fix to "C=64" was refused
+    # even though corrections.json holds it fine.
+    from wisprlite.meetings_tab import keeping_fix_for_dictation_allowed
+
+    assert not keeping_fix_for_dictation_allowed("C=64", "C=65")
+    assert not keeping_fix_for_dictation_allowed("1,000", "1000")
+    assert not keeping_fix_for_dictation_allowed("ACME", "ACME, Inc.")
+    assert keeping_fix_for_dictation_allowed("Dave", "Dev")
+
+    # ...and a session-only correction is unaffected by that rule entirely.
+    assert meeting.apply_corrections(
+        [{"text": "a C=64 here"}], {"C=64": "C=65"}
+    ) == [{"text": "a C=65 here"}]
