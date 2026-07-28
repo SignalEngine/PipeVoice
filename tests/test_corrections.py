@@ -119,3 +119,31 @@ def test_you_is_a_structural_speaker_label_not_a_correction_target():
     corrected = meeting.apply_corrections(segments, {"You": "Them"})
     assert corrected[0]["speaker"] == "You"
     assert corrected[0]["text"] == "Hello"
+
+
+def test_future_dictation_value_must_survive_the_settings_string_format():
+    # Settings stores replacements as "k=v, k=v", so a comma or equals in the
+    # VALUE is silently truncated on the next save: "ACME, Inc." became "ACME".
+    from wisprlite.meetings_tab import (
+        _replacement_key_allowed,
+        _replacement_value_allowed,
+    )
+
+    assert _replacement_value_allowed("Dev")
+    assert not _replacement_value_allowed("ACME, Inc.")
+    assert not _replacement_value_allowed("C=64")
+    assert _replacement_key_allowed("Dave")
+    assert not _replacement_key_allowed("1,000")
+
+
+def test_a_correction_that_changes_nothing_is_detectable():
+    # A phrase dragged across a segment boundary matches no single segment, so
+    # saving it would look like it worked and change nothing. The UI refuses it.
+    cross = [{"text": "New"}, {"text": "York is big"}]
+    assert meeting.apply_corrections(cross, {"New York": "NYC"}) == cross
+
+    absent = [{"text": "hello there"}]
+    assert meeting.apply_corrections(absent, {"Dave": "Dev"}) == absent
+
+    real = [{"text": "Dave will approve"}]
+    assert meeting.apply_corrections(real, {"Dave": "Dev"}) != real

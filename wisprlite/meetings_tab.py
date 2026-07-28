@@ -66,6 +66,15 @@ def _replacement_key_allowed(key: str) -> bool:
     return "," not in key and "=" not in key
 
 
+def _replacement_value_allowed(value: str) -> bool:
+    """Both halves ride the same "k=v, k=v" string, so both must stay clean.
+
+    Guarding only the key still loses data: "ACME" -> "ACME, Inc." survives in
+    corrections.json but the next Settings save parses it back as "ACME".
+    """
+    return "," not in value and "=" not in value
+
+
 def _selection_contains_click(first: str, click: str, last: str) -> bool:
     """Return whether a Tk Text click index is inside a non-empty selection."""
     def offset(index: str) -> tuple[int, int]:
@@ -1218,6 +1227,25 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
                     text="Word fixes cannot contain commas or equals signs.", fg=ACCENT
                 )
                 return
+            if future_var.get() and not _replacement_value_allowed(replacement):
+                status_label.config(
+                    text="A fix kept for future dictation cannot contain a comma "
+                         "or an equals sign.",
+                    fg=ACCENT,
+                )
+                return
+            # Corrections are applied per segment, so a phrase the user dragged
+            # across a segment boundary matches nothing. Saving it anyway looks
+            # like it worked and silently changes nothing — say so instead.
+            raw_segments = _read_json(path / "transcript.json").get("segments") or []
+            if isinstance(raw_segments, list) and raw_segments:
+                if apply_corrections(raw_segments, {original: replacement}) == raw_segments:
+                    status_label.config(
+                        text=f"Could not find “{original}” as a whole phrase in one "
+                             "part of the transcript, so nothing was changed.",
+                        fg=ACCENT,
+                    )
+                    return
             updated = dict(state["corrections"])
             updated[original] = replacement
             try:
