@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from .cleanup import PROVIDERS, chat_completion, provider_ready
-from .meeting import render_transcript
+from .meeting import _format_elapsed, render_transcript
 
 log = logging.getLogger("wisprlite")
 
@@ -147,7 +147,31 @@ def _complete(
     return result or ""
 
 
-def _messages(mode: str, content: str, *, reducing: bool = False) -> list[dict[str, str]]:
+def _bookmark_context(bookmarks: list[dict] | None) -> str:
+    if not bookmarks:
+        return ""
+    lines = [
+        "\n\nFLAGGED MOMENTS — the user marked these as important during the meeting:",
+        "Surface each flagged moment in the output; do not invent anything that was not said, "
+        "and do not drop other important content just because it was not flagged. Flagged means "
+        "prioritised, not exclusive.",
+    ]
+    for bookmark in bookmarks:
+        try:
+            elapsed = max(0, int(float(bookmark.get("t", 0))))
+        except (TypeError, ValueError, OverflowError):
+            elapsed = 0
+        text = str(bookmark.get("text") or "").strip()
+        if text:
+            # Must match render_transcript(timestamps=True), which switches to
+            # h:mm:ss past an hour. Printing [90:00] against a transcript that
+            # says [1:30:00] leaves the model unable to align the two.
+            lines.append(f"[{_format_elapsed(elapsed)}] {text}")
+    return "\n".join(lines) if any(line.startswith("[") for line in lines) else ""
+
+
+def _messages(mode: str, content: str, *, reducing: bool = False,
+              bookmarks: list[dict] | None = None) -> list[dict[str, str]]:
     task = PROMPTS[mode] + _COMMON_RAILS
     if reducing:
         user = (
@@ -157,6 +181,7 @@ def _messages(mode: str, content: str, *, reducing: bool = False) -> list[dict[s
         )
     else:
         user = "MEETING TRANSCRIPT:\n" + content
+    user += _bookmark_context(bookmarks)
     return [
         {"role": "system", "content": task},
         {"role": "user", "content": user},
@@ -252,6 +277,7 @@ def summarise(
     *,
     session_dir: str | Path | None = None,
     speaker_map: dict[str, str] | None = None,
+    bookmarks: list[dict] | None = None,
     chunk_size: int = CHUNK_SEGMENTS,
     overlap: int = CHUNK_OVERLAP,
     completion: Callable[[list[dict[str, str]], str, str], str] | None = None,
@@ -277,7 +303,7 @@ def summarise(
 
     if len(parts) == 1:
         result = call(
-            _messages(mode, render_transcript(parts[0], timestamps=True, speaker_map=speaker_map)),
+            _messages(mode, render_transcript(parts[0], timestamps=True, speaker_map=speaker_map), bookmarks=bookmarks),
             provider,
             resolved_model,
         ).strip()
@@ -287,7 +313,7 @@ def summarise(
         partials = []
         for index, part in enumerate(parts, 1):
             partial = call(
-                _messages(mode, render_transcript(part, timestamps=True, speaker_map=speaker_map)),
+                _messages(mode, render_transcript(part, timestamps=True, speaker_map=speaker_map), bookmarks=bookmarks),
                 provider,
                 resolved_model,
             ).strip()
@@ -295,7 +321,7 @@ def summarise(
                 partials.append(f"PART {index}:\n{partial}")
         if partials:
             result = call(
-                _messages(mode, "\n\n".join(partials), reducing=True),
+                _messages(mode, "\n\n".join(partials), reducing=True, bookmarks=bookmarks),
                 provider,
                 resolved_model,
             ).strip()

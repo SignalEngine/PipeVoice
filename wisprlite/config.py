@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .voices import STARTER_VOICES
+from .meeting import DEFAULT_BOOKMARK_PHRASES
 
 APP_NAME = "Pipevoice"
 
@@ -66,6 +67,7 @@ class Config:
     bookmark_hotkey: str = ""       # mark the current moment while a meeting records
     bookmark_acoustic: bool = False # double-snap detector, opt-in
     bookmark_sensitivity: float = 0.5
+    bookmark_phrases: str = DEFAULT_BOOKMARK_PHRASES
     meeting_max_minutes: int = 240  # safety cap for an unattended meeting capture
     meeting_retention_sessions: int = 20  # newest local meeting sessions to keep
     output_mode: str = "type"       # type | paste

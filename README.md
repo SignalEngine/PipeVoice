@@ -170,6 +170,31 @@ It won't invent owners or deadlines that weren't said; anything unclear comes ba
 Summaries use the same provider as AI polish — the **free Gemini tier** works out of the box, and
 **Ollama** keeps them entirely offline.
 
+**6 · Bookmark the bits that matter.** Say **"bookmark that"** out loud during the call and it is
+marked. Nothing listens live — the phrase is found when the recording is transcribed, so it costs
+nothing, needs no key, and works completely offline. You can change the phrases, or set a
+**Bookmark hotkey**, under Settings → Hotkeys.
+
+A bookmark marks the **half-minute before it**, not the instant — you always react after the
+interesting bit, and you say "bookmark that" after it too. Marked moments appear as **Highlights**
+above the transcript; click one to jump to it. Summaries are told which moments you flagged, so
+they get priority without dropping anything else important.
+
+There is also a hands-free **double clap or snap**, off by default. Be warned: Windows Audio
+enhancements — *Studio Effects* / *Voice Focus* on Copilot+ PCs — delete claps, snaps and keyboard
+noise **on purpose** and ship switched on, so on many laptops no amount of clapping will register
+until you turn them off in Windows Sound settings. The spoken phrase has no such problem, because
+it is speech. Settings → Hotkeys → *Test* tells you which is happening.
+
+**7 · Tidy the wording (optional).** Press **Polish** on a transcribed meeting to strip "um", "uh"
+and false starts and fix punctuation. It only tidies — it never rewords anyone or changes what was
+said — and the raw transcript stays one click away.
+
+**Fix a mis-heard word.** Right-click any word in a transcript → *Fix wording…*. It corrects every
+occurrence in that meeting, and if you tick "Also fix this in future dictation" the same fix is
+applied to your normal typing from then on. Corrections are stored separately, so the original
+transcript is never altered.
+
 > **Two things worth knowing.** Your computer's audio is captured as one mix, so a podcast or
 > Spotify ends up in the transcript alongside the meeting — pause it first. And recording other
 > people may require their consent where you live.
