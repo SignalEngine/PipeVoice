@@ -1722,6 +1722,10 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         segments = transcript_data.get("segments")
         if not isinstance(segments, list) or not segments:
             return
+        # Summarise what the user can SEE. Without this the first summary of a
+        # meeting is built from the raw transcript, so it quotes the wording the
+        # user already corrected. regenerate_summaries does the same for reruns.
+        segments = apply_corrections(segments, load_corrections(path))
         mode = selected_summary_mode()
         cfg = config.Config.load()
         set_busy(True)
