@@ -120,3 +120,31 @@ def test_polish_reports_a_transport_error_instead_of_blaming_the_reply():
         assert "429" in raised, f"the real error must reach the user: {raised!r}"
     finally:
         polish.chat_completion = original
+
+
+def test_polish_finds_the_array_whatever_prose_surrounds_it():
+    # Naive find("[")/rfind("]") slicing was wrong in BOTH directions: trailing
+    # prose containing a bracket swallowed junk, and leading prose containing one
+    # started from the wrong bracket. Both are real model behaviours.
+    original = polish.provider_ready
+    polish.provider_ready = lambda provider: True
+    try:
+        segments = [{"t": 0, "text": "um hello"}]
+        for reply in (
+            '["Hello"]\nNote: ]',                  # trailing bracket in prose
+            'Note: [not JSON]\n["Hello"]',         # leading bracket in prose
+            '```json\n["Hello"]\n```',             # fenced
+            'Here you go:\n["Hello"]\nHope that helps!',
+            json.dumps(["Hello"]),
+        ):
+            assert polish.polish_segments(
+                segments, "ollama", completion=lambda *_a, **_k: reply
+            ) == {0: "Hello"}, f"failed on {reply!r}"
+
+        # A bracket INSIDE a string must survive untouched.
+        assert polish.polish_segments(
+            segments, "ollama",
+            completion=lambda *_a, **_k: '["literal ] inside text"]',
+        ) == {0: "literal ] inside text"}
+    finally:
+        polish.provider_ready = original
