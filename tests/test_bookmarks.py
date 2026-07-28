@@ -323,3 +323,47 @@ def test_write_block_actually_feeds_the_bleed_counters():
     assert "_bleed_desktop_loud" in source, "desktop-loud samples are never counted"
     assert "_bleed_both_loud" in source, "overlapping-loud samples are never counted"
     assert 'label == "desktop"' in source, "counting must be driven by the desktop stream"
+
+
+def test_cross_meeting_search_finds_the_right_meetings():
+    import json as _json
+    import tempfile
+    from wisprlite.meetings_tab import search_sessions
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+
+        def make(name, segments, corrections=None):
+            folder = root / name
+            folder.mkdir(parents=True)
+            (folder / "transcript.json").write_text(
+                _json.dumps({"segments": segments}), encoding="utf-8"
+            )
+            if corrections:
+                meeting.save_corrections(folder, corrections)
+            return {"path": folder, "name": name}
+
+        sessions = [
+            make("meeting-1", [
+                {"speaker": "You", "text": "We agreed the Postgres migration lands in March"},
+                {"speaker": "Them", "text": "Yes, Postgres first then Redis"},
+            ]),
+            make("meeting-2", [{"speaker": "You", "text": "Nothing relevant here at all"}]),
+            # a meeting whose wording the user has CORRECTED
+            make("meeting-3", [{"speaker": "Them", "text": "ask Dave about the invoice"}],
+                 {"Dave": "Dev"}),
+        ]
+
+        hits = search_sessions("postgres", sessions)
+        assert len(hits) == 1
+        count, snippet = next(iter(hits.values()))
+        assert count == 2, "both occurrences should be counted"
+        assert "Postgres" in snippet, "the snippet must show why it matched"
+
+        assert search_sessions("banana", sessions) == {}
+        assert search_sessions("", sessions) == {}, "an empty query matches nothing"
+
+        # Search what the user SEES: corrections are applied, so the corrected
+        # spelling hits and the original no longer does.
+        assert len(search_sessions("Dev", sessions)) == 1
+        assert search_sessions("Dave", sessions) == {}

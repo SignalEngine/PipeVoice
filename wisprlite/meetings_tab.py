@@ -410,6 +410,70 @@ def _transcript_text(session_dir: str | Path, *, polished: bool = True) -> str:
     return fallback
 
 
+SNIPPET_CONTEXT = 40
+
+
+def session_search_text(session_dir) -> str:
+    """The text a search should look at: what the user can actually SEE.
+
+    Corrections and polish are overlays, so searching the raw transcript would
+    miss a name the user has already fixed and hit wording they have replaced.
+    """
+    path = Path(session_dir)
+    transcript = _read_json(path / "transcript.json")
+    segments = transcript.get("segments")
+    if isinstance(segments, list) and segments:
+        visible = apply_polished(segments, load_polished(path))
+        visible = apply_corrections(visible, load_corrections(path))
+        return " ".join(str(s.get("text") or "") for s in visible if isinstance(s, dict))
+    return str(transcript.get("text") or "")
+
+
+def search_sessions(query: str, sessions: list[dict], *, cache: dict | None = None) -> dict:
+    """Map session path -> (match count, snippet) for sessions containing query.
+
+    Case-insensitive substring, matching the in-transcript search so the two
+    never disagree about whether a meeting contains a word. Reading every
+    transcript on each keystroke is wasteful, so callers pass a cache keyed by
+    path and mtime.
+    """
+    needle = " ".join(str(query or "").lower().split())
+    if not needle:
+        return {}
+    results = {}
+    for session in sessions or []:
+        path = session.get("path")
+        if path is None:
+            continue
+        transcript_file = Path(path) / "transcript.json"
+        try:
+            stamp = transcript_file.stat().st_mtime
+        except OSError:
+            continue
+        key = (str(path), stamp)
+        if cache is not None and key in cache:
+            text = cache[key]
+        else:
+            text = session_search_text(path)
+            if cache is not None:
+                cache.clear()          # small and cheap; keeps memory flat
+                cache[key] = text
+        haystack = text.lower()
+        count = haystack.count(needle)
+        if not count:
+            continue
+        at = haystack.find(needle)
+        start = max(0, at - SNIPPET_CONTEXT)
+        end = min(len(text), at + len(needle) + SNIPPET_CONTEXT)
+        snippet = text[start:end].strip().replace("\n", " ")
+        if start > 0:
+            snippet = "…" + snippet
+        if end < len(text):
+            snippet = snippet + "…"
+        results[str(path)] = (count, snippet)
+    return results
+
+
 def resolve_bookmarks(bookmarks: list[dict], segments: list[dict] | None) -> list[dict]:
     """Resolve each mark to the surrounding transcript window."""
     segments = segments if isinstance(segments, list) else []
@@ -578,6 +642,8 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         "summary_ready": False,
         "speaker_map": {},
         "corrections": {},
+        "search_cache": {},
+        "search_hits": {},
         "show_polished": True,
         "correction_tags": {},
     }
@@ -671,6 +737,13 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     search_var = tk.StringVar()
     search_entry = ttk.Entry(search_row, textvariable=search_var)
     search_entry.pack(side="left", fill="x", expand=True)
+    search_all_var = tk.BooleanVar(value=False)
+    search_all_check = tk.Checkbutton(
+        search_row, text="All meetings", variable=search_all_var,
+        bg=BG, fg=MUTED, activebackground=BG, activeforeground=FG,
+        selectcolor=CARD, font=("Segoe UI", 9), takefocus=False,
+    )
+    search_all_check.pack(side="left", padx=(8, 0))
     prev_btn = ttk.Button(search_row, text="Prev", width=6, state="disabled")
     prev_btn.pack(side="left", padx=(7, 0))
     next_btn = ttk.Button(search_row, text="Next", width=6, state="disabled")
@@ -1722,6 +1795,20 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
                 if session["status"] == "recording"
                 else "No transcript yet"
             )
+        # When filtering across meetings, show WHY this one matched — a list of
+        # dates with no context makes the user open each in turn.
+        hit = state["search_hits"].get(str(session["path"]))
+        if hit:
+            count, snippet = hit
+            tk.Label(
+                row, text=f"{count} match{'' if count == 1 else 'es'}", bg=CARD,
+                fg=GOOD, anchor="w", font=("Segoe UI", 8, "bold"),
+            ).pack(fill="x", pady=(3, 0))
+            tk.Label(
+                row, text=snippet, bg=CARD, fg=FG, anchor="w", justify="left",
+                wraplength=340, font=("Segoe UI", 8),
+            ).pack(fill="x")
+
         secondary = tk.Label(
             row, text=" · ".join(secondary_bits), bg=CARD, fg=MUTED,
             font=("Segoe UI", 8), anchor="w", cursor="hand2",
@@ -1775,12 +1862,27 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         state["rows"] = []
         for child in session_rows.winfo_children():
             child.destroy()
-        for index, session in enumerate(state["sessions"]):
+        # Cross-meeting search filters the LIST; the in-transcript search still
+        # highlights inside whichever session you open, so the two compose.
+        visible = state["sessions"]
+        query = search_var.get().strip() if search_all_var.get() else ""
+        if query:
+            hits = search_sessions(query, state["sessions"], cache=state["search_cache"])
+            state["search_hits"] = hits
+            visible = [s for s in state["sessions"] if str(s["path"]) in hits]
+        else:
+            state["search_hits"] = {}
+        for index, session in enumerate(visible):
             add_session_row(session, index)
-        count_label.config(
-            text=f"{len(state['sessions'])} session"
-            f"{'' if len(state['sessions']) == 1 else 's'}"
-        )
+        if state["search_hits"]:
+            count_label.config(
+                text=f"{len(state['search_hits'])} of {len(state['sessions'])} match"
+            )
+        else:
+            count_label.config(
+                text=f"{len(state['sessions'])} session"
+                f"{'' if len(state['sessions']) == 1 else 's'}"
+            )
         if not state["sessions"]:
             state["selected"] = None
             tk.Label(
@@ -2210,7 +2312,16 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
 
         threading.Thread(target=work, daemon=True).start()
 
-    search_var.trace_add("write", update_search)
+    def _on_search_changed(*_args) -> None:
+        update_search()
+        if search_all_var.get():
+            refresh(preferred=selected_path(), preserve_scroll=None, preserve_search=True)
+
+    search_var.trace_add("write", _on_search_changed)
+    search_all_var.trace_add(
+        "write",
+        lambda *_a: refresh(preferred=selected_path(), preserve_search=True),
+    )
     session_canvas.bind("<Up>", lambda _event: move_session(-1))
     session_canvas.bind("<Down>", lambda _event: move_session(1))
     session_canvas.bind("<Home>", lambda _event: move_session(-len(state["sessions"])))
