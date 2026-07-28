@@ -668,8 +668,9 @@ def main(first_run: bool = False) -> None:
           "Microphone only — nothing on the call can trigger it. Prefer the spoken\n"
           "phrase above, which is speech and so survives that filtering.")
     r = row(c, "Clap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
-    ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
-              orient="horizontal", length=130).pack(side="left")
+    _sens_scale = ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
+                            orient="horizontal", length=130)
+    _sens_scale.pack(side="left")
     ttk.Label(r, textvariable=bookmark_sensitivity_var, width=5).pack(side="left", padx=(7, 0))
 
     def test_snap():
@@ -813,7 +814,24 @@ def main(first_run: bool = False) -> None:
         except Exception as exc:
             result.config(text=f"Microphone unavailable: {exc}", fg=ACCENT)
             ttk.Button(dialog, text="Close", command=close).pack(pady=(0, 16))
-    ttk.Button(r, text="Test", command=test_snap).pack(side="left", padx=(8, 0))
+    _test_btn = ttk.Button(r, text="Test", command=test_snap)
+    _test_btn.pack(side="left", padx=(8, 0))
+
+    # Acoustic bookmarks are OFF by default and blocked outright on many laptops, but
+    # the sensitivity slider and Test button sat live regardless — so the Hotkeys tab
+    # foregrounded a switched-off feature next to the spoken phrase that actually
+    # works. Grey them out until the box is ticked. (James, 2026-07-28: "the ui still
+    # says about snapping ... is this the wrong one again?")
+    def _sync_acoustic(*_):
+        state = "normal" if bookmark_acoustic_var.get() else "disabled"
+        for _w in (_sens_scale, _test_btn):
+            try:
+                _w.config(state=state)
+            except Exception:
+                pass
+
+    bookmark_acoustic_var.trace_add("write", _sync_acoustic)
+    _sync_acoustic()
 
     # --- Voice hotkeys ---
     c = card("Voice hotkeys",
