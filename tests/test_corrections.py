@@ -8,6 +8,12 @@ import tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from wisprlite import meeting
+from wisprlite.meetings_tab import (
+    _correction_parts,
+    _joined_correction_parts,
+    _replacement_key_allowed,
+    _selection_contains_click,
+)
 from wisprlite.typer import apply_replacements
 
 
@@ -34,6 +40,51 @@ def test_replacements_keep_boundaries_and_case_insensitivity():
     assert apply_replacements("Dave dave DAVE davenport", {"dave": "Dev"}) == (
         "Dev Dev Dev davenport"
     )
+
+
+def test_replacements_do_not_raise_on_turkish_casefold_mismatch():
+    assert apply_replacements("I went to Istanbul", {"istanbul": "İstanbul"}) == (
+        "I went to İstanbul"
+    )
+    assert apply_replacements("I went to İstanbul", {"istanbul": "İstanbul"}) == (
+        "I went to İstanbul"
+    )
+
+
+def test_correction_parts_keep_saved_key_for_case_variant_undo():
+    assert _correction_parts("Dave and DAVE spoke", {"Dave": "Dev"}) == [
+        ("Dev", True, "Dave"),
+        (" and ", False, None),
+        ("Dev", True, "Dave"),
+        (" spoke", False, None),
+    ]
+
+
+def test_correction_parts_fall_back_to_original_on_turkish_casefold_mismatch():
+    assert _correction_parts("İstanbul", {"istanbul": "Istanbul"}) == [
+        ("İstanbul", False, None)
+    ]
+
+
+def test_correction_keys_with_settings_delimiters_are_rejected():
+    assert _replacement_key_allowed("Dave")
+    assert not _replacement_key_allowed("1,000")
+    assert not _replacement_key_allowed("C=64")
+
+
+def test_stale_selection_does_not_contain_right_click_target():
+    assert _selection_contains_click("2.3", "2.5", "2.8")
+    assert not _selection_contains_click("2.3", "4.1", "2.8")
+
+
+def test_widget_correction_parts_match_per_segment_joining():
+    corrections = {"New York": "NYC"}
+    parts = _joined_correction_parts(["New", "York is big"], corrections)
+    assert "".join(piece for piece, _corrected, _find in parts) == "New York is big"
+    assert meeting.render_transcript(
+        [{"speaker": "You", "text": "New"}, {"speaker": "You", "text": "York is big"}],
+        corrections=corrections,
+    ) == "You: New York is big"
 
 
 def test_corrections_round_trip_does_not_mutate_transcript():
@@ -68,4 +119,3 @@ def test_you_is_a_structural_speaker_label_not_a_correction_target():
     corrected = meeting.apply_corrections(segments, {"You": "Them"})
     assert corrected[0]["speaker"] == "You"
     assert corrected[0]["text"] == "Hello"
-

@@ -28,7 +28,11 @@ def apply_replacements(text: str, mapping: dict) -> str:
         )
         mapping_ci = {find.casefold(): replacement for find, replacement in usable.items()}
         return pattern.sub(
-            lambda match: mapping_ci[match.group(1).casefold()], text
+            lambda match: mapping_ci.get(
+                match.group(1).casefold(),
+                usable.get(match.group(1), match.group(1)),
+            ),
+            text,
         )
     except re.error:
         return text

@@ -365,7 +365,13 @@ def main(first_run: bool = False) -> None:
     frm.bind("<Configure>", lambda e: _canvas.configure(scrollregion=_canvas.bbox("all")))
     _wheel(_canvas)
     history.build(tab_history, root, _wheel)
-    meetings_tab.build(tab_meetings, root, _wheel)
+    def sync_meeting_replacements(replacements):
+        fixes_var.set(", ".join(f"{k}={v}" for k, v in replacements.items()))
+
+    meetings_tab.build(
+        tab_meetings, root, _wheel,
+        on_replacements_changed=sync_meeting_replacements,
+    )
     _build_guide(tab_guide, _wheel)
     about.build(tab_about, root, _wheel)
     _build_voices_tab(tab_voices, _show_tab, _wheel)

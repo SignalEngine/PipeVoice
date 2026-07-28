@@ -61,6 +61,20 @@ SCROLL = PALETTE["border"]
 SCROLL_HI = PALETTE["muted"]
 
 
+def _replacement_key_allowed(key: str) -> bool:
+    """Whether a correction key can survive Settings' comma-separated format."""
+    return "," not in key and "=" not in key
+
+
+def _selection_contains_click(first: str, click: str, last: str) -> bool:
+    """Return whether a Tk Text click index is inside a non-empty selection."""
+    def offset(index: str) -> tuple[int, int]:
+        line, column = index.split(".", 1)
+        return int(line), int(column)
+
+    return offset(first) <= offset(click) < offset(last)
+
+
 def _read_json(path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -356,15 +370,32 @@ def _correction_parts(text: str, corrections: dict[str, str]) -> list[tuple[str,
         return [(text, False, None)]
     parts = []
     cursor = 0
-    mapping_ci = {find.casefold(): replacement for find, replacement in usable.items()}
+    mapping_ci = {find.casefold(): (find, replacement) for find, replacement in usable.items()}
     for match in pattern.finditer(text):
         if match.start() > cursor:
             parts.append((text[cursor:match.start()], False, None))
-        parts.append((mapping_ci[match.group(1).casefold()], True, match.group(1)))
+        resolved = mapping_ci.get(match.group(1).casefold())
+        if resolved is None:
+            resolved = (match.group(1), usable.get(match.group(1), match.group(1)))
+        find, replacement = resolved
+        corrected = find in usable
+        parts.append((replacement, corrected, find if corrected else None))
         cursor = match.end()
     if cursor < len(text):
         parts.append((text[cursor:], False, None))
     return parts or [(text, False, None)]
+
+
+def _joined_correction_parts(
+    segments: list[str], corrections: dict[str, str]
+) -> list[tuple[str, bool, str | None]]:
+    """Correct each raw segment before joining consecutive same-speaker text."""
+    parts: list[tuple[str, bool, str | None]] = []
+    for index, text in enumerate(segments):
+        if index:
+            parts.append((" ", False, None))
+        parts.extend(_correction_parts(text, corrections))
+    return parts or [("", False, None)]
 
 
 def _open_folder(path: Path) -> None:
@@ -387,7 +418,7 @@ def _wheel_global(widget) -> None:
     widget.bind("<Leave>", lambda _event: widget.unbind_all("<MouseWheel>"))
 
 
-def build(container, root, wheel=None) -> None:
+def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     """Populate ``container`` with the reusable Meetings browser."""
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -1006,13 +1037,13 @@ def build(container, root, wheel=None) -> None:
                 raw_speaker = str(segment.get("speaker") or "Speaker").strip()
                 body_text = str(segment.get("text") or "").strip()
                 if blocks and blocks[-1]["raw_speaker"] == raw_speaker:
-                    blocks[-1]["text"] += " " + body_text
+                    blocks[-1]["segment_texts"].append(body_text)
                 else:
                     blocks.append(
                         {
                             "raw_speaker": raw_speaker,
                             "speaker": state["speaker_map"].get(raw_speaker, raw_speaker),
-                            "text": body_text,
+                            "segment_texts": [body_text],
                             "time": segment.get("t", segment.get("start", 0)),
                         }
                     )
@@ -1079,7 +1110,7 @@ def build(container, root, wheel=None) -> None:
                 )
                 transcript.insert("end", f"  ·  {stamp}\n", "timestamp")
                 for piece_index, (piece, corrected, find) in enumerate(
-                    _correction_parts(block["text"], state["corrections"])
+                    _joined_correction_parts(block["segment_texts"], state["corrections"])
                 ):
                     if corrected:
                         tag = f"correction_{block_index}_{piece_index}"
@@ -1120,7 +1151,19 @@ def build(container, root, wheel=None) -> None:
             selection = transcript.get("sel.first", "sel.last")
         except tk.TclError:
             selection = ""
-        if selection and "\n" not in selection and "·" not in selection:
+        click_index = transcript.index(f"@{event.x},{event.y}")
+        try:
+            contains_click = _selection_contains_click(
+                transcript.index("sel.first"), click_index, transcript.index("sel.last")
+            )
+        except tk.TclError:
+            contains_click = False
+        if (
+            contains_click
+            and selection
+            and "\n" not in selection
+            and "·" not in selection
+        ):
             return selection.strip(), existing
         return _word_at(event), existing
 
@@ -1170,6 +1213,11 @@ def build(container, root, wheel=None) -> None:
             if not replacement or replacement.casefold() == original.casefold():
                 close()
                 return
+            if not _replacement_key_allowed(original):
+                status_label.config(
+                    text="Word fixes cannot contain commas or equals signs.", fg=ACCENT
+                )
+                return
             updated = dict(state["corrections"])
             updated[original] = replacement
             try:
@@ -1183,6 +1231,8 @@ def build(container, root, wheel=None) -> None:
                 replacements[original] = replacement
                 cfg.replacements = replacements
                 cfg.save()
+                if on_replacements_changed is not None:
+                    on_replacements_changed(replacements)
             state["corrections"] = updated
             close()
             refresh(preferred=path, preserve_scroll=transcript.yview()[0])
@@ -1199,11 +1249,18 @@ def build(container, root, wheel=None) -> None:
         dialog.bind("<Escape>", lambda _event: close())
         entry.bind("<Return>", lambda _event: save_fix())
 
+    # One reusable menu, rebuilt per click, so nothing leaks. Do NOT create-and-destroy
+    # per right-click: tk::MenuInvoke runs MenuUnpost BEFORE [$w invoke], so destroying
+    # on <Unmap> kills the widget before its own command fires and the entry silently
+    # does nothing at all.
+    transcript_menu = tk.Menu(root, tearoff=False)
+
     def show_transcript_menu(event) -> str:
         if state["busy"] or selected_path() is None:
             return "break"
         target, existing = _correction_target(event)
-        menu = tk.Menu(root, tearoff=False)
+        menu = transcript_menu
+        menu.delete(0, "end")
         if existing and existing in state["corrections"]:
             menu.add_command(label="Undo this fix", command=lambda: undo_correction(existing))
         elif target:
