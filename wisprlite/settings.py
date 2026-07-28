@@ -443,6 +443,9 @@ def main(first_run: bool = False) -> None:
     hotkey_var = tk.StringVar(value=cfg.hotkey)
     clip_hotkey_var = tk.StringVar(value=cfg.clipboard_hotkey)
     meeting_hotkey_var = tk.StringVar(value=cfg.meeting_hotkey)
+    bookmark_hotkey_var = tk.StringVar(value=cfg.bookmark_hotkey)
+    bookmark_acoustic_var = tk.BooleanVar(value=cfg.bookmark_acoustic)
+    bookmark_sensitivity_var = tk.DoubleVar(value=cfg.bookmark_sensitivity)
     lang_var = tk.StringVar(value=dict(LANGUAGES).get(cfg.language, LANGUAGES[0][1]))
     devices = _input_devices()
     dev_label = next((lbl for lbl, val in devices if val == cfg.device), devices[0][0])
@@ -601,6 +604,62 @@ def main(first_run: bool = False) -> None:
     meeting_cap_btn.config(
         command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
     )
+
+    r = row(c, "Bookmark hotkey", "Tap while recording to mark the current moment.")
+    entry(r, bookmark_hotkey_var, width=14)
+    bookmark_cap_btn = ttk.Button(r, text="Capture", width=8)
+    bookmark_cap_btn.pack(side="left", padx=(8, 0))
+    bookmark_cap_btn.config(command=_mk_capture(bookmark_cap_btn, bookmark_hotkey_var))
+
+    check(c, "Bookmark on a double clap or snap", bookmark_acoustic_var,
+          "Off by default. Listens to your microphone only — never the call audio — for a\n"
+          "deliberate double clap or double snap. Use Test to find your sensitivity.")
+    r = row(c, "Snap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
+    ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
+              orient="horizontal", length=130).pack(side="left")
+    ttk.Label(r, textvariable=bookmark_sensitivity_var, width=5).pack(side="left", padx=(7, 0))
+
+    def test_snap():
+        import tkinter as tk
+        from .snap import SnapDetector
+        dialog = tk.Toplevel(root)
+        dialog.title("Test acoustic bookmarks")
+        dialog.configure(bg=BG)
+        tk.Label(dialog, text="Clap twice, or snap twice", bg=BG, fg=FG,
+                 font=("Segoe UI", 11, "bold")).pack(padx=18, pady=(16, 6))
+        level = ttk.Progressbar(dialog, maximum=1.0, length=260)
+        level.pack(padx=18, pady=8)
+        result = tk.Label(dialog, text="Listening…", bg=BG, fg=MUTED)
+        result.pack(padx=18, pady=(0, 12))
+        detector = SnapDetector(16_000, sensitivity=float(bookmark_sensitivity_var.get()))
+        stream = None
+        def callback(block, _frames, _time, _status):
+            try:
+                values = [abs(float(v[0])) for v in block]
+                peak = max(values) if values else 0.0
+                root.after(0, lambda: level.configure(value=min(1.0, peak)))
+                if detector.feed(block):
+                    root.after(0, lambda: result.config(text="Snap detected", fg=GOOD))
+            except Exception:
+                pass
+        def close():
+            nonlocal stream
+            if stream is not None:
+                try: stream.stop(); stream.close()
+                except Exception: pass
+            dialog.destroy()
+        try:
+            import sounddevice as sd
+            stream = sd.InputStream(samplerate=16_000, channels=1, dtype="float32",
+                                    blocksize=800, callback=callback,
+                                    device=config.device_arg(cfg))
+            stream.start()
+            ttk.Button(dialog, text="Close", command=close).pack(pady=(0, 16))
+            dialog.protocol("WM_DELETE_WINDOW", close)
+        except Exception as exc:
+            result.config(text=f"Microphone unavailable: {exc}", fg=ACCENT)
+            ttk.Button(dialog, text="Close", command=close).pack(pady=(0, 16))
+    ttk.Button(r, text="Test", command=test_snap).pack(side="left", padx=(8, 0))
 
     # --- Voice hotkeys ---
     c = card("Voice hotkeys",
@@ -841,6 +900,12 @@ def main(first_run: bool = False) -> None:
         cfg.hotkey = hotkey_var.get().strip() or "right ctrl"
         cfg.clipboard_hotkey = clip_hotkey_var.get().strip()
         cfg.meeting_hotkey = meeting_hotkey_var.get().strip()
+        cfg.bookmark_hotkey = bookmark_hotkey_var.get().strip()
+        cfg.bookmark_acoustic = bool(bookmark_acoustic_var.get())
+        try:
+            cfg.bookmark_sensitivity = max(0.0, min(1.0, float(bookmark_sensitivity_var.get())))
+        except (TypeError, ValueError):
+            pass
         cfg.language = value_for(lang_var, LANGUAGES)
         cfg.device = dict((lbl, val) for lbl, val in devices).get(device_var.get(), "")
         cfg.gemini_model = gemini_model_var.get().strip() or "gemini-3.1-flash-lite"
