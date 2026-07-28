@@ -15,15 +15,15 @@ SYSTEM = (
 )
 
 
-def polish_segments(segments: list[dict], provider: str, model: str = "", *, completion=None):
-    """Return a same-length text overlay, or ``None`` when it is unsafe to use."""
-    source = [str(segment.get("text") or "") for segment in segments
-              if isinstance(segment, dict)]
-    if len(source) != len(segments):
-        return None
-    provider = (provider or "").strip().lower()
-    if provider not in PROVIDERS or not provider_ready(provider):
-        return None
+# An hour-long meeting is roughly 700 segments. Sent as one request the reply
+# exceeds any sensible output-token cap, so the JSON comes back truncated,
+# parsing fails, and Polish returns None — the feature would be dead on exactly
+# the meetings worth polishing. summarise.py chunks at 120 for the same reason.
+CHUNK_SEGMENTS = 80
+
+
+def _polish_chunk(source: list[str], provider: str, model: str, completion):
+    """Polish one chunk, or return None when the reply cannot be trusted."""
     messages = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content": json.dumps(source, ensure_ascii=False)},
@@ -37,4 +37,29 @@ def polish_segments(segments: list[dict], provider: str, model: str = "", *, com
         return None
     if not all(isinstance(text, str) for text in value):
         return None
-    return {index: text.strip() for index, text in enumerate(value)}
+    return value
+
+
+def polish_segments(segments: list[dict], provider: str, model: str = "", *, completion=None):
+    """Return a same-length text overlay, or ``None`` when it is unsafe to use."""
+    source = [str(segment.get("text") or "") for segment in segments
+              if isinstance(segment, dict)]
+    if len(source) != len(segments):
+        return None
+    provider = (provider or "").strip().lower()
+    if provider not in PROVIDERS or not provider_ready(provider):
+        return None
+
+    polished: list[str] = []
+    for start in range(0, len(source), CHUNK_SEGMENTS):
+        value = _polish_chunk(source[start:start + CHUNK_SEGMENTS],
+                              provider, model, completion)
+        # One bad chunk discards the WHOLE result. Keeping the good chunks would
+        # leave a transcript half tidied and half raw with no way to tell which,
+        # and this is a record of what people actually said.
+        if value is None:
+            return None
+        polished.extend(value)
+    if len(polished) != len(source):
+        return None
+    return {index: text.strip() for index, text in enumerate(polished)}

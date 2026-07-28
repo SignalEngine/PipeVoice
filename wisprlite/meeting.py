@@ -70,7 +70,11 @@ def apply_polished(segments: list[dict], polished: dict[int, str] | None = None)
         for index, segment in enumerate(segments)
         if isinstance(segment, dict)
     ]
-DEFAULT_BOOKMARK_PHRASES = "bookmark that, note that, flag that"
+# "note that" was here and had to go: "note that the deploy is Friday" is
+# ordinary speech, so every existing user would have had false highlights fed
+# to the summariser as moments they deliberately flagged. A trigger phrase has
+# to be one nobody says by accident.
+DEFAULT_BOOKMARK_PHRASES = "bookmark that, flag that"
 
 
 def bookmarks_from_phrases(transcript, phrases: str = DEFAULT_BOOKMARK_PHRASES) -> list[dict]:
@@ -556,7 +560,10 @@ def transcribe_session(
         _write_json(session_dir / "transcript.json", transcript)
         # Phrase marks are an overlay on top of all existing user marks.  The
         # existing file is intentionally read after transcription so a repeat
-        # cannot erase hotkey/acoustic marks or create duplicate phrase marks.
+    # Re-running with the SAME backend will not duplicate: dedup keys on
+    # (round(t, 3), source). A different backend that shifts a timestamp by a
+    # millisecond would add a second mark — unreachable from the UI, which
+    # blocks re-transcribing while transcript.json exists.
         phrase_marks = bookmarks_from_phrases(transcript, getattr(cfg, "bookmark_phrases", ""))
         save_bookmarks(session_dir, load_bookmarks(session_dir) + phrase_marks)
     except Exception as exc:

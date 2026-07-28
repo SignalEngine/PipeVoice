@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from .cleanup import PROVIDERS, chat_completion, provider_ready
-from .meeting import render_transcript
+from .meeting import _format_elapsed, render_transcript
 
 log = logging.getLogger("wisprlite")
 
@@ -163,7 +163,10 @@ def _bookmark_context(bookmarks: list[dict] | None) -> str:
             elapsed = 0
         text = str(bookmark.get("text") or "").strip()
         if text:
-            lines.append(f"[{elapsed // 60}:{elapsed % 60:02d}] {text}")
+            # Must match render_transcript(timestamps=True), which switches to
+            # h:mm:ss past an hour. Printing [90:00] against a transcript that
+            # says [1:30:00] leaves the model unable to align the two.
+            lines.append(f"[{_format_elapsed(elapsed)}] {text}")
     return "\n".join(lines) if any(line.startswith("[") for line in lines) else ""
 
 
