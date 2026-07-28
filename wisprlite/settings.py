@@ -199,18 +199,32 @@ def _build_guide(parent, wheel) -> None:
          "Click a “Them 1” label in the transcript. Pipevoice plays the clearest two "
          "seconds of that person talking so you can recognise them, then you type their "
          "name. Names are per-meeting and never overwrite the original transcript.")
-    item("Bookmark a moment", "Set a Bookmark hotkey under Hotkeys, then tap it during a "
-         "call to mark what was just said. Bookmarked moments appear as Highlights above the "
-         "transcript once you have transcribed it.", badge="NEW", badge_color=GOOD)
-    item("Clap twice instead", "You can also bookmark hands-free with a double clap or double "
-         "snap — microphone only, so nothing on the call can trigger it. Turn it on under "
-         "Hotkeys and press Test first.", badge="OFF BY DEFAULT", badge_color=MUTED)
-    body("Important: Windows Audio enhancements REMOVE claps, snaps and keyboard noise on "
-         "purpose — that is what they are for — and they are switched on by default on many "
-         "laptops, especially Copilot+ PCs where the feature is called Windows Studio Effects "
-         "or Voice Focus. While that is on, no amount of clapping will register. Turn it off "
-         "under Windows Sound settings for your microphone. The Test button tells you when "
-         "this is what is happening.")
+    item("Say \u201cbookmark that\u201d", "The easiest way to mark a moment: just say it out "
+         "loud during the call. Nothing listens live \u2014 the phrase is found when the "
+         "recording is transcribed, so it costs nothing, needs no key, and works completely "
+         "offline. Change the phrases under Hotkeys.", badge="EASIEST", badge_color=GOOD)
+    item("Or press the Bookmark hotkey", "Set one under Hotkeys and tap it during a call. "
+         "Handy when you would rather not say anything out loud.")
+    item("Or clap twice", "Hands-free, microphone only, so nothing on the call can trigger it. "
+         "Off by default \u2014 turn it on under Hotkeys and press Test first.",
+         badge="MAY NOT WORK", badge_color=WARN)
+    body("Why claps often fail: Windows Audio enhancements DELETE claps, snaps and keyboard "
+         "noise on purpose \u2014 that is what they are for \u2014 and they are switched on by "
+         "default on many laptops, especially Copilot+ PCs where the feature is called Windows "
+         "Studio Effects or Voice Focus. While it is on, no amount of clapping will register. "
+         "Turn it off under Windows Sound settings for your microphone, or just use the spoken "
+         "phrase, which is speech and so survives the filtering. The Test button tells you "
+         "which is happening.")
+    body("Whichever you use, a bookmark marks the half-minute BEFORE it, not the instant \u2014 "
+         "you always react after the interesting bit, and you say \u201cbookmark that\u201d "
+         "after it too. Marked moments appear as Highlights above the transcript, and click one "
+         "to jump to it. Summaries are told which moments you flagged, so they get priority "
+         "\u2014 without dropping anything else important.")
+
+    item("Tidy up the wording", "Press Polish on a transcribed meeting to strip \u201cum\u201d, "
+         "\u201cuh\u201d and false starts and fix punctuation. It only tidies \u2014 it never "
+         "rewords anyone or changes what was said \u2014 and the raw transcript stays one click "
+         "away, so nothing is lost.", badge="OPT-IN", badge_color=MUTED)
 
     item("6 · Summarise",
          "Choose Bullets, To-dos or Actions and press Summarise. Actions lists tasks with "
@@ -640,15 +654,19 @@ def main(first_run: bool = False) -> None:
     bookmark_cap_btn.pack(side="left", padx=(8, 0))
     bookmark_cap_btn.config(command=_mk_capture(bookmark_cap_btn, bookmark_hotkey_var))
 
-    check(c, "Bookmark on a double clap or snap", bookmark_acoustic_var,
-          "Off by default. Listens to your microphone only — never the call audio — for a\n"
-          "deliberate double clap or double snap. Press Test first: Windows Audio\n"
-          "enhancements (Studio Effects / Voice Focus) strip claps out on purpose and\n"
-          "are ON by default on many laptops, so this cannot work until they are off.")
-    entry(row(c, "Spoken bookmark phrases",
-              "Comma-separated phrases scanned after transcription; blank disables them."),
+    entry(row(c, "Say this to bookmark",
+              "Just say one of these during a meeting — no key, no hands. Found when the\n"
+              "recording is transcribed, so it costs nothing and works offline.\n"
+              "Comma-separated; leave blank to switch off."),
           bookmark_phrases_var, width=34)
-    r = row(c, "Snap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
+
+    check(c, "Also bookmark on a double clap or snap", bookmark_acoustic_var,
+          "Off by default, and it does not work on many laptops: Windows Audio\n"
+          "enhancements (Studio Effects / Voice Focus) delete claps and snaps on\n"
+          "purpose and ship switched ON. Press Test to see whether yours get through.\n"
+          "Microphone only — nothing on the call can trigger it. Prefer the spoken\n"
+          "phrase above, which is speech and so survives that filtering.")
+    r = row(c, "Clap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
     ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
               orient="horizontal", length=130).pack(side="left")
     ttk.Label(r, textvariable=bookmark_sensitivity_var, width=5).pack(side="left", padx=(7, 0))
