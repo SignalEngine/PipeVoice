@@ -476,6 +476,12 @@ class Overlay:
 
         # Warn ONCE, during the call. Told afterwards, the user can only regret
         # it; told now, headphones still save this recording.
+        # A second meeting must be able to warn again. The scene does not change
+        # between meetings, so detect a fresh recording by its clock restarting.
+        if elapsed < st.get("bleed_last_elapsed", 0.0):
+            st["bleed_warned"] = False
+        st["bleed_last_elapsed"] = elapsed
+
         bleed = data.get("bleed")
         try:
             suspected = bool(bleed() if callable(bleed) else bleed)
@@ -585,7 +591,6 @@ class Overlay:
             bottom[:0] = (x, cy + half)
         return top + bottom
 
-    @staticmethod
     def _show_bleed_warning(self, canvas) -> None:
         """A small, self-dismissing note that the mic is hearing the speakers."""
         try:
@@ -621,6 +626,7 @@ class Overlay:
         except Exception:
             pass          # a warning must never disturb the recording itself
 
+    @staticmethod
     def _blend(start: str, end: str, amount: float) -> str:
         amount = min(1.0, max(0.0, float(amount)))
         rgb = [

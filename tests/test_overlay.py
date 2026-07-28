@@ -133,3 +133,33 @@ if __name__ == "__main__":
             fn()
             print(f"  ok  {name}")
     print("all passed")
+
+
+def test_decorators_belong_to_the_functions_below_them():
+    # Twice in one session a method inserted directly beneath a decorator STOLE
+    # it from the function that owned it: @property from MeetingRecorder.levels
+    # (killing both REC meters) and @staticmethod from Overlay._blend, which is
+    # called as self._blend() from seven places and would have passed `self` as
+    # the start colour, crashing every frame of the overlay.
+    from wisprlite.overlay import Overlay
+
+    assert isinstance(Overlay.__dict__["_blend"], staticmethod)
+    assert Overlay._blend("#000000", "#ffffff", 0.5) == "#808080"
+    assert not isinstance(Overlay.__dict__["_show_bleed_warning"], (staticmethod, property))
+
+
+def test_bleed_warning_rearms_for_the_next_meeting():
+    # The scene does not change between meetings, so keying the one-shot flag off
+    # the scene meant a second meeting could never warn. A restarting clock is
+    # what marks a new recording.
+    state = {"bleed_warned": True, "bleed_last_elapsed": 300.0}
+
+    def tick(elapsed):
+        if elapsed < state.get("bleed_last_elapsed", 0.0):
+            state["bleed_warned"] = False
+        state["bleed_last_elapsed"] = elapsed
+
+    tick(305.0)
+    assert state["bleed_warned"] is True, "same meeting must not re-warn"
+    tick(2.0)
+    assert state["bleed_warned"] is False, "a new meeting must be able to warn"

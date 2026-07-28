@@ -844,6 +844,10 @@ class MeetingRecorder:
             self._errors = {"mic": None, "desktop": None}
             self._fatal_errors = {"mic": None, "desktop": None}
             self._levels = {"mic": 0.0, "desktop": 0.0}
+            # Per RECORDING, not per process: leftover counts from a session
+            # on speakers would otherwise condemn the next one on headphones.
+            self._bleed_desktop_loud = 0
+            self._bleed_both_loud = 0
             self._stop_reason = None
             self._stop.clear()
             self._active = True
