@@ -164,3 +164,23 @@ def test_delimiter_rule_gates_only_the_global_store():
     assert meeting.apply_corrections(
         [{"text": "a C=64 here"}], {"C=64": "C=65"}
     ) == [{"text": "a C=65 here"}]
+
+
+def test_case_variant_keys_resolve_first_wins_like_the_original():
+    # Matching is case-insensitive, so {"Dave": "Dev", "dave": "David"} is
+    # ambiguous. origin/main's sequential re.sub applied "Dave" first and left
+    # nothing for "dave", giving "Dev". The one-pass rewrite must not flip that.
+    assert apply_replacements("Dave dave DAVE", {"Dave": "Dev", "dave": "David"}) == (
+        "Dev Dev Dev"
+    )
+    assert apply_replacements("Dave dave DAVE", {"dave": "David", "Dave": "Dev"}) == (
+        "David David David"
+    )
+
+    # The widget's own splitter must agree, or it underlines one fix while
+    # copy/export/summaries apply another.
+    from wisprlite.meetings_tab import _correction_parts
+
+    mapping = {"Dave": "Dev", "dave": "David"}
+    rendered = "".join(piece for piece, _, _ in _correction_parts("Dave dave", mapping))
+    assert rendered == apply_replacements("Dave dave", mapping)

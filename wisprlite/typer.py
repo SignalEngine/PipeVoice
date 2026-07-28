@@ -26,7 +26,13 @@ def apply_replacements(text: str, mapping: dict) -> str:
             ) + r")\b",
             re.IGNORECASE,
         )
-        mapping_ci = {find.casefold(): replacement for find, replacement in usable.items()}
+        # FIRST wins, not last. Matching is case-insensitive, so {"Dave": "Dev",
+        # "dave": "David"} is ambiguous; the old sequential re.sub applied "Dave"
+        # first and left nothing for "dave" to match, giving "Dev". A plain dict
+        # comprehension would silently flip that to "David".
+        mapping_ci: dict[str, str] = {}
+        for find, replacement in usable.items():
+            mapping_ci.setdefault(find.casefold(), replacement)
         return pattern.sub(
             lambda match: mapping_ci.get(
                 match.group(1).casefold(),

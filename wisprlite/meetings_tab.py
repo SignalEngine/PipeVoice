@@ -389,7 +389,11 @@ def _correction_parts(text: str, corrections: dict[str, str]) -> list[tuple[str,
         return [(text, False, None)]
     parts = []
     cursor = 0
-    mapping_ci = {find.casefold(): (find, replacement) for find, replacement in usable.items()}
+    # FIRST wins, matching apply_replacements — the two must agree, or the widget
+    # would underline a different fix than copy/export/summaries actually apply.
+    mapping_ci: dict[str, tuple[str, str]] = {}
+    for find, replacement in usable.items():
+        mapping_ci.setdefault(find.casefold(), (find, replacement))
     for match in pattern.finditer(text):
         if match.start() > cursor:
             parts.append((text[cursor:match.start()], False, None))
