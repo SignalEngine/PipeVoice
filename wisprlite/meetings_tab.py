@@ -22,6 +22,7 @@ from . import config
 from .history import _copy_to_clipboard
 from .meeting import (
     count_speaker_bleed,
+    default_meetings_dir,
     find_loudest_speaker_window,
     apply_corrections,
     apply_polished,
@@ -279,10 +280,33 @@ def _backend_label(value: object) -> str:
 
 def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
     """List meeting directories newest-first with display-ready metadata."""
-    base = Path(base_dir) if base_dir is not None else meetings_dir()
-    try:
-        paths = [path for path in base.glob("meeting-*") if path.is_dir()]
-    except OSError:
+    # Scan the configured folder AND the machine-local default. Changing "Save
+    # meetings to" moves only where NEW recordings go; the old ones stay put, and
+    # listing just the new folder made every past meeting vanish from the browser
+    # while still sitting on disk.
+    if base_dir is not None:
+        roots = [Path(base_dir)]
+    else:
+        roots = [meetings_dir()]
+        default_root = default_meetings_dir()
+        if default_root not in roots:
+            roots.append(default_root)
+
+    paths = []
+    seen_roots = set()
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except OSError:
+            resolved = root
+        if resolved in seen_roots:
+            continue
+        seen_roots.add(resolved)
+        try:
+            paths.extend(path for path in root.glob("meeting-*") if path.is_dir())
+        except OSError:
+            continue
+    if not paths:
         return []
 
     sessions = []

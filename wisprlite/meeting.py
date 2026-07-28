@@ -233,6 +233,17 @@ def meetings_dir() -> Path:
         except OSError:
             pass          # unwritable or unplugged — use the default below
 
+    return default_meetings_dir()
+
+
+def default_meetings_dir() -> Path:
+    """The machine-local folder, ignoring any configured override.
+
+    Needed so the browser can still show recordings made before the user moved
+    the save location — changing the folder moves new recordings, not old ones.
+    """
+    from .config import APP_NAME
+
     if sys.platform == "win32":
         base = os.getenv("LOCALAPPDATA")
         if not base:
