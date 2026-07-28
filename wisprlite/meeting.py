@@ -311,6 +311,9 @@ BLEED_WINDOW = 6.0
 # sequence almost intact.
 BLEED_SIMILARITY = 0.55
 BLEED_MIN_WORDS = 6
+# An echo may be transcribed a little longer than the original, but not
+# half as long again — beyond that the local speaker said something extra.
+BLEED_LENGTH_TOLERANCE = 1.3
 
 
 def drop_speaker_bleed(segments: list[dict]) -> list[dict]:
@@ -357,10 +360,17 @@ def drop_speaker_bleed(segments: list[dict]) -> list[dict]:
             theirs = key(other.get("text")).split()
             if len(theirs) < BLEED_MIN_WORDS:
                 continue
-            # Compare over the shorter overlap: the engines rarely cut the audio
-            # at the same word, so one copy is often a prefix of the other.
-            span = min(len(mine), len(theirs))
-            if SequenceMatcher(None, mine[:span], theirs[:span]).ratio() >= BLEED_SIMILARITY:
+            # Length guard FIRST. Comparing only the shared prefix deleted
+            # genuine speech that merely STARTED like the remote line:
+            #   Them: "the deadline is next Friday morning at nine"
+            #   You:  "the deadline is next Friday morning at nine but the
+            #          budget is approved"
+            # An echo is the same utterance heard twice, so it is roughly the
+            # same length. Materially more words means the local speaker added
+            # something, and that must never be thrown away.
+            if len(mine) > len(theirs) * BLEED_LENGTH_TOLERANCE:
+                continue
+            if SequenceMatcher(None, mine, theirs).ratio() >= BLEED_SIMILARITY:
                 echo = True
                 break
         if not echo:

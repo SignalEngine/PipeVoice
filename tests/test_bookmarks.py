@@ -253,3 +253,18 @@ def test_polish_names_a_missing_key_rather_than_blaming_the_model():
         assert raised, "an unconfigured provider must be distinguishable from a bad reply"
     finally:
         polish.provider_ready = original_ready
+
+
+def test_bleed_removal_never_eats_speech_that_merely_starts_the_same():
+    # The gate's P1: comparing only the shared prefix deleted a genuine local
+    # utterance that BEGAN like the remote line and then continued. Losing
+    # "but the budget is approved" from a record is unacceptable.
+    segments = [
+        {"t": 10.0, "speaker": "Them",
+         "text": "the project deadline is next Friday morning at nine"},
+        {"t": 12.0, "speaker": "You",
+         "text": "the project deadline is next Friday morning at nine but the budget is approved"},
+    ]
+    kept = meeting.drop_speaker_bleed(segments)
+    assert len(kept) == 2
+    assert any("budget is approved" in s["text"] for s in kept)
