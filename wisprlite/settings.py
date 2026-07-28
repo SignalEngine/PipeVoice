@@ -754,12 +754,30 @@ def main(first_run: bool = False) -> None:
                     fg=MUTED,
                 )
             dialog.after(50, tick)
-        def close():
+
+        def release():
             nonlocal stream
             if stream is not None:
-                try: stream.stop(); stream.close()
-                except Exception: pass
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
+                stream = None
+
+        def close():
+            release()
             dialog.destroy()
+
+        # Closing the SETTINGS window destroys this dialog without ever running
+        # close(), so WM_DELETE_WINDOW alone leaks the microphone — and on first
+        # run settings.main() lives in the app process, so the app then cannot
+        # acquire its own mic. That is exactly the "something else is holding the
+        # device" failure this dialog exists to diagnose. <Destroy> fires for every
+        # descendant widget, so only act on the dialog itself.
+        dialog.bind(
+            "<Destroy>", lambda event: release() if event.widget is dialog else None
+        )
         try:
             import sounddevice as sd
             stream = sd.InputStream(samplerate=16_000, channels=1, dtype="float32",

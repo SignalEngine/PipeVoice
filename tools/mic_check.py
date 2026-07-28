@@ -40,13 +40,23 @@ def scan(sd, selected) -> int:
         except Exception:
             api = "?"
         peak = 0.0
+        # NOT a `with` block: sounddevice's __enter__ calls start(), and Python
+        # skips __exit__ entirely when __enter__ raises — so a device that fails
+        # to start stays OPEN and can block every probe after it. On the machine
+        # that prompted this scan most devices raised PortAudioError, so the leak
+        # was corrupting the very readings the scan exists to produce.
+        stream = None
         try:
-            with sd.InputStream(samplerate=16_000, channels=1, dtype="float32",
-                                blocksize=800, device=index) as stream:
+            stream = sd.InputStream(samplerate=16_000, channels=1, dtype="float32",
+                                    blocksize=800, device=index)
+            stream.start()
+            try:
                 for _ in range(15):                      # ~1.2s of audio
                     block, _overflowed = stream.read(800)
                     value = float(np.max(np.abs(block))) if block.size else 0.0
                     peak = max(peak, value)
+            finally:
+                stream.stop()
             mark = "  <- currently selected" if str(selected) == str(index) else ""
             state = "SILENT" if peak < 0.002 else "audio"
             print(f"  {index:>3}  {peak:>8.4f}  {api:<12} {info['name'][:34]} [{state}]{mark}")
@@ -54,6 +64,12 @@ def scan(sd, selected) -> int:
         except Exception as exc:
             print(f"  {index:>3}  {'--':>8}  {api:<12} {info['name'][:34]} "
                   f"({type(exc).__name__})")
+        finally:
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
     print("-" * 72)
     working = sorted((r for r in results if r[0] >= 0.002), reverse=True)
     if not working:
