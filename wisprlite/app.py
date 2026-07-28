@@ -12,7 +12,7 @@ import time
 from . import autostart, config
 from .audio import Recorder
 from .hotkey import HotkeyManager
-from .meeting import MeetingRecorder
+from .meeting import MeetingRecorder, meetings_dir
 from .overlay import Overlay
 from .tray import Tray
 from .typer import apply_replacements, copy_clipboard, type_text
@@ -842,6 +842,9 @@ class App:
         old, new = self.cfg, config.Config.load()
         self.cfg = new  # hotkey/mode/output read live via lambdas
         self._meeting.device = config.device_arg(new)
+        # A changed "Save meetings to" was ignored until restart, so the next
+        # recording silently landed in the old folder.
+        self._meeting.base_dir = meetings_dir()
         self._meeting.max_minutes = new.meeting_max_minutes
         self._meeting.retention_sessions = max(
             1, new.meeting_retention_sessions

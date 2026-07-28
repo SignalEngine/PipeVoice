@@ -21,6 +21,7 @@ from pathlib import Path
 from . import config
 from .history import _copy_to_clipboard
 from .meeting import (
+    count_speaker_bleed,
     find_loudest_speaker_window,
     apply_corrections,
     apply_polished,
@@ -697,6 +698,16 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     transcribe_cta = ttk.Button(_nt_inner, text="Transcribe now",
                                 style="Accent.TButton")
     transcribe_cta.pack(side="right")
+
+    # Detected speaker bleed. A warning, never an edit: the transcript keeps
+    # every word and the user fixes the cause with headphones.
+    bleed_banner = tk.Frame(right, bg=CARD)
+    bleed_label = tk.Label(
+        bleed_banner,
+        text="", bg=CARD, fg=WARN, anchor="w", justify="left",
+        wraplength=760, padx=14, pady=10,
+    )
+    bleed_label.pack(fill="x")
 
     highlights_panel = tk.Frame(right, bg=CARD)
     highlights_title = tk.Label(highlights_panel, text="Highlights", bg=CARD, fg=ACCENT,
@@ -1592,6 +1603,17 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             needs_transcribe.pack(fill="x", pady=(0, 8), before=highlights_panel)
         else:
             needs_transcribe.pack_forget()
+
+        doubled = count_speaker_bleed(raw_segments) if raw_segments else 0
+        if doubled >= 2:
+            bleed_label.config(
+                text=f"Your microphone also picked up the call — about {doubled} lines "
+                     "appear twice, once from each side. Nothing has been removed. "
+                     "Wearing headphones prevents it on the next recording."
+            )
+            bleed_banner.pack(fill="x", pady=(0, 8), before=highlights_panel)
+        else:
+            bleed_banner.pack_forget()
         copy_btn.config(state="normal" if body_text else "disabled")
         save_btn.config(state="normal" if body_text else "disabled")
         folder_btn.config(state="normal")
@@ -1749,6 +1771,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             )
             for button in (
                 transcribe_btn,
+                transcribe_cta,
                 polish_btn,
                 toggle_polish_btn,
                 summarise_btn,
@@ -1765,6 +1788,11 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             status_label.config(text="")
             summarise_controls.pack_forget()
             summary_panel.pack_forget()
+            # Delete the only untranscribed session and these stayed on screen,
+            # advertising a recording that no longer exists.
+            needs_transcribe.pack_forget()
+            bleed_banner.pack_forget()
+            highlights_panel.pack_forget()
             return
         target = preferred or state["sessions"][0]["path"]
         target_index = next(

@@ -295,7 +295,7 @@ def merge_transcripts(
             )
 
     merged.sort(key=lambda segment: segment["t"])
-    return drop_speaker_bleed(merged)
+    return merged
 
 
 # How far apart the same words may land on the two streams and still be one
@@ -316,66 +316,56 @@ BLEED_MIN_WORDS = 6
 BLEED_LENGTH_TOLERANCE = 1.3
 
 
-def drop_speaker_bleed(segments: list[dict]) -> list[dict]:
-    """Remove the mic's echo of audio that came out of the speakers.
+def count_speaker_bleed(segments: list[dict]) -> int:
+    """Count how many local segments look like an echo of the remote audio.
 
-    On headphones the two streams are independent. Through SPEAKERS the
-    microphone also hears the far end, so their words get transcribed twice —
-    once from the desktop capture and again, a second later, attributed to the
-    local user. Seen live: "At Manchester's Nordic Muse, they love the hand
-    picked stuff" appeared as Them at 0:29 and again as You at 0:30.
+    DETECTS ONLY — it must never delete. Two review rounds proved text
+    similarity cannot tell an echo from a similar-but-different sentence:
 
-    The echo only ever runs desktop -> mic: loopback records what the machine
-    PLAYS, and the local voice is never played back. So a near-duplicate pair is
-    resolved by dropping the "You" copy, which is both the wrong attribution and
-    the poorer signal.
+        real echo                        -> 0.789
+        "deploy Friday" / "deploy Monday" -> 0.857
+
+    The false positive scores HIGHER than the true positive, so no threshold
+    exists that removes echoes without sometimes deleting a materially
+    different statement — and one word ("Friday" vs "Monday") can invert the
+    meaning of a record of what someone said. The user can fix the cause in
+    seconds by wearing headphones; the app cannot safely fix it afterwards.
+    So we tell them, and leave every word intact.
     """
     from difflib import SequenceMatcher
 
     remote = [s for s in segments if str(s.get("speaker") or "") != "You"]
     if not remote:
-        return segments
+        return 0
 
-    def key(text: object) -> str:
-        return " ".join(str(text or "").lower().split())
+    def words(text: object) -> list[str]:
+        return str(text or "").lower().split()
 
-    kept = []
+    hits = 0
     for segment in segments:
         if str(segment.get("speaker") or "") != "You":
-            kept.append(segment)
             continue
-        mine = key(segment.get("text")).split()
+        mine = words(segment.get("text"))
         if len(mine) < BLEED_MIN_WORDS:
-            # Too short to tell an echo from a genuine "yeah, exactly".
-            kept.append(segment)
             continue
-        echo = False
         for other in remote:
             try:
-                gap = abs(float(other.get("t", 0.0)) - float(segment.get("t", 0.0)))
+                delay = float(segment.get("t", 0.0)) - float(other.get("t", 0.0))
             except (TypeError, ValueError):
                 continue
-            if gap > BLEED_WINDOW:
+            # Echo travels desktop -> mic only, so the mic copy always comes
+            # AFTER. A local line spoken BEFORE the remote one cannot be an echo.
+            if delay < 0 or delay > BLEED_WINDOW:
                 continue
-            theirs = key(other.get("text")).split()
+            theirs = words(other.get("text"))
             if len(theirs) < BLEED_MIN_WORDS:
                 continue
-            # Length guard FIRST. Comparing only the shared prefix deleted
-            # genuine speech that merely STARTED like the remote line:
-            #   Them: "the deadline is next Friday morning at nine"
-            #   You:  "the deadline is next Friday morning at nine but the
-            #          budget is approved"
-            # An echo is the same utterance heard twice, so it is roughly the
-            # same length. Materially more words means the local speaker added
-            # something, and that must never be thrown away.
             if len(mine) > len(theirs) * BLEED_LENGTH_TOLERANCE:
                 continue
             if SequenceMatcher(None, mine, theirs).ratio() >= BLEED_SIMILARITY:
-                echo = True
+                hits += 1
                 break
-        if not echo:
-            kept.append(segment)
-    return kept
+    return hits
 
 
 def _format_elapsed(value: object) -> str:

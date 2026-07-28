@@ -159,61 +159,6 @@ def test_sustained_applause_does_not_fire():
     assert _fires(signal) == 0
 
 
-def test_speaker_bleed_is_dropped_but_real_conversation_is_not():
-    # Recorded through SPEAKERS rather than headphones, the mic also hears the
-    # far end, so their words are transcribed twice — once from the desktop
-    # capture and again attributed to "You". Verbatim from a real session.
-    real = [
-        {"t": 29.0, "speaker": "Them", "text": "At Manchester's Nordic Muse, they love "
-         "the hand picked stuff. A weird sight that would be if you were just going out "
-         "to do the red run at the top and you wanna lift with a bunch of trout."},
-        {"t": 30.0, "speaker": "You", "text": "Manchester's Nordic muse. They love the "
-         "handpicked stuff. The weird sight that would be if you were just going up to "
-         "do the red run at the top, and you're gonna lift with a bunch of trout."},
-    ]
-    kept = meeting.drop_speaker_bleed(real)
-    assert len(kept) == 1
-    assert kept[0]["speaker"] == "Them", "the desktop capture is the original, keep it"
-
-    # Two people genuinely talking must survive. Character-level similarity
-    # cannot tell these apart from the pair above (0.341 vs 0.180 — overlapping);
-    # word-level can (0.814 vs 0.087), which is why the metric is word-based.
-    both = [
-        {"t": 10.0, "speaker": "Them", "text": "I think we should ship the pricing change on Friday afternoon"},
-        {"t": 12.0, "speaker": "You", "text": "Agreed, but let us tell the support team first thing that morning"},
-    ]
-    assert len(meeting.drop_speaker_bleed(both)) == 2
-
-    # A short agreement is not an echo, however close it lands.
-    short = [
-        {"t": 10.0, "speaker": "Them", "text": "So the deploy is going out on Friday at four"},
-        {"t": 11.0, "speaker": "You", "text": "Yeah, exactly"},
-    ]
-    assert len(meeting.drop_speaker_bleed(short)) == 2
-
-    # Deliberately repeating a number back, well outside the echo window, stays.
-    later = [
-        {"t": 10.0, "speaker": "Them", "text": "The number you want is four hundred and twenty seven pounds"},
-        {"t": 40.0, "speaker": "You", "text": "The number you want is four hundred and twenty seven pounds"},
-    ]
-    assert len(meeting.drop_speaker_bleed(later)) == 2
-
-
-def test_merge_transcripts_actually_applies_bleed_removal():
-    # The test above proves the FUNCTION works; this proves it is WIRED IN.
-    # Without it, deleting the call from merge_transcripts leaves the suite
-    # green — a test guarding a path production never takes.
-    mic = [{"start": 30.0, "text": "Manchester's Nordic muse. They love the handpicked "
-            "stuff. The weird sight that would be if you were just going up to do the "
-            "red run at the top with a bunch of trout."}]
-    desktop = [{"start": 29.0, "speaker": 0, "text": "At Manchester's Nordic Muse, they "
-                "love the hand picked stuff. A weird sight that would be if you were "
-                "just going out to do the red run at the top with a bunch of trout."}]
-    merged = meeting.merge_transcripts(mic, desktop, mic_offset=0.0, desktop_offset=0.0)
-    speakers = [segment["speaker"] for segment in merged]
-    assert speakers == ["Them"], f"the mic echo should be gone, got {speakers}"
-
-
 def test_polish_unwraps_a_fenced_json_reply():
     # Gemini returns JSON inside a ```json fence by default, which json.loads
     # rejects — the whole reply was discarded as "unsafe" when it was fine.
@@ -255,16 +200,55 @@ def test_polish_names_a_missing_key_rather_than_blaming_the_model():
         polish.provider_ready = original_ready
 
 
-def test_bleed_removal_never_eats_speech_that_merely_starts_the_same():
-    # The gate's P1: comparing only the shared prefix deleted a genuine local
-    # utterance that BEGAN like the remote line and then continued. Losing
-    # "but the budget is approved" from a record is unacceptable.
-    segments = [
-        {"t": 10.0, "speaker": "Them",
-         "text": "the project deadline is next Friday morning at nine"},
-        {"t": 12.0, "speaker": "You",
-         "text": "the project deadline is next Friday morning at nine but the budget is approved"},
+def test_speaker_bleed_is_detected_but_never_deleted():
+    # Two review rounds proved text similarity CANNOT separate an echo from a
+    # similar-but-different sentence — the false positive scores HIGHER than the
+    # true positive (0.857 vs 0.789). So this only ever counts; the transcript
+    # keeps every word and the user is told to wear headphones.
+    bleed = [
+        {"t": 29.0, "speaker": "Them", "text": "At Manchester's Nordic Muse, they love "
+         "the hand picked stuff. A weird sight that would be if you were just going out "
+         "to do the red run at the top with a bunch of trout."},
+        {"t": 30.0, "speaker": "You", "text": "Manchester's Nordic muse. They love the "
+         "handpicked stuff. The weird sight that would be if you were just going up to "
+         "do the red run at the top with a bunch of trout."},
     ]
-    kept = meeting.drop_speaker_bleed(segments)
-    assert len(kept) == 2
-    assert any("budget is approved" in s["text"] for s in kept)
+    assert meeting.count_speaker_bleed(bleed) == 1
+    assert len(meeting.merge_transcripts(
+        [{"start": 30.0, "text": bleed[1]["text"]}],
+        [{"start": 29.0, "speaker": 0, "text": bleed[0]["text"]}],
+        mic_offset=0.0, desktop_offset=0.0,
+    )) == 2, "detection must not remove anything from the transcript"
+
+
+def test_bleed_detection_is_fuzzy_but_can_only_cost_a_banner():
+    # Honest about the limit: "deploy Friday" vs "deploy Monday" scores 0.857,
+    # HIGHER than a real echo at 0.789, so detection cannot exclude it. That is
+    # exactly why this counts instead of deleting — a false positive costs a
+    # warning banner, never a word of the transcript.
+    pair = [
+        {"t": 10.0, "speaker": "Them", "text": "I think we should deploy Friday morning please"},
+        {"t": 12.0, "speaker": "You", "text": "I think we should deploy Monday morning please"},
+    ]
+    assert meeting.count_speaker_bleed(pair) <= 1, "one coincidence at most"
+    # The UI only warns at 2+, so a single coincidence stays silent.
+    assert meeting.count_speaker_bleed(pair) < 2
+
+    # And whatever detection thinks, merge_transcripts keeps both lines.
+    merged = meeting.merge_transcripts(
+        [{"start": 12.0, "text": pair[1]["text"]}],
+        [{"start": 10.0, "speaker": 0, "text": pair[0]["text"]}],
+        mic_offset=0.0, desktop_offset=0.0,
+    )
+    assert len(merged) == 2
+    assert any("Monday" in seg["text"] for seg in merged), "no word may be lost"
+
+
+def test_bleed_detection_respects_direction():
+    # Echo travels desktop -> mic only, so a local line spoken BEFORE the remote
+    # one can never be an echo of it.
+    text = "the quarterly numbers came in well above what we forecast last month"
+    assert meeting.count_speaker_bleed([
+        {"t": 10.0, "speaker": "You", "text": text},
+        {"t": 12.0, "speaker": "Them", "text": text},
+    ]) == 0
