@@ -32,7 +32,13 @@ def _text_for_session(session: object) -> str:
             return _text_for_session(value)
         segments = session.get("segments")
         if isinstance(segments, Iterable) and not isinstance(segments, (str, bytes)):
-            return " ".join(
+            # "\n", NOT " ". Each segment is a separate utterance, so its first
+            # word is sentence-initial. Joining with a space erases that boundary
+            # and the miner then scores every segment's opening word as
+            # mid-sentence jargon — real corpora came back as "ok, before, today,
+            # should, review" instead of names and products. This is the form the
+            # Settings UI always passes, so a space here breaks the whole feature.
+            return "\n".join(
                 str(segment.get("text") or "")
                 for segment in segments
                 if isinstance(segment, Mapping)

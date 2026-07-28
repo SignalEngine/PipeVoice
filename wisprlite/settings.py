@@ -695,6 +695,8 @@ def main(first_run: bool = False) -> None:
 
     def _vocab_from_meetings():
         """Offer local meeting candidates; only checked rows are returned."""
+        from tkinter import messagebox  # module-level tkinter isn't imported here
+
         sessions = []
         corrections = []
         for row in meetings_tab.list_sessions():
@@ -716,6 +718,13 @@ def main(first_run: bool = False) -> None:
             sessions, list(vocab_list.get(0, "end")), corrections
         )
         if not candidates:
+            # Say so. A button that does nothing is indistinguishable from a crash.
+            messagebox.showinfo(
+                "Vocabulary from meetings",
+                "No new terms found yet. Record and transcribe a few meetings, or "
+                "correct some wording in a transcript, and try again.",
+                parent=root,
+            )
             return
 
         picker = tk.Toplevel(root)
@@ -726,8 +735,26 @@ def main(first_run: bool = False) -> None:
                  font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=18, pady=(16, 4))
         tk.Label(picker, text="Nothing is added unless you tick it.", bg=BG, fg=MUTED,
                  font=("Segoe UI", 9)).pack(anchor="w", padx=18, pady=(0, 10))
-        body = tk.Frame(picker, bg=CARD, padx=14, pady=8)
-        body.pack(fill="both", expand=True, padx=18)
+        # Buttons pack to the BOTTOM first, so the expanding body can never starve
+        # them: in the old order 21+ candidates left "Add selected" unrendered
+        # entirely, and a realistic corpus produces 30+.
+        buttons = tk.Frame(picker, bg=BG)
+        buttons.pack(side="bottom", fill="x", padx=18, pady=14)
+
+        outer = tk.Frame(picker, bg=CARD)
+        outer.pack(fill="both", expand=True, padx=18)
+        canvas = tk.Canvas(outer, bg=CARD, highlightthickness=0, bd=0)
+        bar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        body = tk.Frame(canvas, bg=CARD, padx=14, pady=8)
+        window = canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>",
+                  lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(window, width=e.width))
+        _wheel(canvas)
         choices = []
         for candidate in candidates:
             selected = tk.BooleanVar(value=False)
@@ -747,8 +774,6 @@ def main(first_run: bool = False) -> None:
                     existing.add(term.casefold())
             picker.destroy()
 
-        buttons = tk.Frame(picker, bg=BG)
-        buttons.pack(fill="x", padx=18, pady=14)
         ttk.Button(buttons, text="Add selected", command=confirm).pack(side="right")
         ttk.Button(buttons, text="Cancel", command=picker.destroy).pack(side="right", padx=(0, 8))
         picker.geometry(f"520x{min(620, 150 + 30 * len(candidates))}")

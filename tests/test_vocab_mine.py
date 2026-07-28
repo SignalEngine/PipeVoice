@@ -65,23 +65,35 @@ def test_no_api_key_or_network_is_needed():
 
 
 def test_speaker_labels_do_not_manufacture_jargon():
-    # render_transcript emits "You: Thanks for joining", and spoken blocks often
-    # end with no full stop. Treating only ".!?" as a sentence boundary scored the
-    # first word of every block as mid-sentence jargon, so "Thanks"/"Sure"/"Great"
-    # ranked ABOVE the real names this feature exists to surface.
-    transcript = (
-        "You: Thanks for joining. Dave will send the Kubernetes config.\n\n"
-        "Them 1: Sure. Anthropic uses Kubernetes too. Really helpful.\n\n"
-        "You: Great. Dave, can you ping Anthropic about Kubernetes?"
-    )
-    terms = [c["term"] for c in mine_candidates([transcript, transcript], "", {})]
-    for noise in ("Thanks", "Sure", "Great"):
+    # Each segment is a separate utterance, so its first word is sentence-initial.
+    # This MUST use the shape settings.py actually passes -- {"segments": [...]} --
+    # not a pre-rendered string. The first version of this test used a rendered
+    # string, a form the UI never produces, so it passed while the shipped code
+    # returned filler words ("ok, before, today, should, review") on real data.
+    session = {
+        "name": "m1",
+        "segments": [
+            {"speaker": "You", "text": "Thanks for joining"},
+            {"speaker": "You", "text": "Dave will send the Kubernetes config"},
+            {"speaker": "Them 1", "text": "Sure"},
+            {"speaker": "Them 1", "text": "Anthropic uses Kubernetes too"},
+            {"speaker": "You", "text": "Great"},
+            {"speaker": "You", "text": "Can you ping Anthropic about Kubernetes"},
+        ],
+    }
+    terms = [c["term"] for c in mine_candidates([session, session], "", [{}, {}])]
+    for noise in ("Thanks", "Sure", "Great", "Can"):
         assert noise not in terms, f"{noise} should not be a vocabulary candidate"
     assert "Kubernetes" in terms
     assert "Anthropic" in terms
 
-    # ...including when a block has no terminal punctuation at all.
-    unpunctuated = "You: lets go\n\nThem 1: Sarah owns the Postgres migration\n\nYou: ok"
-    plain = [c["term"] for c in mine_candidates([unpunctuated] * 2, "", {})]
-    assert "Postgres" in plain
-    assert "Them" not in plain
+
+def test_segments_are_joined_on_a_boundary_not_a_space():
+    # Joining segments with " " erases the utterance boundary, so the next
+    # segment's opening word scores as mid-sentence jargon.
+    session = {"segments": [
+        {"text": "we should ship it"},
+        {"text": "Before the call"},
+    ]}
+    terms = [c["term"] for c in mine_candidates([session] * 2, "", [{}, {}])]
+    assert "Before" not in terms
