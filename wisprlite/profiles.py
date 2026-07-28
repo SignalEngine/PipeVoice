@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 
-from . import config, voices
+from . import config, voices, winui
 
 
 def resolve(cfg, ctx) -> dict:
@@ -157,7 +157,8 @@ def main() -> None:
     vbar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
     holder = tk.Frame(canvas, bg=BG)
-    canvas.create_window((0, 0), window=holder, anchor="nw")
+    _holder_window = canvas.create_window((0, 0), window=holder, anchor="nw")
+    winui.fit_scroll_body(canvas, _holder_window)
     holder.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     canvas.bind("<Enter>", lambda e: canvas.bind_all(
         "<MouseWheel>", lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units")))

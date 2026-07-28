@@ -153,3 +153,21 @@ def dark_titlebar(root, color: str = DARK) -> None:
         dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(bgr), ctypes.sizeof(bgr))
     except Exception:
         pass
+
+
+def fit_scroll_body(canvas, window_id, max_width: int = 1080) -> None:
+    """Keep a scrolling canvas's inner frame width-tracked, capped and centred.
+
+    A canvas item created with create_window keeps its *natural* width forever
+    unless something sets it, so maximising a window just adds dead space to the
+    right of a narrow column. Stretching a form to a 2560px monitor is no better
+    — it puts a control an inch from its label — so cap the width and centre what
+    is left over.
+    """
+
+    def _fit(event):
+        width = min(event.width, max_width)
+        canvas.itemconfigure(window_id, width=width)
+        canvas.coords(window_id, max(0, (event.width - width) // 2), 0)
+
+    canvas.bind("<Configure>", _fit, add="+")

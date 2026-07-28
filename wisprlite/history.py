@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import time
 
-from . import config
+from . import config, winui
 
 CAP = 200  # max lines kept on disk
 
@@ -141,7 +141,8 @@ def build(container, root, wheel=None) -> None:
     vbar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
     inner = tk.Frame(canvas, bg=BG)
-    canvas.create_window((0, 0), window=inner, anchor="nw")
+    _inner_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+    winui.fit_scroll_body(canvas, _inner_window)
     inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     wheel(canvas)
 

@@ -107,7 +107,8 @@ def _build_guide(parent, wheel) -> None:
     gb.pack(side="right", fill="y")
     gc.pack(side="left", fill="both", expand=True)
     g = tk.Frame(gc, bg=BG)
-    gc.create_window((0, 0), window=g, anchor="nw")
+    _g_window = gc.create_window((0, 0), window=g, anchor="nw")
+    winui.fit_scroll_body(gc, _g_window)
     g.bind("<Configure>", lambda e: gc.configure(scrollregion=gc.bbox("all")))
     wheel(gc)
 
@@ -230,7 +231,8 @@ def _build_voices_tab(parent, show_tab=None, wheel=None) -> None:
     sbar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
     wrap = tk.Frame(canvas, bg=BG, padx=34, pady=28)
-    canvas.create_window((0, 0), window=wrap, anchor="nw")
+    _wrap_window = canvas.create_window((0, 0), window=wrap, anchor="nw")
+    winui.fit_scroll_body(canvas, _wrap_window)
     wrap.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     if wheel:
         wheel(canvas)
@@ -362,8 +364,21 @@ def main(first_run: bool = False) -> None:
     _vbar.pack(side="right", fill="y")
     _canvas.pack(side="left", fill="both", expand=True)
     frm = ttk.Frame(_canvas, padding=26)
-    _canvas.create_window((0, 0), window=frm, anchor="nw")
+    _frm_window = _canvas.create_window((0, 0), window=frm, anchor="nw")
     frm.bind("<Configure>", lambda e: _canvas.configure(scrollregion=_canvas.bbox("all")))
+
+    # Without this the inner frame keeps its natural width forever, so maximising
+    # the window just adds empty space to the right of a ~825px column. Stretching
+    # to a 2560px monitor is no better — a form that wide puts a control an inch
+    # from its label — so cap it and centre the remainder.
+    FORM_MAX_WIDTH = 1080
+
+    def _fit_form(event):
+        width = min(event.width, FORM_MAX_WIDTH)
+        _canvas.itemconfigure(_frm_window, width=width)
+        _canvas.coords(_frm_window, max(0, (event.width - width) // 2), 0)
+
+    _canvas.bind("<Configure>", _fit_form)
     _wheel(_canvas)
     history.build(tab_history, root, _wheel)
     def sync_meeting_replacements(replacements):
@@ -621,6 +636,8 @@ def main(first_run: bool = False) -> None:
 
     def test_snap():
         import tkinter as tk
+        from .meeting import smooth_level
+        from .overlay import meter_level
         from .snap import SnapDetector
         dialog = tk.Toplevel(root)
         dialog.title("Test acoustic bookmarks")
@@ -633,15 +650,41 @@ def main(first_run: bool = False) -> None:
         result.pack(padx=18, pady=(0, 12))
         detector = SnapDetector(16_000, sensitivity=float(bookmark_sensitivity_var.get()))
         stream = None
+        # The audio callback runs on PortAudio's thread and Tk is not thread-safe,
+        # so it only ever writes into this dict — exactly what MeetingRecorder does
+        # with self._levels. The UI polls on the main thread below.
+        shared = {"level": 0.0, "hits": 0, "error": ""}
+
         def callback(block, _frames, _time, _status):
             try:
-                values = [abs(float(v[0])) for v in block]
-                peak = max(values) if values else 0.0
-                root.after(0, lambda: level.configure(value=min(1.0, peak)))
+                total = 0.0
+                count = 0
+                for value in block:
+                    sample = float(value[0] if getattr(value, "ndim", 0) else value)
+                    total += sample * sample
+                    count += 1
+                rms = (total / count) ** 0.5 if count else 0.0
+                # Fast attack, slow release, then the same dB curve the REC meter
+                # uses. A linear bar reads as dead: speech peaks near 0.05.
+                shared["level"] = smooth_level(shared["level"], rms)
                 if detector.feed(block):
-                    root.after(0, lambda: result.config(text="Snap detected", fg=GOOD))
-            except Exception:
-                pass
+                    shared["hits"] += 1
+            except Exception as exc:      # never silently: a dead bar told us nothing
+                shared["error"] = f"{type(exc).__name__}: {exc}"
+
+        seen_hits = 0
+
+        def tick():
+            nonlocal seen_hits
+            if not dialog.winfo_exists():
+                return
+            level.configure(value=meter_level(shared["level"]))
+            if shared["error"]:
+                result.config(text=shared["error"], fg=ACCENT)
+            elif shared["hits"] > seen_hits:
+                seen_hits = shared["hits"]
+                result.config(text=f"Detected · {seen_hits}", fg=GOOD)
+            dialog.after(50, tick)
         def close():
             nonlocal stream
             if stream is not None:
@@ -656,6 +699,7 @@ def main(first_run: bool = False) -> None:
             stream.start()
             ttk.Button(dialog, text="Close", command=close).pack(pady=(0, 16))
             dialog.protocol("WM_DELETE_WINDOW", close)
+            tick()
         except Exception as exc:
             result.config(text=f"Microphone unavailable: {exc}", fg=ACCENT)
             ttk.Button(dialog, text="Close", command=close).pack(pady=(0, 16))
