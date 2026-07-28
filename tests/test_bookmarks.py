@@ -252,3 +252,74 @@ def test_bleed_detection_respects_direction():
         {"t": 10.0, "speaker": "You", "text": text},
         {"t": 12.0, "speaker": "Them", "text": text},
     ]) == 0
+
+
+def test_levels_stayed_a_property():
+    # A near-miss worth locking down: adding bleed_suspected directly above
+    # `levels` stole its @property decorator, so app.py's `self._meeting.levels`
+    # (no parens) would have handed the overlay a bound method instead of a
+    # dict, silently killing both REC level meters.
+    assert isinstance(meeting.MeetingRecorder.__dict__["levels"], property)
+    assert isinstance(meeting.MeetingRecorder.__dict__["bleed_suspected"], property)
+
+
+def test_live_bleed_detection_tells_headphones_from_speakers():
+    import threading
+
+    recorder_cls = meeting.MeetingRecorder
+
+    class Fake:
+        levels = recorder_cls.__dict__["levels"]
+        bleed_suspected = recorder_cls.__dict__["bleed_suspected"]
+
+        def __init__(self):
+            self._state_lock = threading.Lock()
+            self._levels = {"mic": 0.0, "desktop": 0.0}
+            self._bleed_desktop_loud = 0
+            self._bleed_both_loud = 0
+
+        def sample(self, desktop_rms, mic_level):
+            with self._state_lock:
+                self._levels["mic"] = mic_level
+                if desktop_rms >= meeting.BLEED_LIVE_LEVEL:
+                    self._bleed_desktop_loud += 1
+                    if self._levels["mic"] >= meeting.BLEED_LIVE_LEVEL:
+                        self._bleed_both_loud += 1
+
+    # Headphones: the two streams go loud at different times, because people
+    # take turns. The occasional interruption must not trigger the warning.
+    headphones = Fake()
+    for index in range(300):
+        headphones.sample(0.15, 0.10 if index % 10 == 0 else 0.001)
+    assert headphones.bleed_suspected is False
+
+    # Speakers: the mic is loud whenever the desktop is.
+    speakers = Fake()
+    for _ in range(300):
+        speakers.sample(0.15, 0.09)
+    assert speakers.bleed_suspected is True
+
+    # Not enough remote speech yet to judge either way.
+    early = Fake()
+    for _ in range(40):
+        early.sample(0.15, 0.09)
+    assert early.bleed_suspected is False
+
+    # Solo recording: no remote audio at all, so nothing to echo.
+    solo = Fake()
+    for _ in range(300):
+        solo.sample(0.0, 0.09)
+    assert solo.bleed_suspected is False
+
+
+def test_write_block_actually_feeds_the_bleed_counters():
+    # The test above proves the JUDGEMENT is right; this proves it is FED.
+    # Sabotaging _write_block left that test green, because its fake increments
+    # the counters itself — a test guarding a path production never takes.
+    # _write_block needs numpy, wave handles and locks to call for real, so
+    # assert the wiring at source level, as test_desktop_capture_has_no_detector
+    # _path already does.
+    source = inspect.getsource(MeetingRecorder._write_block)
+    assert "_bleed_desktop_loud" in source, "desktop-loud samples are never counted"
+    assert "_bleed_both_loud" in source, "overlapping-loud samples are never counted"
+    assert 'label == "desktop"' in source, "counting must be driven by the desktop stream"

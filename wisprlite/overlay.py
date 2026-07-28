@@ -337,6 +337,7 @@ class Overlay:
             # first ~20s of the next, quieter meeting showed a near-dead meter —
             # precisely the symptom auto-gain was added to fix.
             st["meeting_peak"] = {"mic": 0.0, "desktop": 0.0}
+            st["bleed_warned"] = False
             st["meeting_hist"] = {
                 "mic": [0.0] * MEETING_METER_N,
                 "desktop": [0.0] * MEETING_METER_N,
@@ -472,6 +473,17 @@ class Overlay:
             items["rec"],
             text="Click to stop" if st.get("hover") else f"REC  {self._elapsed_text(elapsed)}",
         )
+
+        # Warn ONCE, during the call. Told afterwards, the user can only regret
+        # it; told now, headphones still save this recording.
+        bleed = data.get("bleed")
+        try:
+            suspected = bool(bleed() if callable(bleed) else bleed)
+        except Exception:
+            suspected = False
+        if suspected and not st.get("bleed_warned"):
+            st["bleed_warned"] = True
+            self._show_bleed_warning(c)
         for label, x1, x2 in (("mic", 174, 221), ("desktop", 292, 350)):
             dead = bool(errors.get(label))
             try:
@@ -574,6 +586,41 @@ class Overlay:
         return top + bottom
 
     @staticmethod
+    def _show_bleed_warning(self, canvas) -> None:
+        """A small, self-dismissing note that the mic is hearing the speakers."""
+        try:
+            import tkinter as tk
+
+            # Derived from the canvas rather than stored: the Tk root is a local
+            # inside the overlay's run loop and belongs to its thread.
+            root = canvas.winfo_toplevel()
+            if root is None:
+                return
+            top = tk.Toplevel(root)
+            top.overrideredirect(True)
+            top.attributes("-topmost", True)
+            top.configure(bg=PALETTE["amber"])
+            frame = tk.Frame(top, bg=PALETTE["card"], padx=16, pady=12)
+            frame.pack(fill="both", expand=True, padx=2, pady=2)
+            tk.Label(frame, text="Your microphone is picking up the call",
+                     bg=PALETTE["card"], fg=PALETTE["fg"],
+                     font=("Segoe UI", 10, "bold")).pack(anchor="w")
+            tk.Label(frame,
+                     text="Everything they say will appear twice in the transcript.\n"
+                          "Put headphones on now and the rest of this recording is clean.",
+                     bg=PALETTE["card"], fg=PALETTE["muted"], justify="left",
+                     font=("Segoe UI", 9)).pack(anchor="w", pady=(4, 0))
+            top.update_idletasks()
+            width, height = top.winfo_reqwidth(), top.winfo_reqheight()
+            x = max(0, (top.winfo_screenwidth() - width) // 2)
+            y = max(0, top.winfo_screenheight() - height - 150)
+            top.geometry(f"+{x}+{y}")
+            # Never modal and never sticky: this must not sit over a live call.
+            top.after(12000, top.destroy)
+            top.bind("<Button-1>", lambda _event: top.destroy())
+        except Exception:
+            pass          # a warning must never disturb the recording itself
+
     def _blend(start: str, end: str, amount: float) -> str:
         amount = min(1.0, max(0.0, float(amount)))
         rgb = [

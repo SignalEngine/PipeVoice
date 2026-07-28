@@ -325,6 +325,10 @@ BLEED_MIN_WORDS = 6
 # An echo may be transcribed a little longer than the original, but not
 # half as long again — beyond that the local speaker said something extra.
 BLEED_LENGTH_TOLERANCE = 1.3
+# Live detection while recording.
+BLEED_LIVE_LEVEL = 0.02        # RMS that counts as "someone is talking"
+BLEED_LIVE_MIN_SAMPLES = 120   # ~6s of remote speech before judging
+BLEED_LIVE_RATIO = 0.75        # mic loud this often DURING remote speech = speakers
 
 
 def count_speaker_bleed(segments: list[dict]) -> int:
@@ -732,6 +736,8 @@ class MeetingRecorder:
             "desktop": None,
         }
         self._levels = {"mic": 0.0, "desktop": 0.0}
+        self._bleed_desktop_loud = 0
+        self._bleed_both_loud = 0
         self._mic_stream = None
         self._limit_timer: threading.Timer | None = None
         self._stop_reason: str | None = None
@@ -769,6 +775,16 @@ class MeetingRecorder:
     def fatal_errors(self) -> dict[str, str | None]:
         with self._state_lock:
             return dict(self._fatal_errors)
+
+    @property
+    def bleed_suspected(self) -> bool:
+        """True when the mic appears to be hearing the speakers, live."""
+        with self._state_lock:
+            loud = self._bleed_desktop_loud
+            both = self._bleed_both_loud
+        if loud < BLEED_LIVE_MIN_SAMPLES:
+            return False
+        return (both / loud) >= BLEED_LIVE_RATIO
 
     @property
     def levels(self) -> dict[str, float]:
@@ -1139,6 +1155,16 @@ class MeetingRecorder:
             rms = float(np.sqrt(np.mean(data ** 2)))
             with self._state_lock:
                 self._levels[label] = smooth_level(self._levels[label], rms)
+                # Live speaker-bleed detection. On headphones the two streams go
+                # loud at DIFFERENT times, because people take turns. Through
+                # speakers the mic is loud WHENEVER the desktop is, since it is
+                # hearing the far end. Counting that overlap catches it in the
+                # first half-minute, while putting headphones on can still save
+                # the recording — telling the user afterwards is too late.
+                if label == "desktop" and rms >= BLEED_LIVE_LEVEL:
+                    self._bleed_desktop_loud += 1
+                    if self._levels.get("mic", 0.0) >= BLEED_LIVE_LEVEL:
+                        self._bleed_both_loud += 1
             pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
             with self._wave_locks[label]:
                 output = self._waves.get(label)

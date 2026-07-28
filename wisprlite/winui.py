@@ -50,6 +50,12 @@ def apply_theme(root):
     style.configure("Accent.TButton", background=p["accent"], foreground="#1a0c0d",
                     font=("Segoe UI", 9, "bold"), padding=7, borderwidth=0)
     style.map("Accent.TButton", background=[("active", p["accent_hi"])])
+    # Green, for the one action a recording is waiting on. Distinct from the
+    # coral accent so "Transcribe" does not compete with Save for the eye.
+    style.configure("Go.TButton", background=p["good"], foreground="#10131a",
+                    padding=6, borderwidth=0)
+    style.map("Go.TButton", background=[("active", "#a9d189"), ("disabled", p["card"])])
+    style.map("Go.TButton", foreground=[("disabled", p["muted"])])
     style.configure("Pick.TButton", background="#2a2f3d", foreground=p["fg"], padding=6, borderwidth=0)
     style.map("Pick.TButton", background=[("active", "#333a4a")])
     style.configure("TCheckbutton", background=p["bg"], foreground=p["fg"])

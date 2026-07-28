@@ -446,6 +446,7 @@ class App:
             "elapsed": self._meeting.elapsed,
             "levels": self._meeting.levels,
             "errors": self._meeting.fatal_errors,
+            "bleed": self._meeting.bleed_suspected,
         }
 
     def toggle_meeting(self) -> None:

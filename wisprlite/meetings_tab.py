@@ -720,7 +720,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
              bg=CARD, fg=FG, font=("Segoe UI", 10, "bold"),
              anchor="w").pack(side="left")
     transcribe_cta = ttk.Button(_nt_inner, text="Transcribe now",
-                                style="Accent.TButton")
+                                style="Go.TButton")
     transcribe_cta.pack(side="right")
 
     # Detected speaker bleed. A warning, never an edit: the transcript keeps
@@ -852,7 +852,8 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
 
     actions = tk.Frame(right, bg=BG)
     actions.pack(fill="x", pady=(10, 0))
-    transcribe_btn = ttk.Button(actions, text="Transcribe", state="disabled")
+    transcribe_btn = ttk.Button(actions, text="Transcribe", state="disabled",
+                                style="Go.TButton")
     transcribe_btn.pack(side="left")
     polish_btn = ttk.Button(actions, text="Polish", state="disabled")
     polish_btn.pack(side="left", padx=(7, 0))
