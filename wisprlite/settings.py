@@ -611,8 +611,9 @@ def main(first_run: bool = False) -> None:
     bookmark_cap_btn.pack(side="left", padx=(8, 0))
     bookmark_cap_btn.config(command=_mk_capture(bookmark_cap_btn, bookmark_hotkey_var))
 
-    check(c, "Acoustic double-snap bookmarks", bookmark_acoustic_var,
-          "Off by default. The microphone only is listened to for a deliberate double snap.")
+    check(c, "Bookmark on a double clap or snap", bookmark_acoustic_var,
+          "Off by default. Listens to your microphone only — never the call audio — for a\n"
+          "deliberate double clap or double snap. Use Test to find your sensitivity.")
     r = row(c, "Snap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
     ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
               orient="horizontal", length=130).pack(side="left")
@@ -624,7 +625,7 @@ def main(first_run: bool = False) -> None:
         dialog = tk.Toplevel(root)
         dialog.title("Test acoustic bookmarks")
         dialog.configure(bg=BG)
-        tk.Label(dialog, text="Make a double snap", bg=BG, fg=FG,
+        tk.Label(dialog, text="Clap twice, or snap twice", bg=BG, fg=FG,
                  font=("Segoe UI", 11, "bold")).pack(padx=18, pady=(16, 6))
         level = ttk.Progressbar(dialog, maximum=1.0, length=260)
         level.pack(padx=18, pady=8)

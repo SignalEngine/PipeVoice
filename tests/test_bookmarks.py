@@ -114,3 +114,46 @@ def test_highlight_resolves_to_production_transcript_segments():
     result = resolve_bookmarks([{"t": 2.2, "source": "hotkey"}], segments)
     assert result[0]["text"] == "The number is 42"
 
+
+
+def _burst(signal, start, amp, decay_s, rng, rate=16_000):
+    n = max(1, int(decay_s * rate))
+    end = min(len(signal), start + n)
+    shape = np.exp(-np.linspace(0, 9, end - start))
+    signal[start:end] += (rng.standard_normal(end - start) * shape * amp).astype(np.float32)
+
+
+def _fires(signal, sensitivity=0.5, rate=16_000, block=800):
+    detector = SnapDetector(rate, sensitivity=sensitivity)
+    return sum(
+        bool(detector.feed(signal[i:i + block]))
+        for i in range(0, len(signal) - block, block)
+    )
+
+
+def test_a_double_clap_works_as_well_as_a_snap():
+    # Not everyone can snap their fingers, so a clap has to work too. A clap is
+    # louder but decays far slower than a snap (15-45ms vs ~3ms), which lowers
+    # its crest factor — the exact quantity the detector keys on. Cover the
+    # quiet, cupped end of the range, not just a sharp one.
+    rng = np.random.default_rng(9)
+    for name, amp, decay, gap in (
+        ("finger snap", 0.9, 0.003, 0.20),
+        ("sharp clap", 1.0, 0.015, 0.25),
+        ("normal clap", 0.8, 0.030, 0.30),
+        ("cupped clap", 0.45, 0.045, 0.30),
+        ("quiet clap", 0.25, 0.040, 0.30),
+    ):
+        signal = (rng.standard_normal(4 * 16_000) * 0.01).astype(np.float32)
+        _burst(signal, 16_000, amp, decay, rng)
+        _burst(signal, int((1.0 + gap) * 16_000), amp, decay, rng)
+        assert _fires(signal) == 1, f"{name} should bookmark once"
+
+
+def test_sustained_applause_does_not_fire():
+    # Applause is a train of claps. The isolation rule must treat it like typing.
+    rng = np.random.default_rng(9)
+    signal = (rng.standard_normal(5 * 16_000) * 0.01).astype(np.float32)
+    for i in range(25):
+        _burst(signal, int((1.0 + i * 0.14) * 16_000), 0.7, 0.03, rng)
+    assert _fires(signal) == 0
