@@ -49,11 +49,27 @@ class PolishFailed(RuntimeError):
     """Carries WHY polishing failed, so the UI can show something actionable."""
 
 
-def _extract_array(text: str) -> str:
-    """Pull the first JSON array out of a reply that may be wrapped in prose."""
-    start = text.find("[")
-    end = text.rfind("]")
-    return text[start:end + 1] if 0 <= start < end else text
+def _find_array(text: str):
+    """Return the first valid JSON array in the text, or None.
+
+    Naive find("[") / rfind("]") slicing was wrong in both directions: trailing
+    prose containing a bracket ("[\"Hello\"]\nNote: ]") swallowed the junk and
+    failed to parse, and leading prose containing one ("Note: [not JSON]")
+    started from the wrong bracket. raw_decode consumes exactly one JSON value
+    and ignores whatever follows, so scanning candidate positions finds the real
+    array wherever the model put it.
+    """
+    decoder = json.JSONDecoder()
+    index = text.find("[")
+    while index != -1:
+        try:
+            value, _end = decoder.raw_decode(text[index:])
+        except ValueError:
+            value = None
+        if isinstance(value, list):
+            return value
+        index = text.find("[", index + 1)
+    return None
 
 
 def _polish_chunk(source: list[str], provider: str, model: str, completion):
@@ -77,12 +93,12 @@ def _polish_chunk(source: list[str], provider: str, model: str, completion):
     if not str(answer or "").strip():
         raise PolishFailed(f"{provider} returned an empty response")
 
-    text = _extract_array(_strip_fence(answer))
-    try:
-        value = json.loads(text)
-    except (TypeError, ValueError) as exc:
+    value = _find_array(_strip_fence(answer))
+    if value is None:
         snippet = " ".join(str(answer).split())[:110]
-        raise PolishFailed(f"could not read the reply as JSON ({exc}). It began: {snippet}")
+        raise PolishFailed(
+            f"could not find a list of lines in the reply. It began: {snippet}"
+        )
     if not isinstance(value, list):
         raise PolishFailed(f"expected a list of {len(source)} lines, got {type(value).__name__}")
     if len(value) != len(source):
