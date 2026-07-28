@@ -23,13 +23,16 @@ from .history import _copy_to_clipboard
 from .meeting import (
     find_loudest_speaker_window,
     apply_corrections,
+    apply_polished,
     load_bookmarks,
+    load_polished,
     load_speaker_map,
     load_corrections,
     meetings_dir,
     render_transcript,
     save_speaker_map,
     save_corrections,
+    save_polished,
     transcribe_session,
     write_wav_window,
 )
@@ -39,6 +42,7 @@ from .summarise import (
     render_markdown_lines,
     summarise,
 )
+from .polish import polish_segments
 from .winui import PALETTE, tooltip
 
 BG = PALETTE["bg"]
@@ -60,6 +64,8 @@ LIVE_HEARTBEAT_SECONDS = 15.0
 ON_ACCENT = PALETTE["bg"]
 SCROLL = PALETTE["border"]
 SCROLL_HI = PALETTE["muted"]
+BOOKMARK_LOOKBACK = 30.0
+BOOKMARK_LOOKAHEAD = 3.0
 
 
 def _replacement_key_allowed(key: str) -> bool:
@@ -360,7 +366,7 @@ def _transcript_text(session_dir: str | Path) -> str:
     segments = transcript.get("segments")
     if isinstance(segments, list):
         rendered = render_transcript(
-            segments,
+            apply_polished(segments, load_polished(session_dir)),
             speaker_map=load_speaker_map(session_dir),
             corrections=load_corrections(session_dir),
         )
@@ -373,7 +379,7 @@ def _transcript_text(session_dir: str | Path) -> str:
 
 
 def resolve_bookmarks(bookmarks: list[dict], segments: list[dict] | None) -> list[dict]:
-    """Attach the segment containing each timestamp without changing either input."""
+    """Resolve each mark to the surrounding transcript window."""
     segments = segments if isinstance(segments, list) else []
     resolved = []
     for bookmark in bookmarks or []:
@@ -381,7 +387,9 @@ def resolve_bookmarks(bookmarks: list[dict], segments: list[dict] | None) -> lis
             timestamp = max(0.0, float(bookmark["t"]))
         except (KeyError, TypeError, ValueError, OverflowError):
             continue
-        text = ""
+        window_start = max(0.0, timestamp - BOOKMARK_LOOKBACK)
+        window_end = timestamp + BOOKMARK_LOOKAHEAD
+        texts = []
         for index, segment in enumerate(segments):
             if not isinstance(segment, dict):
                 continue
@@ -398,13 +406,23 @@ def resolve_bookmarks(bookmarks: list[dict], segments: list[dict] | None) -> lis
                                 break
                             except (TypeError, ValueError, OverflowError):
                                 pass
-                    end = next_start if next_start is not None else float("inf")
+                    # Without word-level end times, keep the final segment
+                    # alive only for the small trailing-clause allowance. A
+                    # mark in later trailing silence must not resurrect it.
+                    end = next_start if next_start is not None else start + BOOKMARK_LOOKAHEAD
             except (TypeError, ValueError, OverflowError):
                 continue
-            if start <= timestamp <= end:
+            if start <= window_end and end >= window_start:
                 text = str(segment.get("text") or "").strip()
-                break
-        resolved.append({"t": timestamp, "source": bookmark.get("source"), "text": text})
+                if text:
+                    texts.append(text)
+        resolved.append({
+            "t": timestamp,
+            "source": bookmark.get("source"),
+            "text": " ".join(texts),
+            "window_start": window_start,
+            "window_end": window_end,
+        })
     return resolved
 
 
@@ -523,6 +541,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         "summary_ready": False,
         "speaker_map": {},
         "corrections": {},
+        "show_polished": True,
         "correction_tags": {},
     }
 
@@ -775,6 +794,10 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     actions.pack(fill="x", pady=(10, 0))
     transcribe_btn = ttk.Button(actions, text="Transcribe", state="disabled")
     transcribe_btn.pack(side="left")
+    polish_btn = ttk.Button(actions, text="Polish", state="disabled")
+    polish_btn.pack(side="left", padx=(7, 0))
+    toggle_polish_btn = ttk.Button(actions, text="Show raw", state="disabled")
+    toggle_polish_btn.pack(side="left", padx=(7, 0))
     copy_btn = ttk.Button(actions, text="Copy", state="disabled")
     copy_btn.pack(side="left", padx=(7, 0))
     save_btn = ttk.Button(actions, text="Save as .txt", state="disabled")
@@ -1044,11 +1067,17 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             try:
                 transcript_data = _read_json(path / "transcript.json")
                 segments = transcript_data.get("segments") or []
-                segments = apply_corrections(segments, corrections)
+                segments = apply_corrections(
+                    apply_polished(segments, load_polished(path)), corrections
+                )
+                bookmark_windows = resolve_bookmarks(
+                    load_bookmarks(path), segments
+                )
                 for mode in existing:
                     value = summarise(
                         segments, mode, cfg.cleanup_provider, cfg.cleanup_model,
                         session_dir=path, speaker_map=speaker_map,
+                        bookmarks=bookmark_windows,
                     )
                     if not value:
                         raise RuntimeError("the summary provider was not ready")
@@ -1102,8 +1131,9 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             return
         for item in resolved:
             text = item["text"]
+            preview = text[-280:].lstrip() if len(text) > 280 else text
             stamp = format_bookmark_time(item["t"])
-            label = f"{stamp} — {text}" if text else stamp
+            label = f"{stamp} — {preview}" if preview else stamp
             button = tk.Label(highlights_body, text=label, bg=CARD, fg=FG,
                               activeforeground=ACCENT, cursor="hand2", anchor="w",
                               justify="left", wraplength=560, padx=5, pady=4)
@@ -1487,7 +1517,15 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         state["corrections"] = load_corrections(session["path"])
         transcript_data = _read_json(session["path"] / "transcript.json")
         segments = transcript_data.get("segments")
-        body_text = _transcript_text(session["path"])
+        raw_segments = segments if isinstance(segments, list) else []
+        visible_segments = (
+            apply_polished(raw_segments, load_polished(session["path"]))
+            if state["show_polished"] else raw_segments
+        )
+        visible_segments = apply_corrections(visible_segments, state["corrections"])
+        body_text = render_transcript(
+            visible_segments, speaker_map=state["speaker_map"]
+        ) or _transcript_text(session["path"])
         fallback = (
             "Recording in progress. Transcription is available after it stops."
             if session["status"] == "recording"
@@ -1497,10 +1535,16 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         )
         set_transcript(
             body_text or fallback,
-            segments if isinstance(segments, list) else None,
+            visible_segments if isinstance(segments, list) else None,
             placeholder=not bool(body_text),
         )
-        display_highlights(load_bookmarks(session["path"]), segments)
+        display_highlights(load_bookmarks(session["path"]), visible_segments)
+        has_polish = bool(load_polished(session["path"]))
+        toggle_polish_btn.config(
+            state="normal" if has_polish else "disabled",
+            text="Show raw" if state["show_polished"] else "Show polished",
+        )
+        polish_btn.config(state="normal" if body_text and not state["busy"] else "disabled")
         state["summaries"] = read_summaries(session["path"])
         # Point the chooser at a mode that actually HAS a saved summary. The pane
         # only renders summaries[selected_mode], so without this a session
@@ -1673,6 +1717,8 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             )
             for button in (
                 transcribe_btn,
+                polish_btn,
+                toggle_polish_btn,
                 summarise_btn,
                 copy_btn,
                 summary_copy_btn,
@@ -1771,7 +1817,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     def set_busy(busy: bool) -> None:
         state["busy"] = busy
         widget_state = "disabled" if busy else "normal"
-        for button in (transcribe_btn, summarise_btn, delete_btn):
+        for button in (transcribe_btn, polish_btn, toggle_polish_btn, summarise_btn, delete_btn):
             button.config(state=widget_state)
         summary_mode.config(state=widget_state)
 
@@ -1832,6 +1878,43 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
 
         threading.Thread(target=work, daemon=True).start()
 
+    def do_polish() -> None:
+        path = selected_path()
+        if path is None or state["busy"]:
+            return
+        raw = _read_json(path / "transcript.json").get("segments") or []
+        if not isinstance(raw, list) or not raw:
+            return
+        cfg = config.Config.load()
+        set_busy(True)
+        status_label.config(text="Polishing transcript…", fg=MUTED)
+
+        def work() -> None:
+            overlay = polish_segments(raw, cfg.cleanup_provider, cfg.cleanup_model)
+            error = None if overlay is not None else "no provider was ready or the model returned an unsafe result"
+            try:
+                if overlay is not None:
+                    save_polished(path, overlay)
+            except Exception as exc:
+                error = str(exc)
+            try:
+                root.after(0, lambda: (
+                    set_busy(False), refresh(preferred=path),
+                    status_label.config(
+                        text="Polishing complete." if error is None else f"Polishing unavailable: {error}",
+                        fg=GOOD if error is None else ACCENT,
+                    )
+                ))
+            except Exception:
+                pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def toggle_polish() -> None:
+        state["show_polished"] = not state["show_polished"]
+        path = selected_path()
+        if path is not None:
+            select_session(next((i for i, s in enumerate(state["sessions"]) if s["path"] == path), 0))
+
     def do_summarise() -> None:
         path = selected_path()
         if (
@@ -1847,7 +1930,10 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         # Summarise what the user can SEE. Without this the first summary of a
         # meeting is built from the raw transcript, so it quotes the wording the
         # user already corrected. regenerate_summaries does the same for reruns.
-        segments = apply_corrections(segments, load_corrections(path))
+        segments = apply_corrections(
+            apply_polished(segments, load_polished(path)), load_corrections(path)
+        )
+        bookmark_windows = resolve_bookmarks(load_bookmarks(path), segments)
         mode = selected_summary_mode()
         cfg = config.Config.load()
         set_busy(True)
@@ -1894,6 +1980,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
                     cfg.cleanup_model,
                     session_dir=path,
                     speaker_map=load_speaker_map(path),
+                    bookmarks=bookmark_windows,
                 )
             except Exception as exc:
                 back_on_ui(failed, str(exc))
@@ -2007,6 +2094,8 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     next_btn.config(command=lambda: move_match(1))
     transcribe_btn.config(command=do_transcribe)
     summarise_btn.config(command=do_summarise)
+    polish_btn.config(command=do_polish)
+    toggle_polish_btn.config(command=toggle_polish)
     summary_copy_btn.config(command=do_summary_copy)
     summary_mode_var.trace_add("write", display_summary)
     copy_btn.config(command=do_copy)

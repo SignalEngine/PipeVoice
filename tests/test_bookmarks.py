@@ -112,7 +112,7 @@ def test_highlight_resolves_to_production_transcript_segments():
         {"t": 2.0, "speaker": "Them", "text": "The number is 42"},
     ]
     result = resolve_bookmarks([{"t": 2.2, "source": "hotkey"}], segments)
-    assert result[0]["text"] == "The number is 42"
+    assert result[0]["text"] == "Opening The number is 42"
 
 
 
