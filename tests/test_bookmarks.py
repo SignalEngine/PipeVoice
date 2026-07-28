@@ -397,18 +397,36 @@ def test_search_cache_notices_a_correction():
 
 
 def test_filtered_rows_select_the_meeting_that_was_clicked():
-    # The P1: row indexes from a FILTERED list were used against the unfiltered
-    # sessions, so clicking the one search result selected a different meeting —
-    # and Delete would then have removed the wrong recording.
+    # Two P1s lived here, both about mixing up the filtered and unfiltered lists.
+    # None means NO FILTER; [] means FILTERED TO NOTHING. Conflating them with
+    # `visible or sessions` was the second bug: an empty list is falsy, so a
+    # search matching nothing fell back to every meeting and left Delete live on
+    # an unrelated recording.
     sessions = [{"name": "april notes"}, {"name": "postgres migration"}]
-    visible = [sessions[1]]                       # only the search hit is rendered
-    state = {"sessions": sessions, "visible_sessions": visible}
 
-    shown = state.get("visible_sessions") or state["sessions"]
-    assert shown[0]["name"] == "postgres migration"
-    assert shown[0] is not sessions[0], "must not fall back to the unfiltered list"
+    def shown(visible):
+        return sessions if visible is None else visible
 
-    # With no filter active it must still address every session.
-    state["visible_sessions"] = []
-    shown = state.get("visible_sessions") or state["sessions"]
-    assert len(shown) == 2
+    # Filtered to one hit: clicking row 0 must select THAT meeting.
+    assert shown([sessions[1]])[0]["name"] == "postgres migration"
+
+    # Filtered to nothing: there must be NOTHING selectable.
+    assert shown([]) == [], "a zero-result search must not expose any meeting"
+
+    # No filter: every meeting is addressable.
+    assert len(shown(None)) == 2
+
+
+def test_live_durations_pair_with_the_rendered_rows():
+    # Rows are built from the RENDERED list, so zipping the unfiltered one wrote
+    # a live recording's duration into whichever row shared its index.
+    sessions = [{"name": "standup"}, {"name": "postgres"}]
+    visible = [sessions[1]]
+    rows = ["row-for-postgres"]
+
+    rendered = sessions if visible is None else visible
+    paired = list(zip(rendered, rows))
+    assert paired[0][0]["name"] == "postgres"
+    assert list(zip(sessions, rows))[0][0]["name"] == "standup", (
+        "documents the old, wrong pairing"
+    )

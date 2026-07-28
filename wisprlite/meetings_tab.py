@@ -650,7 +650,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         "speaker_map": {},
         "corrections": {},
         "search_cache": {},
-        "visible_sessions": [],
+        "visible_sessions": None,
         "search_hits": {},
         "show_polished": True,
         "correction_tags": {},
@@ -1625,7 +1625,13 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         # rows, so a row index is meaningless against the unfiltered sessions —
         # clicking the one search result selected a different meeting, and
         # Delete would then have removed the wrong recording.
-        shown = state.get("visible_sessions") or state["sessions"]
+        #
+        # NOT `or state["sessions"]`: an empty list is falsy, so a search
+        # matching NOTHING fell back to the full list and Delete stayed live on
+        # an unrelated meeting. None = no filter; [] = filtered to nothing.
+        shown = state["visible_sessions"]
+        if shown is None:
+            shown = state["sessions"]
         if state["busy"] or not 0 <= index < len(shown):
             return
         session = shown[index]
@@ -1885,12 +1891,14 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             visible = [s for s in state["sessions"] if str(s["path"]) in hits]
         else:
             state["search_hits"] = {}
-        state["visible_sessions"] = visible
+        state["visible_sessions"] = visible if query else None
         for index, session in enumerate(visible):
             add_session_row(session, index)
-        if state["search_hits"]:
+        if state["visible_sessions"] is not None:
+            found = len(state["visible_sessions"])
             count_label.config(
-                text=f"{len(state['search_hits'])} of {len(state['sessions'])} match"
+                text=f"{found} of {len(state['sessions'])} match"
+                if found else "no meetings match"
             )
         else:
             count_label.config(
@@ -1899,7 +1907,9 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             )
         if not state["sessions"]:
             state["selected"] = None
-            state["visible_sessions"] = []
+            # None, not []: there is no FILTER here, there are simply no
+            # meetings. [] would read as "filtered to nothing".
+            state["visible_sessions"] = None
             tk.Label(
                 session_rows, text="No meetings recorded yet.", bg=CARD, fg=MUTED,
                 font=("Segoe UI", 9), padx=14, pady=20,
@@ -1961,7 +1971,13 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     def update_live_durations() -> None:
         now = time.time()
         selected_changed = False
-        for session, row_info in zip(state["sessions"], state["rows"]):
+        # Rows were built from the RENDERED list; zipping the unfiltered one
+        # wrote a live recording's duration into whichever row happened to sit
+        # at the same index.
+        rendered = state["visible_sessions"]
+        if rendered is None:
+            rendered = state["sessions"]
+        for session, row_info in zip(rendered, state["rows"]):
             if session["status"] != "recording":
                 continue
             started = session.get("started_timestamp") or now
