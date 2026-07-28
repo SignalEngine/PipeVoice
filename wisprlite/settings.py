@@ -446,6 +446,7 @@ def main(first_run: bool = False) -> None:
     bookmark_hotkey_var = tk.StringVar(value=cfg.bookmark_hotkey)
     bookmark_acoustic_var = tk.BooleanVar(value=cfg.bookmark_acoustic)
     bookmark_sensitivity_var = tk.DoubleVar(value=cfg.bookmark_sensitivity)
+    bookmark_phrases_var = tk.StringVar(value=cfg.bookmark_phrases)
     lang_var = tk.StringVar(value=dict(LANGUAGES).get(cfg.language, LANGUAGES[0][1]))
     devices = _input_devices()
     dev_label = next((lbl for lbl, val in devices if val == cfg.device), devices[0][0])
@@ -613,6 +614,9 @@ def main(first_run: bool = False) -> None:
 
     check(c, "Acoustic double-snap bookmarks", bookmark_acoustic_var,
           "Off by default. The microphone only is listened to for a deliberate double snap.")
+    entry(row(c, "Spoken bookmark phrases",
+              "Comma-separated phrases scanned after transcription; blank disables them."),
+          bookmark_phrases_var, width=34)
     r = row(c, "Snap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
     ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
               orient="horizontal", length=130).pack(side="left")
@@ -901,6 +905,7 @@ def main(first_run: bool = False) -> None:
         cfg.meeting_hotkey = meeting_hotkey_var.get().strip()
         cfg.bookmark_hotkey = bookmark_hotkey_var.get().strip()
         cfg.bookmark_acoustic = bool(bookmark_acoustic_var.get())
+        cfg.bookmark_phrases = bookmark_phrases_var.get().strip()
         try:
             cfg.bookmark_sensitivity = max(0.0, min(1.0, float(bookmark_sensitivity_var.get())))
         except (TypeError, ValueError):

@@ -17,6 +17,7 @@ import threading
 import tempfile
 import time
 import wave
+import re
 from array import array
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +34,81 @@ DEFAULT_RETENTION_SESSIONS = 20
 SPEAKER_MAP_FILE = "speaker_map.json"
 CORRECTIONS_FILE = "corrections.json"
 BOOKMARKS_FILE = "bookmarks.json"
+POLISHED_FILE = "polished.json"
+
+
+def load_polished(session_dir: str | Path) -> dict[int, str]:
+    try:
+        value = json.loads((Path(session_dir) / POLISHED_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for index, text in value.items():
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            continue
+        if index >= 0 and str(text).strip():
+            result[index] = str(text).strip()
+    return result
+
+
+def save_polished(session_dir: str | Path, polished: dict[int, str]) -> None:
+    _write_json(
+        Path(session_dir) / POLISHED_FILE,
+        {str(index): str(text).strip() for index, text in polished.items()
+         if int(index) >= 0 and str(text).strip()},
+    )
+
+
+def apply_polished(segments: list[dict], polished: dict[int, str] | None = None) -> list[dict]:
+    overlay = polished or {}
+    return [
+        {**segment, "text": overlay.get(index, segment.get("text", ""))}
+        for index, segment in enumerate(segments)
+        if isinstance(segment, dict)
+    ]
+DEFAULT_BOOKMARK_PHRASES = "bookmark that, note that, flag that"
+
+
+def bookmarks_from_phrases(transcript, phrases: str = DEFAULT_BOOKMARK_PHRASES) -> list[dict]:
+    """Find spoken bookmark phrases in a completed transcript.
+
+    ``transcript`` is the same object written by :func:`transcribe_session`:
+    ``{"segments": [{"t": ..., "speaker": ..., "text": ...}]}``.  Matching
+    is deliberately word-based, so punctuation and casing in speech-to-text
+    output do not matter, while a longer word cannot trigger a mark.
+    """
+    if isinstance(transcript, dict):
+        segments = transcript.get("segments")
+    else:
+        segments = transcript
+    if not isinstance(segments, list):
+        return []
+    configured = []
+    for phrase in str(phrases or "").split(","):
+        words = re.findall(r"[\w']+", phrase.casefold())
+        if words:
+            configured.append((phrase.strip(), words))
+    found = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        text = str(segment.get("text") or "")
+        text_words = re.findall(r"[\w']+", text.casefold())
+        for label, words in configured:
+            width = len(words)
+            if any(text_words[index:index + width] == words
+                   for index in range(max(0, len(text_words) - width + 1))):
+                try:
+                    timestamp = max(0.0, float(segment.get("t", segment.get("start", 0)) or 0))
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                found.append({"t": timestamp, "source": "phrase", "phrase": label})
+                break
+    return found
 
 
 def load_speaker_map(session_dir: str | Path) -> dict[str, str]:
@@ -360,9 +436,12 @@ def load_bookmarks(session_dir: str | Path) -> list[dict]:
         except (TypeError, ValueError, OverflowError):
             return []
         source = item.get("source")
-        if source not in {"hotkey", "acoustic"}:
+        if source not in {"hotkey", "acoustic", "phrase"}:
             return []
-        clean.append({"t": timestamp, "source": source})
+        entry = {"t": timestamp, "source": source}
+        if source == "phrase" and str(item.get("phrase") or "").strip():
+            entry["phrase"] = str(item["phrase"]).strip()
+        clean.append(entry)
     return clean
 
 
@@ -370,17 +449,29 @@ def save_bookmarks(session_dir: str | Path, bookmarks: list[dict]) -> None:
     """Atomically save sorted bookmarks, collapsing marks within half a second."""
     clean = []
     for item in bookmarks:
-        if not isinstance(item, dict) or item.get("source") not in {"hotkey", "acoustic"}:
+        if not isinstance(item, dict) or item.get("source") not in {"hotkey", "acoustic", "phrase"}:
             continue
         try:
             timestamp = max(0.0, float(item.get("t", 0)))
         except (TypeError, ValueError, OverflowError):
             continue
-        clean.append({"t": timestamp, "source": item["source"]})
+        entry = {"t": timestamp, "source": item["source"]}
+        if item["source"] == "phrase" and str(item.get("phrase") or "").strip():
+            entry["phrase"] = str(item["phrase"]).strip()
+        clean.append(entry)
     clean.sort(key=lambda item: item["t"])
     deduped = []
     for item in clean:
-        if not deduped or item["t"] - deduped[-1]["t"] >= 0.5:
+        duplicate = next(
+            (existing for existing in deduped
+             if (round(existing["t"], 3) == round(item["t"], 3)
+                 and existing["source"] == item["source"])
+             or (item["source"] != "phrase"
+                 and existing["source"] != "phrase"
+                 and item["t"] - existing["t"] < 0.5)),
+            None,
+        )
+        if duplicate is None:
             deduped.append(item)
     _write_json(Path(session_dir) / BOOKMARKS_FILE, deduped)
 
@@ -463,6 +554,11 @@ def transcribe_session(
             "segments": segments,
         }
         _write_json(session_dir / "transcript.json", transcript)
+        # Phrase marks are an overlay on top of all existing user marks.  The
+        # existing file is intentionally read after transcription so a repeat
+        # cannot erase hotkey/acoustic marks or create duplicate phrase marks.
+        phrase_marks = bookmarks_from_phrases(transcript, getattr(cfg, "bookmark_phrases", ""))
+        save_bookmarks(session_dir, load_bookmarks(session_dir) + phrase_marks)
     except Exception as exc:
         meta["status"] = "transcription_failed"
         meta["transcription_error"] = f"{type(exc).__name__}: {exc}"
