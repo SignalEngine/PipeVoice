@@ -378,31 +378,30 @@ def _correction_parts(text: str, corrections: dict[str, str]) -> list[tuple[str,
     }
     if not text or not usable:
         return [(text, False, None)]
+    # Group INDEX identifies the matched key — same reasoning as
+    # typer.apply_replacements, and it must stay identical to it or the widget
+    # underlines a different fix than copy/export/summaries actually apply.
+    keys = sorted(usable, key=len, reverse=True)
     try:
         pattern = re.compile(
-            r"\b(" + "|".join(
-                re.escape(find) for find in sorted(usable, key=len, reverse=True)
-            ) + r")\b",
+            r"\b(?:" + "|".join(f"({re.escape(find)})" for find in keys) + r")\b",
             re.IGNORECASE,
         )
-    except re.error:
+    except (re.error, AssertionError, OverflowError):
         return [(text, False, None)]
     parts = []
     cursor = 0
-    # FIRST wins, matching apply_replacements — the two must agree, or the widget
-    # would underline a different fix than copy/export/summaries actually apply.
-    mapping_ci: dict[str, tuple[str, str]] = {}
-    for find, replacement in usable.items():
-        mapping_ci.setdefault(find.casefold(), (find, replacement))
     for match in pattern.finditer(text):
         if match.start() > cursor:
             parts.append((text[cursor:match.start()], False, None))
-        resolved = mapping_ci.get(match.group(1).casefold())
-        if resolved is None:
-            resolved = (match.group(1), usable.get(match.group(1), match.group(1)))
-        find, replacement = resolved
-        corrected = find in usable
-        parts.append((replacement, corrected, find if corrected else None))
+        find = next(
+            (k for index, k in enumerate(keys, start=1) if match.group(index) is not None),
+            None,
+        )
+        if find is None:
+            parts.append((match.group(0), False, None))
+        else:
+            parts.append((usable[find], True, find))
         cursor = match.end()
     if cursor < len(text):
         parts.append((text[cursor:], False, None))

@@ -42,11 +42,18 @@ def test_replacements_keep_boundaries_and_case_insensitivity():
     )
 
 
-def test_replacements_do_not_raise_on_turkish_casefold_mismatch():
-    assert apply_replacements("I went to Istanbul", {"istanbul": "İstanbul"}) == (
-        "I went to İstanbul"
+def test_turkish_casefold_mismatch_still_replaces():
+    # re.IGNORECASE uses SIMPLE case folding, str.casefold() uses FULL folding,
+    # and they disagree on Turkish dotted/dotless i. Mapping the matched text
+    # back through casefold() raised KeyError; merely guarding that skipped the
+    # replacement instead. origin/main replaced it, so this must too.
+    # NB the expected value must differ from the input, or the assertion passes
+    # whether or not the replacement actually happened.
+    assert apply_replacements("I went to İstanbul", {"istanbul": "Istanbul"}) == (
+        "I went to Istanbul"
     )
-    assert apply_replacements("I went to İstanbul", {"istanbul": "İstanbul"}) == (
+    assert apply_replacements("ısparta", {"isparta": "Isparta"}) == "Isparta"
+    assert apply_replacements("I went to Istanbul", {"istanbul": "İstanbul"}) == (
         "I went to İstanbul"
     )
 
@@ -60,9 +67,11 @@ def test_correction_parts_keep_saved_key_for_case_variant_undo():
     ]
 
 
-def test_correction_parts_fall_back_to_original_on_turkish_casefold_mismatch():
+def test_correction_parts_replaces_across_the_casefold_mismatch():
+    # The widget must resolve the same match apply_replacements does, and mark
+    # it corrected — not silently render the uncorrected original.
     assert _correction_parts("İstanbul", {"istanbul": "Istanbul"}) == [
-        ("İstanbul", False, None)
+        ("Istanbul", True, "istanbul")
     ]
 
 
