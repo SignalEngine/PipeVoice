@@ -29,6 +29,16 @@ class SnapDetector:
         self._pair_start = None      # first snap of a candidate pair
         self._pending_until = None   # decide only once this passes with no further transient
         self.mark_time = None        # audio-clock time of the accepted first snap
+        # Diagnostics for the calibration dialog. These thresholds were set against
+        # synthetic waveforms, and real microphones disagree — laptop voice-isolation
+        # DSP compresses a clap, flattening the very crest factor this keys on. Show
+        # the live numbers so they can be tuned against hardware, not guesswork.
+        self.transients = 0          # sharp events that passed both thresholds
+        self.loudest = 0.0           # loudest peak seen at all
+        self.last_peak = 0.0         # peak of the most recent candidate block
+        self.last_crest = 0.0        # its peak/rms ratio
+        self.need_peak = 0.0         # the peak that block needed to qualify
+        self.need_crest = 0.0        # the crest it needed
 
     def feed(self, block) -> bool:
         """Consume one mono block and return True once for an accepted pair."""
@@ -57,13 +67,34 @@ class SnapDetector:
         else:
             self.baseline += (rms - self.baseline) * 0.01
 
+        # Do NOT widen these without measuring on real hardware. Tried it: taking
+        # ratio to 8-5*s and crest to 5-3*s broke five of nine test signals. A
+        # LOWER peak threshold makes more blocks qualify as transients, and the
+        # isolation rule then rejects the pair for not standing alone — so raising
+        # sensitivity made detection WORSE, and typing began firing. The knob is
+        # not monotonic; treat it as calibrated, and use the diagnostics below to
+        # get real numbers off a real microphone before changing anything.
         ratio = 8.0 - 4.0 * self.sensitivity
         crest = peak / rms if rms > 1e-9 else 0.0
+        need_peak = max(0.02, self.baseline * ratio)
+        need_crest = 5.0 - 1.5 * self.sensitivity
+        if peak > self.loudest:
+            self.loudest = peak
+        # Record any block loud enough to be a candidate, whether or not it
+        # qualified — a clap that fails only on crest looks identical to silence
+        # from the outside, and that is precisely what needs to be visible.
+        if peak >= need_peak * 0.5:
+            self.last_peak = peak
+            self.last_crest = crest
+            self.need_peak = need_peak
+            self.need_crest = need_crest
         transient = (
             now >= self._cooldown_until
-            and peak >= max(0.02, self.baseline * ratio)
-            and crest >= 5.0 - 1.5 * self.sensitivity
+            and peak >= need_peak
+            and crest >= need_crest
         )
+        if transient:
+            self.transients += 1
         if not transient:
             # A pair only counts once nothing else follows it. Anything arriving
             # inside the confirm window means this was a train, not a gesture.

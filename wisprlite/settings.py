@@ -709,6 +709,23 @@ def main(first_run: bool = False) -> None:
                          "muted, and that it is the mic you are speaking into.",
                     fg=WARN,
                 )
+            elif detector.transients:
+                # A pair was not accepted, but sharp events ARE getting through:
+                # say so, or "nothing happened" reads as a dead feature again.
+                result.config(
+                    text=f"{detector.transients} sharp sound(s) heard — "
+                         "clap twice, about a second apart",
+                    fg=WARN,
+                )
+            elif detector.last_peak:
+                # The interesting failure: loud enough, but not sharp enough.
+                # Laptop voice-isolation flattens a clap exactly this way.
+                result.config(
+                    text=f"heard {detector.last_peak:.2f} loud but crest "
+                         f"{detector.last_crest:.1f} (needs {detector.need_crest:.1f}) "
+                         "— raise sensitivity",
+                    fg=WARN,
+                )
             elif shared["blocks"]:
                 result.config(
                     text=f"Listening · {device_label} · peak {shared['peak']:.3f}",
