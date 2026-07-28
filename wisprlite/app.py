@@ -33,6 +33,8 @@ class App:
             device=config.device_arg(self.cfg),
             max_minutes=self.cfg.meeting_max_minutes,
             retention_sessions=self.cfg.meeting_retention_sessions,
+            bookmark_acoustic=self.cfg.bookmark_acoustic,
+            bookmark_sensitivity=self.cfg.bookmark_sensitivity,
             on_auto_stop=self._on_meeting_auto_stop,
         )
         self._meeting_active = False
@@ -68,6 +70,13 @@ class App:
             on_start=self.toggle_meeting,
             on_stop=self.toggle_meeting,
             is_paused=lambda: self.paused and not self._meeting_active,
+        )
+        self.bookmark_hotkeys = HotkeyManager(
+            get_hotkey=lambda: self.cfg.bookmark_hotkey,
+            get_mode=lambda: "ptt",
+            on_start=lambda: self._meeting.mark_bookmark("hotkey"),
+            on_stop=lambda: None,
+            is_paused=lambda: not self._meeting_active,
         )
 
         self._armed_voice = None      # a Voice armed by the picker, consumed by the next utterance
@@ -784,6 +793,7 @@ class App:
         self.hotkeys.stop()
         self.clip_hotkeys.stop()
         self.meeting_hotkeys.stop()
+        self.bookmark_hotkeys.stop()
         for m in self._voice_mgrs:
             m.stop()
         if self._picker_mgr:
@@ -933,6 +943,7 @@ class App:
         self.hotkeys.start()
         self.clip_hotkeys.start()
         self.meeting_hotkeys.start()
+        self.bookmark_hotkeys.start()
         self._start_voice_hotkeys()
         if self.cfg.mcp_enabled:
             self.start_mcp_bridge()

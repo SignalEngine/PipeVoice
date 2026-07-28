@@ -23,6 +23,7 @@ from .history import _copy_to_clipboard
 from .meeting import (
     find_loudest_speaker_window,
     apply_corrections,
+    load_bookmarks,
     load_speaker_map,
     load_corrections,
     meetings_dir,
@@ -159,6 +160,16 @@ def format_duration(seconds: float | int | None) -> str:
     if seconds < 3600:
         return f"{seconds // 60}m {seconds % 60:02d}s"
     return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+
+
+def format_bookmark_time(seconds: float | int | None) -> str:
+    try:
+        value = max(0, int(float(seconds or 0)))
+    except (TypeError, ValueError, OverflowError):
+        value = 0
+    if value >= 3600:
+        return f"{value // 3600}:{(value % 3600) // 60:02d}:{value % 60:02d}"
+    return f"{value // 60}:{value % 60:02d}"
 
 
 def cycle_match_index(current: int, count: int, step: int) -> int:
@@ -359,6 +370,42 @@ def _transcript_text(session_dir: str | Path) -> str:
     if fallback:
         return apply_corrections([{"text": fallback}], load_corrections(session_dir))[0]["text"]
     return fallback
+
+
+def resolve_bookmarks(bookmarks: list[dict], segments: list[dict] | None) -> list[dict]:
+    """Attach the segment containing each timestamp without changing either input."""
+    segments = segments if isinstance(segments, list) else []
+    resolved = []
+    for bookmark in bookmarks or []:
+        try:
+            timestamp = max(0.0, float(bookmark["t"]))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        text = ""
+        for index, segment in enumerate(segments):
+            if not isinstance(segment, dict):
+                continue
+            try:
+                start = float(segment.get("t", segment.get("start", 0)) or 0)
+                if segment.get("end") is not None:
+                    end = float(segment.get("end"))
+                else:
+                    next_start = None
+                    for following in segments[index + 1:]:
+                        if isinstance(following, dict):
+                            try:
+                                next_start = float(following.get("t", following.get("start")))
+                                break
+                            except (TypeError, ValueError, OverflowError):
+                                pass
+                    end = next_start if next_start is not None else float("inf")
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if start <= timestamp <= end:
+                text = str(segment.get("text") or "").strip()
+                break
+        resolved.append({"t": timestamp, "source": bookmark.get("source"), "text": text})
+    return resolved
 
 
 def _has_audio(session_dir: str | Path) -> bool:
@@ -606,6 +653,13 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         state="disabled",
     )
     summarise_btn.pack(side="left", padx=(7, 0))
+
+    highlights_panel = tk.Frame(right, bg=CARD)
+    highlights_title = tk.Label(highlights_panel, text="Highlights", bg=CARD, fg=ACCENT,
+                                font=("Segoe UI", 9, "bold"), anchor="w")
+    highlights_title.pack(fill="x", padx=10, pady=(7, 2))
+    highlights_body = tk.Frame(highlights_panel, bg=CARD)
+    highlights_body.pack(fill="x", padx=10, pady=(0, 7))
 
     summary_panel = tk.Frame(right, bg=CARD)
     summary_head = tk.Frame(summary_panel, bg=CARD)
@@ -1039,6 +1093,32 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         else:
             summary_panel.pack_forget()
 
+    def display_highlights(bookmarks, segments):
+        for child in highlights_body.winfo_children():
+            child.destroy()
+        resolved = resolve_bookmarks(bookmarks, segments)
+        if not resolved:
+            highlights_panel.pack_forget()
+            return
+        for item in resolved:
+            text = item["text"]
+            stamp = format_bookmark_time(item["t"])
+            label = f"{stamp} — {text}" if text else stamp
+            button = tk.Label(highlights_body, text=label, bg=CARD, fg=FG,
+                              activeforeground=ACCENT, cursor="hand2", anchor="w",
+                              justify="left", wraplength=560, padx=5, pady=4)
+            button.pack(fill="x")
+            if text:
+                button.bind("<Button-1>", lambda _event, needle=text: _see_transcript(needle))
+        highlights_panel.pack(fill="x", pady=(0, 8), before=transcript_wrap)
+
+    def _see_transcript(needle):
+        transcript.config(state="normal")
+        found = transcript.search(needle, "1.0", "end")
+        transcript.config(state="disabled")
+        if found:
+            transcript.see(found)
+
     def set_transcript(
         value: str,
         segments: list[dict] | None = None,
@@ -1420,6 +1500,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             segments if isinstance(segments, list) else None,
             placeholder=not bool(body_text),
         )
+        display_highlights(load_bookmarks(session["path"]), segments)
         state["summaries"] = read_summaries(session["path"])
         # Point the chooser at a mode that actually HAS a saved summary. The pane
         # only renders summaries[selected_mode], so without this a session
