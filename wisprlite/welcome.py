@@ -145,8 +145,17 @@ def show_welcome() -> bool:
         root.destroy()
 
     def later():
+        # An explicit choice to skip — honour it.
         result["go"] = False
         root.destroy()
+
+    def dismissed():
+        # Closing the window is NOT a choice to skip setup. Treating it as one
+        # dropped a brand-new user straight to the tray with nothing on screen.
+        result["go"] = True
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", dismissed)
 
     tk.Button(btns, text="I'll set up later", command=later, bg=CARD, fg=FG,
               activebackground="#262a3a", activeforeground=FG, relief="flat",

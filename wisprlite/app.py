@@ -1005,6 +1005,10 @@ def main() -> None:
             from . import autostart, settings, welcome
             autostart.enable()
             config.Config.load()  # write config.json with defaults so we don't re-prompt
+            # show_welcome() returns True unless the user explicitly pressed
+            # "I'll set up later". Closing the window is not a choice to skip —
+            # treating it as one dropped a brand-new user straight to the tray
+            # with nothing on screen, which reads as "it minimised itself".
             if welcome.show_welcome():
                 settings.main(first_run=True)
         except Exception:

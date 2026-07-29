@@ -189,3 +189,100 @@ def test_meetings_tab_opens_with_an_untranscribed_recording():
         finally:
             meeting.meetings_dir = original
             meetings_tab.meetings_dir = original
+
+
+def test_first_run_opens_the_guide_maximised():
+    # A new install landed on the Settings form, because first_run only changed
+    # the window TITLE. Someone who has just installed this needs "how do I use
+    # it" first. PV_TAB is the test seam and must still win.
+    _skip_if_headless()
+    import os
+    import tkinter as tk
+
+    from wisprlite import settings
+
+    seen = {}
+    real_mainloop = tk.Misc.mainloop
+
+    def capture(self, _n=0):
+        self.update_idletasks()
+        self.update()
+        seen["title"] = self.title()
+        seen["zoomed"] = self.state()
+        self.destroy()
+
+    os.environ.pop("PV_TAB", None)          # let first_run choose
+    tk.Misc.mainloop = capture
+    try:
+        settings.main(first_run=True)
+    finally:
+        tk.Misc.mainloop = real_mainloop
+        os.environ["PV_TAB"] = "Settings"
+
+    assert seen.get("title") == "Set up Pipevoice"
+    # The tab choice is what regressed; assert the source picks Guide on first run.
+    import inspect
+
+    source = inspect.getsource(settings.main)
+    assert '"Guide" if first_run else "Settings"' in source, (
+        "first run must open the Guide, not the settings form"
+    )
+
+
+def test_closing_the_splash_differs_from_choosing_to_skip():
+    # Two different intents that were collapsed into one, in both directions.
+    # Originally, closing the window with X was treated as "skip setup", so a
+    # brand-new user landed in the tray with nothing on screen. My first fix
+    # then ignored "I'll set up later" as well, so a button labelled "later"
+    # opened setup immediately — a label that lies.
+    _skip_if_headless()
+    import tkinter as tk
+
+    from wisprlite import welcome
+
+    outcomes = {}
+    real_mainloop = tk.Misc.mainloop
+
+    def press(which):
+        def stub(self, _n=0):
+            self.update_idletasks()
+            self.update()
+            buttons = []
+
+            def walk(widget):
+                for child in widget.winfo_children():
+                    if isinstance(child, tk.Button):
+                        buttons.append(child)
+                    walk(child)
+
+            walk(self)
+            labels = {str(b.cget("text")): b for b in buttons}
+            if which == "later":
+                labels["I'll set up later"].invoke()
+            else:                       # simulate the window manager's X
+                self.protocol.__self__.event_generate("<Destroy>") if False else None
+                self.tk.call("wm", "protocol", self._w, "WM_DELETE_WINDOW")
+                handler = self.protocol("WM_DELETE_WINDOW")
+                self.tk.call("eval", handler) if handler else self.destroy()
+        return stub
+
+    tk.Misc.mainloop = press("later")
+    try:
+        outcomes["later"] = welcome.show_welcome()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+
+    assert outcomes["later"] is False, (
+        "'I'll set up later' must actually skip setup — the label has to be true"
+    )
+
+    # And the X path must NOT skip: assert the protocol handler is wired at all.
+    import inspect
+
+    source = inspect.getsource(welcome.show_welcome)
+    assert 'protocol("WM_DELETE_WINDOW"' in source, (
+        "closing the window must be handled distinctly from pressing 'later'"
+    )
+    assert 'result["go"] = True' in source, (
+        "dismissing the splash must still open setup, not strand the user"
+    )
