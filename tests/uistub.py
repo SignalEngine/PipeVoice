@@ -111,3 +111,56 @@ def build_window(module_main, tab: str = "Settings"):
     finally:
         tk.Misc.mainloop = real_mainloop
     return captured
+
+
+def make_untranscribed_meeting(base) -> None:
+    """A recording that still NEEDS transcribing — audio present, no transcript.
+
+    This is the state the app crashed in: can_transcribe is True, so the
+    "not been transcribed yet" banner is packed, and it was packed relative to
+    the highlights panel, which is unpacked when a meeting has no bookmarks.
+    Fixtures that were already transcribed never reached that line, which is
+    exactly why a green smoke suite shipped a launch crash.
+    """
+    import json
+    import wave
+
+    folder = base / "meeting-20260722-120000"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "meta.json").write_text(json.dumps({
+        "started_at": "2026-07-22T12:00:00",
+        "stopped_at": "2026-07-22T12:05:00",
+    }), encoding="utf-8")
+    # _has_audio wants a real wav over 44 bytes, so write one.
+    with wave.open(str(folder / "mic.wav"), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(16_000)
+        out.writeframes(b"\x00\x00" * 800)
+
+
+def make_meeting_fixtures(base, count: int = 2, with_bookmarks: bool = False) -> None:
+    """Write real meeting folders so the Meetings tab renders a SELECTED session.
+
+    Without these the tab short-circuits on "no meetings" and never reaches the
+    code that packs the transcribe / bleed / highlights panels — which is how a
+    TclError that crashed the app on launch passed a green smoke suite.
+    """
+    import json
+
+    for index in range(count):
+        folder = base / f"meeting-2026072{index}-120000"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "meta.json").write_text(json.dumps({
+            "started_at": f"2026-07-2{index}T12:00:00",
+            "stopped_at": f"2026-07-2{index}T12:05:00",
+            "transcription_backend": "deepgram",
+        }), encoding="utf-8")
+        (folder / "transcript.json").write_text(json.dumps({"segments": [
+            {"speaker": "You", "text": "we should ship the pricing change", "t": 0.0},
+            {"speaker": "Them", "text": "agreed, Friday works", "t": 6.0},
+        ]}), encoding="utf-8")
+        if with_bookmarks:
+            (folder / "bookmarks.json").write_text(
+                json.dumps([{"t": 6.0, "source": "hotkey"}]), encoding="utf-8"
+            )

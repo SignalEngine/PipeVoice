@@ -1752,7 +1752,13 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         transcribe_btn.config(state="normal" if can_transcribe else "disabled")
         transcribe_cta.config(state="normal" if can_transcribe else "disabled")
         if session["can_transcribe"]:
-            needs_transcribe.pack(fill="x", pady=(0, 8), before=highlights_panel)
+            # before=transcript_wrap, NOT before=highlights_panel: that panel is
+            # pack_forget() whenever a meeting has no bookmarks, and packing
+            # relative to an UNPACKED widget raises TclError — which killed the
+            # settings window on open for anyone with a recording still waiting
+            # to be transcribed. transcript_wrap is always packed, and packing
+            # these in sequence before it keeps the order.
+            needs_transcribe.pack(fill="x", pady=(0, 8), before=transcript_wrap)
         else:
             needs_transcribe.pack_forget()
 
@@ -1763,7 +1769,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
                      "appear twice, once from each side. Nothing has been removed. "
                      "Wearing headphones prevents it on the next recording."
             )
-            bleed_banner.pack(fill="x", pady=(0, 8), before=highlights_panel)
+            bleed_banner.pack(fill="x", pady=(0, 8), before=transcript_wrap)
         else:
             bleed_banner.pack_forget()
         copy_btn.config(state="normal" if body_text else "disabled")

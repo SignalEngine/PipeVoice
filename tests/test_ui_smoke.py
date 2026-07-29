@@ -157,3 +157,35 @@ def test_toggling_all_meetings_search_does_not_raise():
         assert not errors, f"toggling cross-meeting search raised: {errors}"
     finally:
         tk.Tk.report_callback_exception = real_report
+
+
+def test_meetings_tab_opens_with_an_untranscribed_recording():
+    # v2.32.0 crashed the settings window on open with
+    #   TclError: window "...!frame5" isn't packed
+    # whenever a meeting still needed transcribing AND had no bookmarks: the
+    # banner was packed relative to the highlights panel, which is pack_forget()
+    # in exactly that case. Machine-independent and fully deterministic — it just
+    # needs that state, which is why some installs were fine.
+    _skip_if_headless()
+    import tempfile
+
+    from uistub import make_untranscribed_meeting
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp) / "meetings"
+        base.mkdir(parents=True)
+        make_untranscribed_meeting(base)
+
+        from wisprlite import meeting, meetings_tab, settings
+
+        original = meeting.meetings_dir
+        meeting.meetings_dir = lambda: base
+        meetings_tab.meetings_dir = lambda: base
+        try:
+            result = build_window(settings.main, tab="Meetings")
+            assert result["error"] is None, (
+                f"the settings window failed to open: {result['error']}"
+            )
+        finally:
+            meeting.meetings_dir = original
+            meetings_tab.meetings_dir = original
