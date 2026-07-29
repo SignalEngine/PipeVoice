@@ -152,3 +152,59 @@ def rolling_transcript(chunks: list[str], *, max_words: int = 4000) -> str:
     joined = " ".join(str(c or "").strip() for c in chunks if str(c or "").strip())
     words = joined.split()
     return " ".join(words[-max_words:])
+
+
+# --- feeding two live streams down ONE socket --------------------------------
+#
+# Deepgram accepts multichannel audio and reports which channel each phrase came
+# from. Interleaving the microphone as channel 0 and the desktop capture as
+# channel 1 therefore gives BOTH sides of the call, WITH attribution, over a
+# single connection — better than summing them (which would lose who spoke) and
+# cheaper than opening two sockets.
+#
+# The two capture threads deliver blocks independently and never in lockstep, so
+# a buffer holds whatever has arrived and only emits frames where BOTH sides are
+# present. Emitting early would slide one channel against the other for the rest
+# of the meeting.
+
+class StreamInterleaver:
+    """Pair mono blocks from two sources into interleaved stereo frames."""
+
+    def __init__(self, *, max_pending_frames: int = 16_000):
+        self._pending = {"mic": bytearray(), "desktop": bytearray()}
+        self.max_pending_bytes = int(max_pending_frames) * 2   # int16
+
+    def add(self, label: str, pcm: bytes) -> bytes:
+        """Add mono PCM for one side; return whatever stereo is now complete."""
+        if label not in self._pending:
+            return b""
+        buf = self._pending[label]
+        buf.extend(pcm)
+        # A stream that stops (device drop, or a solo meeting with no far end)
+        # must not grow the other buffer without bound.
+        if len(buf) > self.max_pending_bytes:
+            del buf[: len(buf) - self.max_pending_bytes]
+
+        mic, desktop = self._pending["mic"], self._pending["desktop"]
+        ready = min(len(mic), len(desktop)) // 2 * 2      # whole int16 samples
+        if ready <= 0:
+            return b""
+        out = bytearray(ready * 2)
+        out[0::4] = mic[0:ready:2]
+        out[1::4] = mic[1:ready:2]
+        out[2::4] = desktop[0:ready:2]
+        out[3::4] = desktop[1:ready:2]
+        del mic[:ready]
+        del desktop[:ready]
+        return bytes(out)
+
+    def pending_bytes(self) -> int:
+        return sum(len(b) for b in self._pending.values())
+
+
+def channel_speaker(channel: object) -> str:
+    """Map a Deepgram channel index to a speaker label. Channel 0 is the mic."""
+    try:
+        return "You" if int(channel) == 0 else "Them"
+    except (TypeError, ValueError):
+        return "Them"

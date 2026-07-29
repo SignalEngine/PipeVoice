@@ -112,3 +112,48 @@ def test_a_tip_is_found_whatever_the_model_wraps_it_in():
     for reply in cases:
         tip, _because = focus.parse_tip(reply)
         assert tip == "Two decisions were deferred again.", f"failed on {reply[:40]!r}"
+
+
+def test_interleaving_keeps_both_sides_aligned():
+    # Deepgram reports which channel a phrase came from, so interleaving mic as
+    # channel 0 and desktop as channel 1 gives both sides WITH attribution over
+    # one socket — better than summing (which loses who spoke) and cheaper than
+    # two connections.
+    import struct
+
+    interleaver = focus.StreamInterleaver()
+    mic = struct.pack("<4h", 100, 101, 102, 103)
+    desktop = struct.pack("<4h", 200, 201, 202, 203)
+
+    # One side alone must emit NOTHING; emitting early would slide the channels
+    # against each other for the rest of the meeting.
+    assert interleaver.add("mic", mic) == b""
+    out = interleaver.add("desktop", desktop)
+    assert struct.unpack("<8h", out) == (100, 200, 101, 201, 102, 202, 103, 203)
+
+
+def test_interleaver_emits_only_what_both_sides_cover():
+    import struct
+
+    interleaver = focus.StreamInterleaver()
+    interleaver.add("mic", struct.pack("<4h", 1, 2, 3, 4))
+    out = interleaver.add("desktop", struct.pack("<2h", 9, 9))
+    assert struct.unpack("<4h", out) == (1, 9, 2, 9), "only the covered part"
+    # The rest of the mic audio is still held, not discarded.
+    out2 = interleaver.add("desktop", struct.pack("<2h", 8, 8))
+    assert struct.unpack("<4h", out2) == (3, 8, 4, 8)
+
+
+def test_one_silent_stream_cannot_grow_memory_forever():
+    # A solo meeting, or a device that drops, must not accumulate the other
+    # side's audio for the whole call.
+    interleaver = focus.StreamInterleaver(max_pending_frames=100)
+    for _ in range(500):
+        interleaver.add("mic", b"\x00\x00" * 100)
+    assert interleaver.pending_bytes() <= 100 * 2 + 2
+
+
+def test_channel_zero_is_you():
+    assert focus.channel_speaker(0) == "You"
+    assert focus.channel_speaker(1) == "Them"
+    assert focus.channel_speaker(None) == "Them"
