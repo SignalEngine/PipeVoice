@@ -679,7 +679,7 @@ def _wheel_global(widget) -> None:
     widget.bind("<Leave>", lambda _event: widget.unbind_all("<MouseWheel>"))
 
 
-def build(container, root, wheel=None, on_replacements_changed=None) -> None:
+def build(container, root, wheel=None, on_replacements_changed=None, show_tab=None) -> None:
     """Populate ``container`` with the reusable Meetings browser."""
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
@@ -733,6 +733,31 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     ).pack(side="left")
     count_label = tk.Label(head, text="", bg=BG, fg=MUTED, font=("Segoe UI", 9))
     count_label.pack(side="left", padx=(10, 0))
+
+    # A way out to the full instructions. Opening this tab for the first time
+    # showed a list of dates and six grey buttons with no explanation of what
+    # any of it did.
+    guide_link = tk.Label(head, text="How this works  \u2197", bg=BG, fg=ACCENT,
+                          cursor="hand2", font=("Segoe UI", 9, "underline"))
+    guide_link.pack(side="right")
+    tooltip(guide_link, "Open the Guide for the full walkthrough: recording both "
+                              "sides, naming speakers, bookmarks, summaries and export.")
+
+    def _open_guide(_event=None) -> None:
+        if callable(show_tab):
+            show_tab("Guide")
+
+    guide_link.bind("<Button-1>", _open_guide)
+
+    intro = tk.Label(
+        container,
+        text="Press your meeting hotkey to record a call \u2014 your microphone and the "
+             "computer's audio are captured separately, so nobody gets mixed up. Then "
+             "transcribe it, name the speakers, and turn it into notes.",
+        bg=BG, fg=MUTED, anchor="w", justify="left", wraplength=900,
+        font=("Segoe UI", 9), padx=18,
+    )
+    intro.pack(fill="x", pady=(0, 10))
 
     # pady must be a SINGLE distance on a widget constructor — a (0, 12) tuple is
     # only valid on pack()/grid() and raises TclError: bad screen distance "0 12",
@@ -2542,6 +2567,34 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     search_entry.bind("<Return>", lambda _event: move_match(1))
     prev_btn.config(command=lambda: move_match(-1))
     next_btn.config(command=lambda: move_match(1))
+    # Six grey buttons with no labels beyond one word each. Say what they do.
+    for _widget, _tip in (
+        (transcribe_btn, "Turn this recording into text. Deepgram is fast and separates the "
+                         "remote speakers; Local Whisper works offline but labels everyone "
+                         "the same."),
+        (transcribe_cta, "Turn this recording into text \u2014 nothing else here works until "
+                         "you do."),
+        (polish_btn, "Strip \u201cum\u201d, \u201cuh\u201d and false starts and fix "
+                     "punctuation. It never rewords anyone, and the raw transcript stays one "
+                     "click away."),
+        (toggle_polish_btn, "Switch between the tidied wording and exactly what was said. "
+                            "Copy and Save follow whichever you are viewing."),
+        (summarise_btn, "Bullet points, to-dos, or actions with an owner and a deadline. "
+                        "Moments you bookmarked get priority."),
+        (export_btn, "Write this meeting out as Markdown, a web page you can print to PDF, "
+                     "or slides \u2014 with highlights, notes and named speakers."),
+        (copy_btn, "Copy the transcript you are currently viewing to the clipboard."),
+        (save_btn, "Save the transcript you are currently viewing as a .txt file."),
+        (folder_btn, "Open the folder holding this recording's audio and transcript."),
+        (delete_btn, "Delete this recording and everything derived from it. Cannot be undone."),
+        (search_all_check, "Search every recording instead of just this one. Matching meetings "
+                           "are listed with a snippet of where your word came up."),
+    ):
+        try:
+            tooltip(_widget, _tip)
+        except Exception:
+            pass
+
     transcribe_btn.config(command=do_transcribe)
     transcribe_cta.config(command=do_transcribe)
     summarise_btn.config(command=do_summarise)

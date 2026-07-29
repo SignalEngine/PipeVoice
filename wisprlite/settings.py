@@ -108,42 +108,99 @@ def _build_guide(parent, wheel) -> None:
     gc.pack(side="left", fill="both", expand=True)
     g = tk.Frame(gc, bg=BG)
     _g_window = gc.create_window((0, 0), window=g, anchor="nw")
-    winui.fit_scroll_body(gc, _g_window)
+    # A reading column, not the full window: prose at 1080px is unpleasant to
+    # read and left the cards mostly empty beside text wrapped at 640.
+    winui.fit_scroll_body(gc, _g_window, max_width=740)
     g.bind("<Configure>", lambda e: gc.configure(scrollregion=gc.bbox("all")))
     wheel(gc)
 
-    def head(t, top=16):
-        tk.Label(g, text=t, bg=BG, fg=ACCENT, font=("Segoe UI", 10, "bold"),
-                 anchor="w", justify="left").pack(fill="x", padx=22, pady=(top, 5))
+    # The old guide wrapped every line at 470px inside a 1080px column, so the
+    # text hugged the left with dead space beside it, and headings were barely
+    # larger than body text — one undifferentiated wall to scroll through.
+    WRAP = 640
+    _anchors: dict[str, tk.Widget] = {}
 
-    def body(t):
-        tk.Label(g, text=t, bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w",
-                 justify="left", wraplength=470).pack(fill="x", padx=22, pady=(0, 2))
+    def head(t, top=26, key=None):
+        """A section heading: large, spaced, and with a rule under it."""
+        holder = tk.Frame(g, bg=BG)
+        holder.pack(fill="x", padx=26, pady=(top, 0))
+        tk.Label(holder, text=t, bg=BG, fg=FG, font=("Segoe UI", 13, "bold"),
+                 anchor="w", justify="left").pack(fill="x")
+        tk.Frame(holder, bg=ACCENT, height=2, width=44).pack(anchor="w", pady=(5, 0))
+        tk.Frame(g, bg=BG, height=9).pack(fill="x")
+        if key:
+            _anchors[key] = holder
+
+    def body(t, gap=(0, 8)):
+        tk.Label(g, text=t, bg=BG, fg=MUTED, font=("Segoe UI", 10), anchor="w",
+                 justify="left", wraplength=WRAP).pack(fill="x", padx=26, pady=gap)
 
     def item(name, t, badge=None, badge_color=GOOD):
-        row = tk.Frame(g, bg=BG)
-        row.pack(fill="x", padx=22, pady=(7, 0))
-        tk.Label(row, text=name, bg=BG, fg=FG,
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
+        card = tk.Frame(g, bg=CARD)
+        card.pack(fill="x", padx=26, pady=(0, 7))
+        inner = tk.Frame(card, bg=CARD, padx=14, pady=11)
+        inner.pack(fill="x")
+        row = tk.Frame(inner, bg=CARD)
+        row.pack(fill="x")
+        tk.Label(row, text=name, bg=CARD, fg=FG,
+                 font=("Segoe UI", 10, "bold")).pack(side="left")
         if badge:
             tk.Label(row, text=f" {badge} ", bg=badge_color, fg="#10131a",
-                     font=("Segoe UI", 7, "bold")).pack(side="left", padx=(8, 0))
-        tk.Label(g, text=t, bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w",
-                 justify="left", wraplength=470).pack(fill="x", padx=22)
+                     font=("Segoe UI", 7, "bold")).pack(side="left", padx=(9, 0))
+        tk.Label(inner, text=t, bg=CARD, fg=MUTED, font=("Segoe UI", 10), anchor="w",
+                 justify="left", wraplength=WRAP - 30).pack(fill="x", pady=(5, 0))
 
     def link(text, key):
         lk = tk.Label(g, text=text, bg=BG, fg=ACCENT, cursor="hand2",
-                      font=("Segoe UI", 9, "underline"), anchor="w")
-        lk.pack(anchor="w", padx=22, pady=(3, 0))
+                      font=("Segoe UI", 10, "underline"), anchor="w")
+        lk.pack(anchor="w", padx=26, pady=(3, 0))
         lk.bind("<Button-1>", lambda e: webbrowser.open(_URLS[key]))
 
-    head("How it works", top=14)
+    def contents(entries):
+        """Jump links. The guide is long; scrolling blind through it is the
+        reason it read as a wall."""
+        wrap = tk.Frame(g, bg=CARD)
+        wrap.pack(fill="x", padx=26, pady=(18, 4))
+        inner = tk.Frame(wrap, bg=CARD, padx=14, pady=12)
+        inner.pack(fill="x")
+        tk.Label(inner, text="ON THIS PAGE", bg=CARD, fg=MUTED,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 7))
+        strip = tk.Frame(inner, bg=CARD)
+        strip.pack(fill="x")
+        for label, key in entries:
+            chip = tk.Label(strip, text=label, bg=BG, fg=FG, cursor="hand2",
+                            font=("Segoe UI", 9), padx=10, pady=4)
+            chip.pack(side="left", padx=(0, 7), pady=2)
+
+            def jump(_event, k=key):
+                target = _anchors.get(k)
+                if target is None:
+                    return
+                gc.update_idletasks()
+                top = target.winfo_y()
+                total = max(1, g.winfo_height())
+                gc.yview_moveto(max(0.0, (top - 20) / total))
+
+            chip.bind("<Button-1>", jump)
+            chip.bind("<Enter>", lambda e, c=chip: c.config(bg=winui.PALETTE["row_hover"]))
+            chip.bind("<Leave>", lambda e, c=chip: c.config(bg=BG))
+
+    contents([
+        ("How it works", "how"),
+        ("Engines", "engines"),
+        ("Polish", "polish"),
+        ("Meetings", "meetings"),
+        ("After a meeting", "after"),
+        ("Make it yours", "yours"),
+        ("Help", "help"),
+    ])
+    head("How it works", top=14, key="how")
     body("Hold your hotkey, talk, then release — your words type in wherever the cursor is: "
          "editor, browser, terminal, anywhere. Default hotkey is Ctrl + \\.")
     body("The second (clipboard) hotkey copies what you say instead of typing it — handy for "
          "pasting feedback into another window.")
 
-    head("Pick your engine — speed lives here")
+    head("Pick your engine — speed lives here", key="engines")
     body("Transcription is the slow part; polish is fast. The engine you choose is the single "
          "biggest factor in how snappy Pipevoice feels.")
     item("Gemini", "Genuinely free — no credit card. One Gemini key transcribes AND powers AI "
@@ -164,7 +221,7 @@ def _build_guide(parent, wheel) -> None:
     link("Get a free Groq key  ↗", "groq")
     link("Get a Deepgram key ($200 free)  ↗", "deepgram")
 
-    head("Polish (Flow mode) — optional")
+    head("Polish (Flow mode) — optional", key="polish")
     body("Cleans up filler words, punctuation and casing after transcription. It is fast — the wait "
          "you feel is transcription, not polish. Turn it on under Transcription.")
     item("Google Gemini", "Free tier, and most people already have a Google account. The easiest "
@@ -177,7 +234,7 @@ def _build_guide(parent, wheel) -> None:
     link("Get an OpenRouter key  ↗", "openrouter")
     link("Install Ollama  ↗", "ollama")
 
-    head("Record a meeting")
+    head("Record a meeting", key="meetings")
     body("Pipevoice can record a whole call — both sides — and turn it into a transcript, "
          "then into notes and action items. Nothing is uploaded unless you choose a cloud "
          "engine; the recordings stay on your machine.")
@@ -233,7 +290,30 @@ def _build_guide(parent, wheel) -> None:
          "Spotify ends up in the transcript alongside the meeting. Pause it first.")
     body("• Recording other people may need their consent where you live. Ask first.")
 
-    head("Make it yours")
+    head("After the meeting", key="after")
+    item("See who did the talking", "Above the transcript: each person's share of the "
+         "conversation, how many turns they took, how many questions they asked, and the "
+         "longest stretch nobody interrupted. Worked out from the transcript on your PC — "
+         "no key, no internet, no cost.", badge="FREE", badge_color=GOOD)
+    item("Search every meeting at once", "Tick \u201cAll meetings\u201d beside the search box "
+         "and the list narrows to recordings containing your word, with a snippet of where it "
+         "came up. It searches what you SEE, so a name you have corrected is found by its "
+         "corrected spelling.")
+    item("Send it somewhere", "Export writes the meeting as Markdown, a self-contained web "
+         "page you can print straight to PDF from any browser, or slides. Highlights, notes "
+         "and named speakers all come with it.")
+    item("PipeFocus \u2014 a nudge when a call drifts",
+         "Optional and off by default. It watches the conversation live and speaks up only "
+         "when something concrete is going wrong: an action item nobody has taken, a decision "
+         "deferred again. At most one nudge every few minutes, and silent when nothing is "
+         "wrong. Needs Deepgram, because it is the only engine that transcribes live, and "
+         "costs roughly 30 cents an hour of meeting while it runs.",
+         badge="DEEPGRAM ONLY", badge_color=WARN)
+    body("Nothing here is automatic except the transcript itself \u2014 summaries, polish and "
+         "exports all happen when you press the button, so a meeting you never open costs you "
+         "nothing.")
+
+    head("Make it yours", key="yours")
     body("• Accent / language (under Audio): pick yours for a real accuracy boost — UK, US, Indian, "
          "Australian, or Russian-accented English, and more.")
     body("• Speech notes: describe your accent, stutter or filler habits. The AI polish uses it to "
@@ -241,7 +321,7 @@ def _build_guide(parent, wheel) -> None:
     body("• Vocabulary: add names and jargon so they're always spelled right.")
     body("• Word fixes: wrong=right pairs, applied last so they always win.")
 
-    head("Need a hand?")
+    head("Need a hand?", key="help")
     link("Pipevoice on GitHub — docs, issues, source  ↗", "github")
     tk.Label(g, text="", bg=BG).pack(pady=6)  # bottom breathing room
 
@@ -414,6 +494,7 @@ def main(first_run: bool = False) -> None:
     meetings_tab.build(
         tab_meetings, root, _wheel,
         on_replacements_changed=sync_meeting_replacements,
+        show_tab=_show_tab,
     )
     _build_guide(tab_guide, _wheel)
     about.build(tab_about, root, _wheel)
@@ -441,6 +522,8 @@ def main(first_run: bool = False) -> None:
             tk.Frame(c, bg=DIV, height=1).pack(fill="x")
         c._first = False
 
+    _pending_tips: list = []
+
     def row(c, text, desc=None):
         _divide(c)
         r = tk.Frame(c, bg=CARD, padx=18, pady=13)
@@ -453,12 +536,20 @@ def main(first_run: bool = False) -> None:
         if desc:
             tk.Label(left, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 8),
                      wraplength=330, justify="left").pack(anchor="w", pady=(2, 0))
+            # The inline description wraps at 330px and gets clipped on a narrow
+            # row; the tooltip carries the whole thing, and follows the control
+            # so hovering the thing you are about to change explains it.
+            winui.tooltip(r, desc)
+            winui.tooltip(left, desc)
+            _pending_tips.append((right, desc))
         return right
 
     def stack(c, text, desc=None):
         _divide(c)
         r = tk.Frame(c, bg=CARD, padx=18, pady=13)
         r.pack(fill="x")
+        if desc:
+            winui.tooltip(r, desc)
         tk.Label(r, text=text, bg=CARD, fg=FG, font=("Segoe UI", 10)).pack(anchor="w")
         if desc:
             tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 8),
@@ -471,7 +562,11 @@ def main(first_run: bool = False) -> None:
         _divide(c)
         r = tk.Frame(c, bg=CARD, padx=18, pady=12)
         r.pack(fill="x")
-        ttk.Checkbutton(r, text=text, variable=var, style="Card.TCheckbutton").pack(anchor="w")
+        box = ttk.Checkbutton(r, text=text, variable=var, style="Card.TCheckbutton")
+        box.pack(anchor="w")
+        if desc:
+            winui.tooltip(r, desc)
+            winui.tooltip(box, desc)
         if desc:
             tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 8),
                      wraplength=470, justify="left").pack(anchor="w", padx=(25, 0), pady=(3, 0))
@@ -568,14 +663,23 @@ def main(first_run: bool = False) -> None:
             value=dict(voice_opts).get((_e.get("voice") if isinstance(_e, dict) else ""), "(none)")))
     picker_var = tk.StringVar(value=cfg.voice_picker_hotkey)
 
+    def _inherit_tip(widget, parent):
+        """Give a control the same explanation as the row it was created in."""
+        for holder, desc in _pending_tips:
+            if holder is parent:
+                winui.tooltip(widget, desc)
+                return
+
     def combo(parent, var, options, width=22):
         c = ttk.Combobox(parent, textvariable=var, values=options, state="readonly", width=width)
         c.pack(side="left")
+        _inherit_tip(c, parent)
         return c
 
     def entry(parent, var, width=22, show=None):
         e = ttk.Entry(parent, textvariable=var, width=width, show=(show or ""))
         e.pack(side="left")
+        _inherit_tip(e, parent)
         return e
 
     # --- General ---
