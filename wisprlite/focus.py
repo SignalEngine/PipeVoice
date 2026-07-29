@@ -203,7 +203,15 @@ class StreamInterleaver:
 
 
 def channel_speaker(channel: object) -> str:
-    """Map a Deepgram channel index to a speaker label. Channel 0 is the mic."""
+    """Speaker label for a live chunk, when the stream carries one.
+
+    PipeFocus sends stereo but asks Deepgram NOT to treat it as multichannel,
+    because multichannel bills per channel — double the cost for labels this
+    feature hardly uses. So `channel` is normally None and the live buffer is
+    unattributed; the recorded transcript still has full attribution.
+    """
+    if channel is None:
+        return "-"
     try:
         return "You" if int(channel) == 0 else "Them"
     except (TypeError, ValueError):

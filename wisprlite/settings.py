@@ -670,7 +670,7 @@ def main(first_run: bool = False) -> None:
           "Microphone only — nothing on the call can trigger it. Prefer the spoken\n"
           "phrase above, which is speech and so survives that filtering.")
     check(c, "PipeFocus \u2014 quiet nudges during a meeting", pipefocus_var,
-          "Off by default. Watches the conversation live and speaks up only when something\nconcrete is drifting \u2014 an action item with nobody on it, a decision deferred again.\nAt most one nudge every few minutes, and it stays quiet when nothing is wrong.\nNeeds Deepgram, because it is the only engine that transcribes live; it simply\ndoes not run on the others. Uses your transcription and AI-polish keys while a\nmeeting records.")
+          "Off by default. Watches the conversation live and speaks up only when something\nconcrete is drifting \u2014 an action item with nobody on it, a decision deferred again.\nAt most one nudge every few minutes, and it stays quiet when nothing is wrong.\nNeeds Deepgram, because it is the only engine that transcribes live; it simply\ndoes not run on the others. Uses your transcription and AI-polish keys while a\nmeeting records. Roughly 30 cents an hour of meeting on Deepgram's standard rate.")
     r = row(c, "Clap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
     _sens_scale = ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
                             orient="horizontal", length=130)

@@ -165,19 +165,26 @@ def focus_stream(cfg, on_text):
             alt = result.channel.alternatives[0]
             text = (alt.transcript or "").strip()
             if text:
-                on_text(text, getattr(result, "channel_index", [1])[0])
+                # Downmixed to mono, so there is no meaningful channel to report.
+                on_text(text, None)
         except Exception:
             pass                            # a bad frame must not kill the stream
 
     conn.on(LiveTranscriptionEvents.Transcript, on_transcript)
 
+    # Stereo IN, but multichannel OFF. Deepgram downmixes to mono itself and
+    # bills it as ONE channel; multichannel=True bills PER CHANNEL, so a
+    # 10-minute stereo call would count as 20 minutes — double the price for
+    # per-speaker labels this feature barely uses. Judging whether a meeting is
+    # drifting is about content, and the recorded transcript still carries full
+    # attribution afterwards. $0.29/hour instead of $0.58.
     opts = dict(
         model=getattr(cfg, "deepgram_model", "") or "nova-3",
         language=getattr(cfg, "language", "") or "en-US",
         encoding="linear16",
         sample_rate=16_000,
         channels=2,
-        multichannel=True,
+        multichannel=False,
         interim_results=False,
         smart_format=True,
         punctuate=True,
@@ -185,8 +192,7 @@ def focus_stream(cfg, on_text):
     try:
         options = LiveOptions(**opts)
     except TypeError:
-        opts.pop("multichannel", None)      # older SDKs: fall back to one channel
-        opts["channels"] = 1
+        opts.pop("multichannel", None)      # older SDKs simply lack the flag
         options = LiveOptions(**opts)
     if not conn.start(options):
         raise RuntimeError("Deepgram focus connection failed to start")

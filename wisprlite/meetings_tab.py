@@ -39,6 +39,7 @@ from .meeting import (
     transcribe_session,
     write_wav_window,
 )
+from .stats import render_stats
 from .summarise import (
     provider_ready,
     read_summaries,
@@ -885,6 +886,15 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     highlights_title.pack(fill="x", padx=10, pady=(7, 2))
     highlights_body = tk.Frame(highlights_panel, bg=CARD)
     highlights_body.pack(fill="x", padx=10, pady=(0, 7))
+
+    # Who-spoke figures. Computed from the transcript already on disk — no LLM,
+    # no key, no cost — so it works for offline users exactly as for everyone
+    # else, and appears whether or not a summary has been generated.
+    stats_panel = tk.Frame(right, bg=CARD)
+    stats_text = tk.Label(stats_panel, text="", bg=CARD, fg=FG, anchor="w",
+                          justify="left", padx=14, pady=10,
+                          font=("Consolas", 9))
+    stats_text.pack(fill="x")
 
     summary_panel = tk.Frame(right, bg=CARD)
     summary_head = tk.Frame(summary_panel, bg=CARD)
@@ -1812,6 +1822,13 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         else:
             needs_transcribe.pack_forget()
 
+        who_spoke = render_stats(raw_segments) if raw_segments else ""
+        if who_spoke:
+            stats_text.config(text=who_spoke)
+            stats_panel.pack(fill="x", pady=(0, 8), before=transcript_wrap)
+        else:
+            stats_panel.pack_forget()
+
         doubled = count_speaker_bleed(raw_segments) if raw_segments else 0
         if doubled >= 2:
             bleed_label.config(
@@ -2040,6 +2057,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             needs_transcribe.pack_forget()
             bleed_banner.pack_forget()
             highlights_panel.pack_forget()
+            stats_panel.pack_forget()
             return
         # Resolve against the RENDERED list. Computing this over all sessions and
         # then indexing the filtered one left a hidden meeting selected while a

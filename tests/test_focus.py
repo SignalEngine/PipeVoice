@@ -162,10 +162,26 @@ def test_one_silent_stream_cannot_grow_memory_forever():
     assert interleaver.pending_bytes() <= 100 * 2 + 2
 
 
-def test_channel_zero_is_you():
+def test_channel_labels_and_the_mono_default():
+    # PipeFocus sends stereo but asks Deepgram NOT to treat it as multichannel,
+    # because multichannel bills PER CHANNEL — a 10-minute stereo call would be
+    # billed as 20. So the live stream is unattributed by design.
+    assert focus.channel_speaker(None) == "-", "mono stream carries no speaker"
     assert focus.channel_speaker(0) == "You"
     assert focus.channel_speaker(1) == "Them"
-    assert focus.channel_speaker(None) == "Them"
+
+
+def test_the_focus_stream_is_not_billed_per_channel():
+    # The single most expensive mistake available here: multichannel=True
+    # silently doubles the bill for every meeting.
+    import inspect
+
+    from wisprlite.engines import deepgram_engine
+
+    source = inspect.getsource(deepgram_engine.focus_stream)
+    assert "multichannel=False" in source, (
+        "multichannel bills PER CHANNEL — leaving it on doubles the cost"
+    )
 
 
 class _FakeConn:
