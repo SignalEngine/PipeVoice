@@ -472,6 +472,9 @@ class App:
         try:
             self._meeting.start()
         except Exception as exc:
+            # Focus was started first, so it must be released here or it keeps a
+            # billable stream open for a meeting that never began.
+            self._stop_pipefocus()
             self._meeting_active = False
             self._fail(f"meeting: {exc}")
             self.tray.update()
@@ -553,6 +556,10 @@ class App:
     def _on_meeting_auto_stop(self, reason: str) -> None:
         if not self._meeting_active:
             return
+        # The recorder can stop itself (max minutes, fatal capture error) without
+        # going through toggle_meeting. Releasing the socket ONLY there left a
+        # live, billable Deepgram stream open for the rest of the session.
+        self._stop_pipefocus()
         self._meeting_active = False
         self._meeting_degraded = False
         if getattr(self, "overlay", None) is not None:

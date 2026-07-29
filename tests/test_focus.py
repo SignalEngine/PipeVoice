@@ -350,14 +350,28 @@ def test_the_recorder_feeds_focus_from_the_realtime_path():
     )
 
 
-def test_both_stop_paths_release_the_socket():
-    # Toggling the meeting off AND quitting the app must close the stream.
-    # Leaking a live websocket on quit keeps billing after the app is gone.
+def test_every_path_out_of_a_meeting_releases_the_socket():
+    # A leaked Deepgram stream keeps BILLING for the rest of the app's life, so
+    # every exit has to release it — not just the obvious one. The review found
+    # two that did not: the recorder stopping ITSELF at the max-minutes limit,
+    # and _meeting.start() raising after focus was already running.
     import inspect
 
     from wisprlite import app
 
-    source = inspect.getsource(app.App)
-    assert source.count("_stop_pipefocus()") >= 2, (
-        "both the toggle-off and shutdown paths must release the session"
+    for name in ("toggle_meeting", "_on_meeting_auto_stop", "shutdown"):
+        method = getattr(app.App, name, None)
+        if method is None:
+            continue
+        source = inspect.getsource(method)
+        if "focus" in source or "_meeting.stop()" in source or "_meeting_active = False" in source:
+            assert "_stop_pipefocus()" in source, (
+                f"{name} can end a meeting without releasing the focus socket"
+            )
+
+    # ...including the path where the recorder fails to start at all.
+    toggle = inspect.getsource(app.App.toggle_meeting)
+    after_start_failure = toggle.split("except Exception as exc:")[-1]
+    assert "_stop_pipefocus()" in after_start_failure, (
+        "focus starts BEFORE the recorder; if the recorder throws it must be released"
     )
