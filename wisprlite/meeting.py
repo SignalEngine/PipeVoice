@@ -738,6 +738,7 @@ class MeetingRecorder:
         self._levels = {"mic": 0.0, "desktop": 0.0}
         self._bleed_desktop_loud = 0
         self._bleed_both_loud = 0
+        self.focus_session = None      # set by the app when PipeFocus is on
         self._mic_stream = None
         self._limit_timer: threading.Timer | None = None
         self._stop_reason: str | None = None
@@ -1170,6 +1171,12 @@ class MeetingRecorder:
                     if self._levels.get("mic", 0.0) >= BLEED_LIVE_LEVEL:
                         self._bleed_both_loud += 1
             pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
+            # PipeFocus, if running. feed() only ENQUEUES and swallows its own
+            # errors, so nothing here can stall or break the capture callback —
+            # losing the recording to a focus problem would be indefensible.
+            focus_session = self.focus_session
+            if focus_session is not None:
+                focus_session.feed(label, pcm)
             with self._wave_locks[label]:
                 output = self._waves.get(label)
                 if output is None:

@@ -286,3 +286,248 @@ def test_closing_the_splash_differs_from_choosing_to_skip():
     assert 'result["go"] = True' in source, (
         "dismissing the splash must still open setup, not strand the user"
     )
+
+
+def test_export_button_invokes_export_callback_writes_file():
+    # Building a window is not exercising it. The Export button must produce
+    # an actual file on disk when invoked — if the callback raised TypeError
+    # the moment a user clicked it, every prior "Export control exists" check
+    # would still be green.
+    _skip_if_headless()
+    import pathlib
+    import tempfile
+    import tkinter as tk
+    from tkinter import ttk
+
+    from wisprlite import meetings_tab
+    from wisprlite import settings
+
+    errors = []
+    real_report = tk.Tk.report_callback_exception
+
+    def capture(_self, exc_type, exc_value, _tb):
+        errors.append(f"{exc_type.__name__}: {exc_value}")
+
+    tk.Tk.report_callback_exception = capture
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            # A real on-disk session so refresh() can list it.
+            session = base / "meeting-20260729-120000"
+            session.mkdir()
+            (session / "meta.json").write_text('{"started_at": "2026-07-29T12:00:00+00:00",'
+                                               ' "duration_seconds": 90,'
+                                               ' "transcription_backend": "deepgram",'
+                                               ' "status": "transcribed"}',
+                                               encoding="utf-8")
+            (session / "transcript.json").write_text(
+                '{"segments": [{"t": 0.0, "speaker": "You", "text": "Hello"},'
+                '              {"t": 4.0, "speaker": "Dev", "text": "Hi & welcome"}]}',
+                encoding="utf-8",
+            )
+
+            target_path = str(base / "out.md")
+
+            real_list = meetings_tab.list_sessions
+
+            def fake_list(_base=None):
+                return [{
+                    "path": session,
+                    "started_at": "2026-07-29T12:00:00+00:00",
+                    "display_started": "Today 12:00",
+                    "duration_seconds": 90,
+                    "duration": "1m 30s",
+                    "status": "transcribed",
+                    "transcription_backend": "Deepgram",
+                    "can_transcribe": False,
+                    "speaker_count": 2,
+                    "speaker_names": ["You", "Dev"],
+                }]
+
+            meetings_tab.list_sessions = fake_list
+
+            # meetings_tab imports `from tkinter import filedialog` inside the
+            # build function — patch the actual submodule so the do_export
+            # closure picks up our fake at call time.
+            from tkinter import filedialog as _tk_filedialog
+            real_save = _tk_filedialog.asksaveasfilename
+
+            def fake_save(**_kwargs):
+                return target_path
+
+            _tk_filedialog.asksaveasfilename = fake_save
+
+            try:
+                import os
+                # Snapshot PV_TAB so we can restore it. settings.py keys the
+                # starting tab off this env var; without restoration, every
+                # subsequent test runs with the wrong initial tab.
+                real_pv_tab = os.environ.get("PV_TAB")
+                os.environ["PV_TAB"] = "Meetings"
+                captured = {}
+                real_mainloop = tk.Misc.mainloop
+
+                def drive(self, _n=0):
+                    self.update_idletasks()
+                    self.update()
+                    export_buttons = []
+
+                    def walk(widget):
+                        for child in widget.winfo_children():
+                            cls = child.winfo_class()
+                            try:
+                                text = str(child.cget("text"))
+                            except (tk.TclError, AttributeError):
+                                text = ""
+                            if cls == "TButton" and text == "Export":
+                                export_buttons.append(child)
+                            walk(child)
+
+                    walk(self)
+                    captured["export_buttons"] = list(export_buttons)
+                    if export_buttons:
+                        export_buttons[0].invoke()
+                        self.update_idletasks()
+                        self.update()
+                    self.destroy()
+
+                tk.Misc.mainloop = drive
+                try:
+                    settings.main()
+                finally:
+                    tk.Misc.mainloop = real_mainloop
+            finally:
+                meetings_tab.list_sessions = real_list
+                _tk_filedialog.asksaveasfilename = real_save
+                if real_pv_tab is None:
+                    os.environ.pop("PV_TAB", None)
+                else:
+                    os.environ["PV_TAB"] = real_pv_tab
+
+            assert captured.get("export_buttons"), (
+                "the Export button was not rendered"
+            )
+            assert pathlib.Path(target_path).is_file(), (
+                "invoking the Export button did not write the chosen file"
+            )
+            body = pathlib.Path(target_path).read_text(encoding="utf-8")
+            assert "Hello" in body and "Hi & welcome" in body, body
+            assert not errors, f"invoking Export raised: {errors}"
+    finally:
+        tk.Tk.report_callback_exception = real_report
+
+
+def test_export_with_empty_transcript_reports_status_not_silent_noop():
+    # An empty transcript must surface in the status bar — silent returns
+    # left users clicking Export to "nothing happened", wondering if the
+    # app was broken. The status label is the user's only feedback channel
+    # after a save dialog closes.
+    _skip_if_headless()
+    import pathlib
+    import tempfile
+    import tkinter as tk
+
+    from wisprlite import meetings_tab
+
+    errors = []
+    real_report = tk.Tk.report_callback_exception
+
+    def capture(_self, exc_type, exc_value, _tb):
+        errors.append(f"{exc_type.__name__}: {exc_value}")
+
+    tk.Tk.report_callback_exception = capture
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            session = base / "meeting-20260729-130000"
+            session.mkdir()
+            (session / "meta.json").write_text(
+                '{"started_at": "2026-07-29T13:00:00+00:00",'
+                ' "duration_seconds": 0,'
+                ' "transcription_backend": "deepgram",'
+                ' "status": "transcribed"}',
+                encoding="utf-8",
+            )
+            # Empty segments — the file exists but there's no transcript yet.
+            (session / "transcript.json").write_text('{"segments": []}',
+                                                       encoding="utf-8")
+
+            from tkinter import filedialog as _tk_filedialog
+            real_save = _tk_filedialog.asksaveasfilename
+            dialog_calls = []
+            _tk_filedialog.asksaveasfilename = lambda **k: dialog_calls.append(k) or ""
+
+            real_list = meetings_tab.list_sessions
+
+            def fake_list(_base=None):
+                return [{
+                    "path": session,
+                    "started_at": "2026-07-29T13:00:00+00:00",
+                    "display_started": "Today 13:00",
+                    "duration_seconds": 0,
+                    "duration": "0s",
+                    "status": "transcribed",
+                    "transcription_backend": "Deepgram",
+                    "can_transcribe": False,
+                    "speaker_count": 0,
+                    "speaker_names": [],
+                    "error": "",
+                }]
+            meetings_tab.list_sessions = fake_list
+
+            try:
+                import os
+                real_pv_tab = os.environ.get("PV_TAB")
+                os.environ["PV_TAB"] = "Meetings"
+                real_mainloop = tk.Misc.mainloop
+                captured = {}
+
+                def drive(self, _n=0):
+                    self.update_idletasks()
+                    self.update()
+                    statuses = []
+
+                    def walk(widget):
+                        for child in widget.winfo_children():
+                            try:
+                                text = str(child.cget("text"))
+                            except (tk.TclError, AttributeError):
+                                text = ""
+                            # Status labels are tk.Label (NOT ttk).
+                            if isinstance(child, tk.Label) and text and (
+                                "export" in text.lower()
+                                or "transcript" in text.lower()
+                                or "transcribe" in text.lower()
+                            ):
+                                statuses.append(text)
+                            walk(child)
+
+                    walk(self)
+                    captured["statuses"] = list(statuses)
+                    self.destroy()
+
+                tk.Misc.mainloop = drive
+                try:
+                    from wisprlite import settings
+                    settings.main()
+                finally:
+                    tk.Misc.mainloop = real_mainloop
+            finally:
+                meetings_tab.list_sessions = real_list
+                _tk_filedialog.asksaveasfilename = real_save
+                if real_pv_tab is None:
+                    os.environ.pop("PV_TAB", None)
+                else:
+                    os.environ["PV_TAB"] = real_pv_tab
+
+            assert not dialog_calls, (
+                "Export must not open a save dialog when there is nothing to "
+                f"export — saw {len(dialog_calls)} dialog(s)"
+            )
+            assert any("transcript" in s.lower() for s in captured.get("statuses", [])), (
+                f"empty-transcript Export must surface a status message, "
+                f"saw {captured.get('statuses')}"
+            )
+            assert not errors, f"invoking Export raised: {errors}"
+    finally:
+        tk.Tk.report_callback_exception = real_report

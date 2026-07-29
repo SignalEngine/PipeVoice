@@ -243,6 +243,10 @@ class Overlay:
                     if kind == "quit":
                         root.quit()
                         return False
+                    if kind == "focus_tip":
+                        # state = tip, text = because. Rendered on THIS thread,
+                        # which is the only one allowed to touch Tk.
+                        self._render_focus_tip(canvas, state, text)
                     if kind == "meeting_click":
                         if st["name"] == "meeting" and self.on_meeting_click:
                             callback = self.on_meeting_click
@@ -590,6 +594,46 @@ class Overlay:
             top.extend((x, cy - half))
             bottom[:0] = (x, cy + half)
         return top + bottom
+
+    def _render_focus_tip(self, canvas, tip: str, because: str) -> None:
+        """A small, self-dismissing nudge. Never modal, never over the call."""
+        try:
+            import tkinter as tk
+
+            root = canvas.winfo_toplevel()
+            top = tk.Toplevel(root)
+            top.overrideredirect(True)
+            top.attributes("-topmost", True)
+            top.configure(bg=PALETTE["accent"])
+            frame = tk.Frame(top, bg=PALETTE["card"], padx=16, pady=12)
+            frame.pack(fill="both", expand=True, padx=2, pady=2)
+            tk.Label(frame, text=tip, bg=PALETTE["card"], fg=PALETTE["fg"],
+                     font=("Segoe UI", 10, "bold"), wraplength=380,
+                     justify="left").pack(anchor="w")
+            if because:
+                tk.Label(frame, text=f"\u201c{because}\u201d", bg=PALETTE["card"],
+                         fg=PALETTE["muted"], font=("Segoe UI", 9, "italic"),
+                         wraplength=380, justify="left").pack(anchor="w", pady=(4, 0))
+            top.update_idletasks()
+            width, height = top.winfo_reqwidth(), top.winfo_reqheight()
+            x = max(0, top.winfo_screenwidth() - width - 40)
+            y = max(0, top.winfo_screenheight() - height - 190)
+            top.geometry(f"+{x}+{y}")
+            top.after(14000, top.destroy)
+            top.bind("<Button-1>", lambda _event: top.destroy())
+        except Exception:
+            pass          # a nudge must never disturb the meeting it comments on
+
+    def show_focus_tip(self, tip: str, because: str = "") -> None:
+        """Queue a PipeFocus nudge for display on the overlay's own thread.
+
+        Called from the analysis thread, so it must NOT touch Tk here — the
+        overlay owns its root on another thread entirely.
+        """
+        try:
+            self._q.put(("focus_tip", str(tip or ""), str(because or "")))
+        except Exception:
+            pass
 
     def _show_bleed_warning(self, canvas) -> None:
         """A small, self-dismissing note that the mic is hearing the speakers."""

@@ -132,3 +132,79 @@ class DeepgramEngine(Engine):
 
     def start_session(self, on_partial: Optional[OnPartial] = None) -> Session:
         return _DeepgramSession(self, on_partial)
+
+
+def focus_stream(cfg, on_text):
+    """Open a MULTICHANNEL live connection for PipeFocus.
+
+    channels=2 with multichannel=True means Deepgram reports which channel each
+    phrase came from, so one socket carries both sides of the call WITH
+    attribution — the microphone is channel 0, the desktop capture channel 1.
+
+    Returns an object with feed()/close(); raises if the connection cannot be
+    established, which the caller treats as "PipeFocus unavailable" and never as
+    a reason to stop recording.
+    """
+    import os
+
+    from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
+
+    key = os.getenv("DEEPGRAM_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("no Deepgram API key")
+
+    client = DeepgramClient(key)
+    listen = client.listen
+    conn = listen.websocket.v("1") if hasattr(listen, "websocket") else listen.live.v("1")
+
+    def on_transcript(*args, **kwargs):
+        try:
+            result = _pick(args, kwargs, "result")
+            if not getattr(result, "is_final", False):
+                return                      # interim text would churn the buffer
+            alt = result.channel.alternatives[0]
+            text = (alt.transcript or "").strip()
+            if text:
+                # Downmixed to mono, so there is no meaningful channel to report.
+                on_text(text, None)
+        except Exception:
+            pass                            # a bad frame must not kill the stream
+
+    conn.on(LiveTranscriptionEvents.Transcript, on_transcript)
+
+    # Stereo IN, but multichannel OFF. Deepgram downmixes to mono itself and
+    # bills it as ONE channel; multichannel=True bills PER CHANNEL, so a
+    # 10-minute stereo call would count as 20 minutes — double the price for
+    # per-speaker labels this feature barely uses. Judging whether a meeting is
+    # drifting is about content, and the recorded transcript still carries full
+    # attribution afterwards. $0.29/hour instead of $0.58.
+    opts = dict(
+        model=getattr(cfg, "deepgram_model", "") or "nova-3",
+        language=getattr(cfg, "language", "") or "en-US",
+        encoding="linear16",
+        sample_rate=16_000,
+        channels=2,
+        multichannel=False,
+        interim_results=False,
+        smart_format=True,
+        punctuate=True,
+    )
+    try:
+        options = LiveOptions(**opts)
+    except TypeError:
+        opts.pop("multichannel", None)      # older SDKs simply lack the flag
+        options = LiveOptions(**opts)
+    if not conn.start(options):
+        raise RuntimeError("Deepgram focus connection failed to start")
+
+    class _Stream:
+        def feed(self, pcm: bytes) -> None:
+            conn.send(pcm)
+
+        def close(self) -> None:
+            try:
+                conn.finish()
+            except Exception:
+                pass
+
+    return _Stream()

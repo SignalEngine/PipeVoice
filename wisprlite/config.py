@@ -114,6 +114,7 @@ class Config:
     transcribe_model_size: str = ""   # blank = reuse local_model_size
     meetings_dir: str = ""            # where recordings are stored; blank = machine-local default
     update_channel: str = "stable"    # stable | beta — beta also sees prereleases
+    pipefocus: bool = False           # live focus nudges during a meeting (Deepgram only)
 
     @property
     def meetings_keep(self) -> int:
