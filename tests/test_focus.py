@@ -2,6 +2,8 @@
 
 import json
 import pathlib
+import threading
+import time
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -157,3 +159,128 @@ def test_channel_zero_is_you():
     assert focus.channel_speaker(0) == "You"
     assert focus.channel_speaker(1) == "Them"
     assert focus.channel_speaker(None) == "Them"
+
+
+class _FakeConn:
+    """A live connection that can be told to die, like the real one does."""
+
+    def __init__(self, on_text, die_after=None):
+        self.on_text = on_text
+        self.fed = 0
+        self.closed = False
+        self._die_after = die_after
+
+    def feed(self, pcm):
+        self.fed += 1
+        if self._die_after is not None and self.fed > self._die_after:
+            raise ConnectionResetError("socket closed")
+
+    def close(self):
+        self.closed = True
+
+
+def _pcm(n=80):
+    return b"\x01\x02" * n
+
+
+def test_the_audio_callback_never_blocks_even_when_the_queue_is_full():
+    # Stalling the capture callback would lose the RECORDING — the thing the
+    # user actually came for. Focus is best-effort on top of it, so it drops.
+    session = focus.FocusSession(connect=lambda on_text: _FakeConn(on_text))
+    for _ in range(focus.QUEUE_LIMIT + 60):
+        session.feed("mic", _pcm())
+        session.feed("desktop", _pcm())
+    assert session.dropped_blocks > 0, "it must drop rather than block"
+    assert session.last_error == "", "dropping is not an error condition"
+
+
+def test_a_dropped_socket_reconnects_and_keeps_the_transcript():
+    # Deepgram closes a live socket after about an hour, and meetings run long.
+    # A reconnect that lost the transcript would reset the policy and re-fire
+    # tips the user has already dismissed.
+    conns = []
+
+    def connect(on_text):
+        conn = _FakeConn(on_text, die_after=2 if not conns else None)
+        conns.append(conn)
+        return conn
+
+    session = focus.FocusSession(connect=connect)
+    session.on_text("we should ship on Friday", channel=1)
+    session.start()
+    try:
+        for _ in range(12):
+            session.feed("mic", _pcm())
+            session.feed("desktop", _pcm())
+        deadline = time.time() + 5
+        while session.reconnects == 0 and time.time() < deadline:
+            time.sleep(0.05)
+    finally:
+        session.stop()
+
+    assert session.reconnects >= 1, "the dead socket must be rebuilt"
+    assert len(conns) >= 2, "a new connection must actually be opened"
+    assert "we should ship on Friday" in session.transcript(), (
+        "the transcript must survive a reconnect"
+    )
+    assert conns[0].closed, "the dead connection must be closed, not leaked"
+
+
+def test_a_connection_that_never_comes_back_is_recorded_not_swallowed():
+    # Silent death is the whole risk with this feature: it would simply stop
+    # working mid-meeting with no sign.
+    def connect(on_text):
+        raise OSError("deepgram unreachable")
+
+    session = focus.FocusSession(connect=connect)
+    session.start()
+    time.sleep(0.4)
+    session.stop()
+    assert "deepgram unreachable" in session.last_error
+
+
+def test_transcript_is_attributed_by_channel():
+    session = focus.FocusSession(connect=lambda on_text: _FakeConn(on_text))
+    session.on_text("what is the number", channel=0)
+    session.on_text("about twelve thousand", channel=1)
+    text = session.transcript()
+    assert "You: what is the number" in text
+    assert "Them: about twelve thousand" in text
+
+
+def test_a_tip_reaches_the_callback_and_the_model_runs_off_the_audio_thread():
+    seen = {}
+    calls = []
+
+    def completion(messages):
+        calls.append(threading.current_thread().name)
+        return json.dumps({"tip": "Three action items still have no owner named.",
+                           "because": "someone should pick that up"})
+
+    session = focus.FocusSession(
+        connect=lambda on_text: _FakeConn(on_text),
+        completion=completion,
+        on_tip=lambda tip, because: seen.update(tip=tip, because=because),
+        policy=focus.FocusPolicy(cooldown=0.0),
+    )
+    session.on_text(" ".join(f"word{i}" for i in range(focus.MIN_NEW_WORDS + 40)), channel=1)
+    session.start()
+    try:
+        deadline = time.time() + 5
+        while "tip" not in seen and time.time() < deadline:
+            session.feed("mic", _pcm())
+            session.feed("desktop", _pcm())
+            time.sleep(0.05)
+    finally:
+        session.stop()
+
+    assert seen.get("tip") == "Three action items still have no owner named."
+    assert calls, "the model must actually be consulted"
+    # The meaningful guarantee is not "not MainThread" — _maybe_analyse already
+    # runs on the worker, so that passed even when the call was made inline.
+    # What matters is that a slow model call cannot stall the thread feeding the
+    # socket, i.e. it runs on a DIFFERENT thread from the audio pump.
+    assert session._worker is not None
+    assert all(name != session._worker.name for name in calls), (
+        "the model call must not run on the thread feeding audio to the socket"
+    )

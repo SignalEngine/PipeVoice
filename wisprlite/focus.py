@@ -208,3 +208,166 @@ def channel_speaker(channel: object) -> str:
         return "You" if int(channel) == 0 else "Them"
     except (TypeError, ValueError):
         return "Them"
+
+
+# --- the live session --------------------------------------------------------
+
+import logging
+import queue
+import threading
+import time
+
+log = logging.getLogger("wisprlite")
+
+# Deepgram closes a live socket after about an hour. A meeting can outlast that,
+# so the connection is rebuilt — and the rebuild is COUNTED and surfaced,
+# because a socket that dies at minute 60 and never comes back would leave the
+# feature silently dead for the rest of a long call.
+RECONNECT_BACKOFF = (1.0, 2.0, 5.0, 10.0, 20.0)
+QUEUE_LIMIT = 400          # ~20s of 50ms blocks; beyond this we drop, never block
+
+
+class FocusSession:
+    """Streams a meeting to Deepgram and emits occasional focus tips.
+
+    ``connect`` is injected so the reconnect logic can be tested without a
+    network: it must return an object with ``feed(bytes)`` and ``close()``, and
+    push transcript text through the ``on_text`` callback it is given.
+    """
+
+    def __init__(self, connect, *, completion=None, on_tip=None,
+                 policy: "FocusPolicy | None" = None, clock=time.monotonic):
+        self._connect = connect
+        self._completion = completion
+        self._on_tip = on_tip
+        self._policy = policy or FocusPolicy()
+        self._clock = clock
+        self._interleaver = StreamInterleaver()
+        self._queue: "queue.Queue[bytes]" = queue.Queue(maxsize=QUEUE_LIMIT)
+        self._chunks: list[str] = []
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._worker: threading.Thread | None = None
+        self._conn = None
+        # Observability — a silent failure here is the whole risk.
+        self.reconnects = 0
+        self.dropped_blocks = 0
+        self.last_error = ""
+        self.analyses = 0
+
+    # -- audio in (called from the REALTIME callback) ------------------------
+
+    def feed(self, label: str, pcm: bytes) -> None:
+        """Enqueue audio. NEVER blocks and never raises into the audio thread."""
+        try:
+            stereo = self._interleaver.add(label, pcm)
+            if not stereo:
+                return
+            try:
+                self._queue.put_nowait(stereo)
+            except queue.Full:
+                # Dropping audio is bad; stalling the capture callback is worse,
+                # because that loses the RECORDING, which is the thing the user
+                # actually came for. Focus is best-effort on top of it.
+                self.dropped_blocks += 1
+        except Exception as exc:                      # never escape into audio
+            self.last_error = f"{type(exc).__name__}: {exc}"
+
+    # -- transcript in --------------------------------------------------------
+
+    def on_text(self, text: str, channel: object = 1) -> None:
+        line = " ".join(str(text or "").split())
+        if not line:
+            return
+        with self._lock:
+            self._chunks.append(f"{channel_speaker(channel)}: {line}")
+
+    def transcript(self) -> str:
+        with self._lock:
+            return rolling_transcript(list(self._chunks))
+
+    # -- lifecycle ------------------------------------------------------------
+
+    def start(self) -> None:
+        self._worker = threading.Thread(target=self._run, daemon=True)
+        self._worker.start()
+
+    def stop(self, timeout: float = 3.0) -> None:
+        self._stop.set()
+        worker = self._worker
+        if worker is not None:
+            worker.join(timeout=timeout)
+        self._close_conn()
+
+    def _close_conn(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _open_conn(self) -> bool:
+        try:
+            self._conn = self._connect(self.on_text)
+            return True
+        except Exception as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            log.info("focus: connect failed: %s", exc)
+            return False
+
+    def _run(self) -> None:
+        attempt = 0
+        while not self._stop.is_set():
+            if self._conn is None:
+                if not self._open_conn():
+                    delay = RECONNECT_BACKOFF[min(attempt, len(RECONNECT_BACKOFF) - 1)]
+                    attempt += 1
+                    if self._stop.wait(delay):
+                        return
+                    continue
+                attempt = 0
+            try:
+                block = self._queue.get(timeout=0.25)
+            except queue.Empty:
+                self._maybe_analyse()
+                continue
+            try:
+                self._conn.feed(block)
+            except Exception as exc:
+                # The socket died — an hour-long cap, a network blip. Rebuild it
+                # and keep the transcript: losing it would reset the policy and
+                # re-fire tips the user has already seen.
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                self.reconnects += 1
+                log.info("focus: stream dropped (%s), reconnecting", exc)
+                self._close_conn()
+                continue
+            self._maybe_analyse()
+
+    # -- the policy loop ------------------------------------------------------
+
+    def _maybe_analyse(self) -> None:
+        text = self.transcript()
+        now = self._clock()
+        if not self._policy.should_analyse(len(text.split()), now):
+            return
+        self._policy.analysed(len(text.split()), now)
+        self.analyses += 1
+        threading.Thread(target=self._analyse, args=(text,), daemon=True).start()
+
+    def _analyse(self, text: str) -> None:
+        """Ask for a tip. Runs on its OWN thread: never the audio or Tk thread."""
+        try:
+            answer = self._completion(build_messages(text)) if self._completion else None
+        except Exception as exc:
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            return
+        tip, because = parse_tip(answer)
+        if not self._policy.accept(tip, self._clock()):
+            return
+        if self._on_tip:
+            try:
+                self._on_tip(tip, because)
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
