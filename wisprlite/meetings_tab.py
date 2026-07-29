@@ -476,7 +476,11 @@ def search_sessions(query: str, sessions: list[dict], *, cache: dict | None = No
         else:
             text = session_search_text(path)
             if cache is not None:
-                cache.clear()          # small and cheap; keeps memory flat
+                # Drop only THIS session's stale entries, not the whole cache.
+                # Clearing wholesale left just the last session cached, so with
+                # several meetings the cache did nothing between keystrokes.
+                for stale in [k for k in cache if k[0] == str(path)]:
+                    del cache[stale]
                 cache[key] = text
         haystack = text.lower()
         count = haystack.count(needle)
@@ -1631,6 +1635,24 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         for widget in row_info["widgets"]:
             widget.config(bg=colour)
 
+    def select_by_path(path, **kwargs) -> None:
+        """Select a meeting by identity, not position.
+
+        Cross-meeting search filters the rendered list, so any caller that
+        computes an index over state["sessions"] and passes it to
+        select_session lands on the wrong meeting — or silently on none. Five
+        separate sites got this wrong. Callers that already know which meeting
+        they want must not be doing index arithmetic.
+        """
+        shown = state["visible_sessions"]
+        if shown is None:
+            shown = state["sessions"]
+        index = next(
+            (i for i, session in enumerate(shown) if session["path"] == path), None
+        )
+        if index is not None:
+            select_session(index, **kwargs)
+
     def select_session(
         index: int, *, reveal: bool = False, preserve_search: bool = False
     ) -> None:
@@ -2174,7 +2196,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         state["show_polished"] = not state["show_polished"]
         path = selected_path()
         if path is not None:
-            select_session(next((i for i, s in enumerate(state["sessions"]) if s["path"] == path), 0))
+            select_by_path(path)
 
     def do_summarise() -> None:
         path = selected_path()
@@ -2346,14 +2368,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
                 status_label.config(
                     text=f"Could not delete session: {error}", fg=ACCENT
                 )
-                current_index = next(
-                    (
-                        index for index, session in enumerate(state["sessions"])
-                        if session["path"] == path
-                    ),
-                    0,
-                )
-                select_session(current_index)
+                select_by_path(path)
                 return
             state["selected"] = None
             refresh()

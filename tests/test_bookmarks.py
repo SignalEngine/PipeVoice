@@ -430,3 +430,22 @@ def test_live_durations_pair_with_the_rendered_rows():
     assert list(zip(sessions, rows))[0][0]["name"] == "standup", (
         "documents the old, wrong pairing"
     )
+
+
+def test_no_caller_computes_a_session_index_by_hand():
+    # FIVE separate sites computed a position in the unfiltered session list and
+    # handed it to select_session, which indexes the FILTERED one — landing on
+    # the wrong meeting or silently on none. Callers that already know which
+    # meeting they want must use select_by_path instead of index arithmetic.
+    import inspect
+    from wisprlite import meetings_tab
+
+    source = inspect.getsource(meetings_tab.build)
+    offenders = [
+        line.strip()
+        for line in source.splitlines()
+        if "select_session(" in line
+        and "enumerate(state[" in line
+    ]
+    assert not offenders, f"index arithmetic feeding select_session: {offenders}"
+    assert "def select_by_path" in source, "the path-based selector must exist"
