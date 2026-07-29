@@ -523,6 +523,7 @@ def main(first_run: bool = False) -> None:
     sounds_var = tk.BooleanVar(value=cfg.sounds)
     autostart_var = tk.BooleanVar(value=autostart.is_enabled())
     auto_update_var = tk.BooleanVar(value=cfg.auto_update)
+    beta_channel_var = tk.BooleanVar(value=(cfg.update_channel or "").lower() == "beta")
     voice_commands_var = tk.BooleanVar(value=cfg.voice_commands)
     history_var = tk.BooleanVar(value=cfg.history_enabled)
 
@@ -1029,6 +1030,8 @@ def main(first_run: bool = False) -> None:
     check(c, "Play start/stop sounds", sounds_var)
     check(c, "Start on Windows login", autostart_var)
     check(c, "Automatic updates", auto_update_var, "Check for a newer version on startup and install it silently.")
+    check(c, "Get updates early (beta)", beta_channel_var,
+          "Receive new versions a few days before everyone else, so problems are found\non a handful of machines instead of all of them. Slightly more likely to hit a\nrough edge — untick to go back to normal releases.")
     check(c, "Keep a local dictation history", history_var, "Saved on your PC; open it from the tray.")
     pr = stack(c, "Voices & app profiles", "Per-app styles and key-bound Voices — PipeVoice's signature feature.")
     ttk.Button(pr, text="Open the Voices tab  →", command=lambda: _show_tab("Voices")).pack(anchor="w")
@@ -1108,6 +1111,7 @@ def main(first_run: bool = False) -> None:
         cfg.overlay = bool(overlay_var.get())
         cfg.sounds = bool(sounds_var.get())
         cfg.auto_update = bool(auto_update_var.get())
+        cfg.update_channel = "beta" if beta_channel_var.get() else "stable"
         cfg.voice_commands = bool(voice_commands_var.get())
         cfg.history_enabled = bool(history_var.get())
         vh = []

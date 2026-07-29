@@ -20,7 +20,12 @@ from . import __version__, config
 log = logging.getLogger("wisprlite")
 
 REPO = "Powleads/PipeVoice"
+# /releases/latest EXCLUDES prereleases — that is the whole staging ring. A
+# release published as a PRERELEASE is invisible to everyone on stable, and
+# visible only to installs that opted into beta. Promote it (prerelease=false)
+# and the same build reaches everyone, with no rebuild and no server.
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
+API_ALL = f"https://api.github.com/repos/{REPO}/releases?per_page=20"
 ASSET = "Pipevoice-Setup.exe"
 _UA = {"User-Agent": "Pipevoice-updater"}
 
@@ -36,14 +41,44 @@ def _parse_version(v: str) -> tuple:
     return tuple(parts[:3])
 
 
+def _newest_release(channel: str) -> dict | None:
+    """The release this install should consider, for its channel.
+
+    STABLE keeps hitting /releases/latest exactly as before — that path must
+    stay byte-identical, because a mistake here silently ends auto-updates for
+    every existing install. BETA additionally sees prereleases.
+    """
+    if str(channel or "").strip().lower() != "beta":
+        req = urllib.request.Request(API, headers={**_UA, "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.load(r)
+
+    req = urllib.request.Request(API_ALL, headers={**_UA, "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        releases = json.load(r)
+    if not isinstance(releases, list):
+        return None
+    # Newest by VERSION, not by list order or publish date: a hotfix to an older
+    # line can be published after a newer prerelease.
+    usable = [
+        rel for rel in releases
+        if isinstance(rel, dict) and not rel.get("draft") and rel.get("tag_name")
+    ]
+    return max(usable, key=lambda rel: _parse_version(rel.get("tag_name", "")), default=None)
+
+
 def check() -> dict | None:
     """Return {'version','tag','url','sha256'} if a newer release exists, else None."""
     try:
-        req = urllib.request.Request(API, headers={**_UA, "Accept": "application/vnd.github+json"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.load(r)
+        channel = getattr(config.Config.load(), "update_channel", "stable")
+    except Exception:
+        channel = "stable"          # a broken config must never stop updates
+    try:
+        data = _newest_release(channel)
     except Exception as exc:
         log.info("update check failed: %s", exc)
+        return None
+    if not isinstance(data, dict):
         return None
     tag = data.get("tag_name", "")
     if _parse_version(tag) <= _parse_version(__version__):

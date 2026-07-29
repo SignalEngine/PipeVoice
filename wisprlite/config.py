@@ -113,6 +113,7 @@ class Config:
     hands_free_silence_ms: int = 800  # trailing silence that ends a hands-free capture
     transcribe_model_size: str = ""   # blank = reuse local_model_size
     meetings_dir: str = ""            # where recordings are stored; blank = machine-local default
+    update_channel: str = "stable"    # stable | beta — beta also sees prereleases
 
     @property
     def meetings_keep(self) -> int:
