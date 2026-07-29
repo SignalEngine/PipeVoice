@@ -45,6 +45,7 @@ from .summarise import (
     render_markdown_lines,
     summarise,
 )
+from . import export
 from .polish import PolishFailed, ProviderNotReady, polish_segments
 from .winui import PALETTE, tooltip
 
@@ -409,6 +410,53 @@ def _transcript_text(session_dir: str | Path, *, polished: bool = True) -> str:
     if fallback:
         return apply_corrections([{"text": fallback}], load_corrections(session_dir))[0]["text"]
     return fallback
+
+
+def gather_session_export_data(session_dir, *, polished: bool = True) -> dict:
+    """Bundle the on-disk overlays into the dict shape ``export.py`` consumes.
+
+    The export module is deliberately Tk-free and file-free: it just turns a
+    dict into Markdown, HTML, or a slide deck. Keeping the gathering here
+    keeps the exporter pure (and unit-testable on a headless box) while the
+    UI reads the same overlays it already shows — same transcript text, same
+    speaker renames, same corrections, same bookmarks, same summaries.
+    """
+    path = Path(session_dir)
+    meta = _read_json(path / "meta.json")
+    speaker_map = load_speaker_map(path)
+    transcript_text = _transcript_text(path, polished=polished)
+    transcript = _read_json(path / "transcript.json")
+    segments = transcript.get("segments") if isinstance(
+        transcript.get("segments"), list
+    ) else []
+    if polished:
+        visible_segments = apply_polished(segments, load_polished(path))
+    else:
+        visible_segments = [
+            segment for segment in segments if isinstance(segment, dict)
+        ]
+    visible_segments = apply_corrections(visible_segments, load_corrections(path))
+    bookmarks = load_bookmarks(path)
+    highlights = resolve_bookmarks(bookmarks, visible_segments)
+    summaries = read_summaries(path)
+    duration_seconds = 0
+    try:
+        duration_seconds = float(meta.get("duration_seconds") or 0)
+    except (TypeError, ValueError, OverflowError):
+        duration_seconds = 0.0
+    display_started = _display_started(
+        meta, _started_timestamp(meta, path), path
+    )
+    return {
+        "title": display_started,
+        "duration_seconds": duration_seconds,
+        "duration_label": format_duration(duration_seconds),
+        "backend": _backend_label(meta.get("transcription_backend")),
+        "speaker_names": _speaker_names(transcript, speaker_map),
+        "transcript": transcript_text,
+        "highlights": highlights,
+        "summaries": summaries,
+    }
 
 
 SNIPPET_CONTEXT = 40
@@ -961,6 +1009,8 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     copy_btn.pack(side="left", padx=(7, 0))
     save_btn = ttk.Button(actions, text="Save as .txt", state="disabled")
     save_btn.pack(side="left", padx=(7, 0))
+    export_btn = ttk.Button(actions, text="Export", state="disabled")
+    export_btn.pack(side="left", padx=(7, 0))
     folder_btn = ttk.Button(actions, text="Open folder", state="disabled")
     folder_btn.pack(side="left", padx=(7, 0))
     delete_btn = ttk.Button(actions, text="Delete session", state="disabled")
@@ -1774,6 +1824,9 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
             bleed_banner.pack_forget()
         copy_btn.config(state="normal" if body_text else "disabled")
         save_btn.config(state="normal" if body_text else "disabled")
+        # Export needs a transcript too. Even an empty "Export" button offers
+        # the user no obvious next step, so we keep it in lockstep with Save.
+        export_btn.config(state="normal" if body_text else "disabled")
         folder_btn.config(state="normal")
         can_delete = session["status"] != "recording" and not state["busy"]
         delete_btn.config(state="normal" if can_delete else "disabled")
@@ -2317,6 +2370,68 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
         except OSError as exc:
             status_label.config(text=f"Could not save: {exc}", fg=ACCENT)
 
+    def do_export() -> None:
+        # Export MUST honour the Show raw toggle. Writing polished text while
+        # the screen says raw hands the user a tidied record they believe is
+        # the original — the one thing this feature must never do.
+        path = selected_path()
+        if path is None:
+            return
+        try:
+            data = gather_session_export_data(path, polished=state["show_polished"])
+        except (OSError, ValueError) as exc:
+            status_label.config(text=f"Could not export: {exc}", fg=ACCENT)
+            return
+        if not data.get("transcript"):
+            status_label.config(
+                text="Nothing to export — this meeting has no transcript yet.",
+                fg=ACCENT,
+            )
+            return
+        destination = filedialog.asksaveasfilename(
+            title="Export meeting",
+            defaultextension=".md",
+            initialfile=f"{path.name}.md",
+            filetypes=[
+                ("Markdown", "*.md"),
+                ("Slides (Marp/reveal)", "*.slides.md"),
+                ("HTML (printable to PDF)", "*.html"),
+            ],
+        )
+        if not destination:
+            return
+        # Validate the destination BEFORE writing — Windows rejects names with
+        # characters like "<>:\"/\\|?*" or control bytes, AND reserved device
+        # names like CON / PRN / AUX / NUL / COM1–COM9 / LPT1–LPT9 (with or
+        # without an extension) which crash with PermissionError deep in the
+        # exporter. Catching them here keeps the user message legible.
+        target = Path(destination)
+        forbidden_chars = '<>:"/\\|?*\0'
+        basename = target.name
+        stem = basename.split(".", 1)[0].upper()
+        reserved = {
+            "CON", "PRN", "AUX", "NUL",
+            *(f"COM{i}" for i in range(1, 10)),
+            *(f"LPT{i}" for i in range(1, 10)),
+        }
+        if basename != basename.strip() or any(
+            char in basename for char in forbidden_chars
+        ) or stem in reserved:
+            status_label.config(
+                text=f"That filename isn't valid here: {basename}",
+                fg=ACCENT,
+            )
+            return
+        try:
+            export.write_export(data, target)
+            status_label.config(text=f"Exported to {target}", fg=GOOD)
+        except ValueError as exc:
+            # ValueError from _resolve_format: unknown extension. Tell the
+            # user what we accepted, never let them guess.
+            status_label.config(text=str(exc), fg=ACCENT)
+        except OSError as exc:
+            status_label.config(text=f"Could not export: {exc}", fg=ACCENT)
+
     def do_open_folder() -> None:
         path = selected_path()
         if path is None:
@@ -2418,6 +2533,7 @@ def build(container, root, wheel=None, on_replacements_changed=None) -> None:
     summary_mode_var.trace_add("write", display_summary)
     copy_btn.config(command=do_copy)
     save_btn.config(command=do_save)
+    export_btn.config(command=do_export)
     folder_btn.config(command=do_open_folder)
     delete_btn.config(command=do_delete)
     refresh()
