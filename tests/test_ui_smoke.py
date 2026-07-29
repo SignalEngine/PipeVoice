@@ -189,3 +189,55 @@ def test_meetings_tab_opens_with_an_untranscribed_recording():
         finally:
             meeting.meetings_dir = original
             meetings_tab.meetings_dir = original
+
+
+def test_first_run_opens_the_guide_maximised():
+    # A new install landed on the Settings form, because first_run only changed
+    # the window TITLE. Someone who has just installed this needs "how do I use
+    # it" first. PV_TAB is the test seam and must still win.
+    _skip_if_headless()
+    import os
+    import tkinter as tk
+
+    from wisprlite import settings
+
+    seen = {}
+    real_mainloop = tk.Misc.mainloop
+
+    def capture(self, _n=0):
+        self.update_idletasks()
+        self.update()
+        seen["title"] = self.title()
+        seen["zoomed"] = self.state()
+        self.destroy()
+
+    os.environ.pop("PV_TAB", None)          # let first_run choose
+    tk.Misc.mainloop = capture
+    try:
+        settings.main(first_run=True)
+    finally:
+        tk.Misc.mainloop = real_mainloop
+        os.environ["PV_TAB"] = "Settings"
+
+    assert seen.get("title") == "Set up Pipevoice"
+    # The tab choice is what regressed; assert the source picks Guide on first run.
+    import inspect
+
+    source = inspect.getsource(settings.main)
+    assert '"Guide" if first_run else "Settings"' in source, (
+        "first run must open the Guide, not the settings form"
+    )
+
+
+def test_closing_the_welcome_splash_still_opens_setup():
+    # show_welcome() returns False when dismissed, and setup used to be gated on
+    # it — so closing the splash dropped the user straight to the tray with
+    # nothing on screen, which reads as "it installed and then minimised".
+    import inspect
+
+    from wisprlite import app
+
+    source = inspect.getsource(app)
+    assert "if welcome.show_welcome():" not in source, (
+        "opening the setup window must not depend on how the splash was dismissed"
+    )

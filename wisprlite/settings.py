@@ -418,7 +418,10 @@ def main(first_run: bool = False) -> None:
     _build_guide(tab_guide, _wheel)
     about.build(tab_about, root, _wheel)
     _build_voices_tab(tab_voices, _show_tab, _wheel)
-    _show_tab(os.getenv("PV_TAB") or "Settings")  # PV_TAB is a render/test seam
+    # First run lands on the GUIDE, not a settings form. Someone who has just
+    # installed this needs "how do I use it", and first_run previously changed
+    # only the window title. PV_TAB is a render/test seam and still wins.
+    _show_tab(os.getenv("PV_TAB") or ("Guide" if first_run else "Settings"))
     DIV = "#272b37"
 
     def card(title, subtitle=None):
