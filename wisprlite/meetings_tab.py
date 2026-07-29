@@ -739,7 +739,11 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     # any of it did.
     guide_link = tk.Label(head, text="How this works  \u2197", bg=BG, fg=ACCENT,
                           cursor="hand2", font=("Segoe UI", 9, "underline"))
-    guide_link.pack(side="right")
+    # Only when there IS a Guide to reach. Opened standalone via
+    # `python -m wisprlite meetings` there are no tabs, and a visible link that
+    # does nothing is worse than no link.
+    if callable(show_tab):
+        guide_link.pack(side="right")
     tooltip(guide_link, "Open the Guide for the full walkthrough: recording both "
                               "sides, naming speakers, bookmarks, summaries and export.")
 
