@@ -7,6 +7,13 @@ import time
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+# wisprlite.app pulls in the Windows-only audio libs; the UI harness already
+# stubs them so the module can be imported on a headless box.
+from uistub import install_platform_stubs
+
+install_platform_stubs()
 
 from wisprlite import focus
 
@@ -283,4 +290,58 @@ def test_a_tip_reaches_the_callback_and_the_model_runs_off_the_audio_thread():
     assert session._worker is not None
     assert all(name != session._worker.name for name in calls), (
         "the model call must not run on the thread feeding audio to the socket"
+    )
+
+
+def test_pipefocus_only_runs_on_deepgram():
+    # It needs LIVE transcription, which no other engine provides. Rather than
+    # half-working elsewhere it must simply not start — and the recording must
+    # be unaffected either way.
+    import inspect
+
+    from wisprlite import app
+
+    source = inspect.getsource(app.App._start_pipefocus)
+    assert 'cfg.engine != "deepgram"' in source, "the engine gate must exist"
+    assert 'getattr(cfg, "pipefocus", False)' in source, "and it must be opt-in"
+    # Every path through it must clear the session rather than leave a stale one.
+    assert source.count("self._meeting.focus_session = None") >= 2
+
+
+def test_a_focus_failure_cannot_stop_the_meeting_recording():
+    # Losing a recording to a focus problem would be indefensible: the recording
+    # is what the user came for.
+    import inspect
+
+    from wisprlite import app
+
+    source = inspect.getsource(app.App._start_pipefocus)
+    assert "except Exception" in source, "connection failures must be caught"
+    body = source.split("except Exception")[1]
+    assert "raise" not in body, "a focus failure must never propagate"
+
+
+def test_the_recorder_feeds_focus_from_the_realtime_path():
+    # The bridge is easy to write and easy to leave unwired; a source check
+    # catches that, the way the bleed-counter wiring test does.
+    import inspect
+
+    from wisprlite.meeting import MeetingRecorder
+
+    source = inspect.getsource(MeetingRecorder._write_block)
+    assert "focus_session" in source and "feed(label, pcm)" in source, (
+        "the realtime path must actually feed the focus session"
+    )
+
+
+def test_both_stop_paths_release_the_socket():
+    # Toggling the meeting off AND quitting the app must close the stream.
+    # Leaking a live websocket on quit keeps billing after the app is gone.
+    import inspect
+
+    from wisprlite import app
+
+    source = inspect.getsource(app.App)
+    assert source.count("_stop_pipefocus()") >= 2, (
+        "both the toggle-off and shutdown paths must release the session"
     )

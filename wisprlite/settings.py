@@ -524,6 +524,7 @@ def main(first_run: bool = False) -> None:
     autostart_var = tk.BooleanVar(value=autostart.is_enabled())
     auto_update_var = tk.BooleanVar(value=cfg.auto_update)
     beta_channel_var = tk.BooleanVar(value=(cfg.update_channel or "").lower() == "beta")
+    pipefocus_var = tk.BooleanVar(value=cfg.pipefocus)
     voice_commands_var = tk.BooleanVar(value=cfg.voice_commands)
     history_var = tk.BooleanVar(value=cfg.history_enabled)
 
@@ -668,6 +669,8 @@ def main(first_run: bool = False) -> None:
           "purpose and ship switched ON. Press Test to see whether yours get through.\n"
           "Microphone only — nothing on the call can trigger it. Prefer the spoken\n"
           "phrase above, which is speech and so survives that filtering.")
+    check(c, "PipeFocus \u2014 quiet nudges during a meeting", pipefocus_var,
+          "Off by default. Watches the conversation live and speaks up only when something\nconcrete is drifting \u2014 an action item with nobody on it, a decision deferred again.\nAt most one nudge every few minutes, and it stays quiet when nothing is wrong.\nNeeds Deepgram, because it is the only engine that transcribes live; it simply\ndoes not run on the others. Uses your transcription and AI-polish keys while a\nmeeting records.")
     r = row(c, "Clap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
     _sens_scale = ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
                             orient="horizontal", length=130)
@@ -1112,6 +1115,7 @@ def main(first_run: bool = False) -> None:
         cfg.sounds = bool(sounds_var.get())
         cfg.auto_update = bool(auto_update_var.get())
         cfg.update_channel = "beta" if beta_channel_var.get() else "stable"
+        cfg.pipefocus = bool(pipefocus_var.get())
         cfg.voice_commands = bool(voice_commands_var.get())
         cfg.history_enabled = bool(history_var.get())
         vh = []

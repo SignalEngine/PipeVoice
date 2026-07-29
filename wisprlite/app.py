@@ -454,6 +454,7 @@ class App:
             try:
                 self._meeting.stop()
             finally:
+                self._stop_pipefocus()
                 self._meeting_active = False
                 self._meeting_degraded = False
                 if getattr(self, "overlay", None) is not None:
@@ -467,6 +468,7 @@ class App:
         self._meeting_active = True
         self._meeting_degraded = False
         self._meeting_errors_reported.clear()
+        self._start_pipefocus()
         try:
             self._meeting.start()
         except Exception as exc:
@@ -478,6 +480,52 @@ class App:
             self.overlay.show_meeting()
         self._set_icon("meeting")
         self.tray.update()
+
+    def _start_pipefocus(self) -> None:
+        """Attach a live focus session, if the user asked for one.
+
+        Deepgram ONLY: PipeFocus needs live streaming transcription and no other
+        engine provides it. Rather than half-work elsewhere it simply does not
+        run. Anything failing here must leave the RECORDING untouched — losing a
+        meeting to a focus problem would be indefensible.
+        """
+        self._meeting.focus_session = None
+        cfg = self.cfg
+        if not getattr(cfg, "pipefocus", False) or cfg.engine != "deepgram":
+            return
+        try:
+            from . import cleanup, focus
+            from .engines.deepgram_engine import focus_stream
+
+            def completion(messages):
+                return cleanup.chat_completion(
+                    messages, cfg.cleanup_provider, cfg.cleanup_model
+                )
+
+            session = focus.FocusSession(
+                connect=lambda on_text: focus_stream(cfg, on_text),
+                completion=completion,
+                on_tip=self._show_focus_tip,
+            )
+            session.start()
+            self._meeting.focus_session = session
+        except Exception as exc:
+            log.info("PipeFocus unavailable: %s", exc)
+            self._meeting.focus_session = None
+
+    def _stop_pipefocus(self) -> None:
+        session = getattr(self._meeting, "focus_session", None)
+        self._meeting.focus_session = None
+        if session is not None:
+            try:
+                session.stop()
+            except Exception:
+                pass
+
+    def _show_focus_tip(self, tip: str, because: str) -> None:
+        overlay = getattr(self, "overlay", None)
+        if overlay is not None and hasattr(overlay, "show_focus_tip"):
+            overlay.show_focus_tip(tip, because)
 
     def _check_meeting_errors(self) -> None:
         if not self._meeting_active:
@@ -803,6 +851,7 @@ class App:
             try:
                 self._meeting.stop()
             finally:
+                self._stop_pipefocus()
                 self._meeting_active = False
         self.overlay.stop()
         self.tray.stop()
