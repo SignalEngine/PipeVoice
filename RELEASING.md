@@ -29,14 +29,11 @@ Users opt in with **Settings → Automatic updates → "Get updates early (beta)
    git push origin v2.33.0
    ```
 
-3. **Mark it a prerelease** as soon as CI publishes it:
-   ```
-   gh release edit v2.33.0 --prerelease
-   ```
-   Beta installs pick it up. Everyone else still sees the previous version —
+3. **CI already publishes it as a prerelease** (see build.yml). Beta installs
+   pick it up automatically. Everyone else still sees the previous version —
    verify that:
    ```
-   gh api repos/SignalEngine/PipeVoice/releases/latest -q .tag_name   # the OLD tag
+   gh api repos/Powleads/PipeVoice/releases/latest -q .tag_name   # the OLD tag
    ```
 
 4. **Soak it.** At least a day of real use, and specifically open the app cold:
@@ -48,7 +45,7 @@ Users opt in with **Settings → Automatic updates → "Get updates early (beta)
    ```
    Confirm the endpoint installs actually poll:
    ```
-   gh api repos/SignalEngine/PipeVoice/releases/latest -q .tag_name   # the NEW tag
+   gh api repos/Powleads/PipeVoice/releases/latest -q .tag_name   # the NEW tag
    ```
 
 ## If a promoted release is bad

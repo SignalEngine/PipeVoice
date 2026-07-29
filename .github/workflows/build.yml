@@ -85,6 +85,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          # ALWAYS a prerelease first. /releases/latest excludes prereleases, so
+          # this is what keeps a new build away from stable installs. Publishing
+          # normally and editing it afterwards leaves a window in which anyone
+          # polling receives it — which defeats the ring entirely.
+          # Promote deliberately:  gh release edit vX.Y.Z --prerelease=false --latest
+          prerelease: true
           body: ${{ steps.relnotes.outputs.body }}
           files: |
             installer/Output/Pipevoice-Setup.exe

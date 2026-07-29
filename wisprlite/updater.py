@@ -150,15 +150,32 @@ def info_from_latest(rel: dict) -> dict | None:
     return {"version": rel["version"], "tag": rel["tag"], "url": rel["url"], "sha256": sha256}
 
 
+def _on_beta() -> bool:
+    try:
+        return str(getattr(config.Config.load(), "update_channel", "")).lower() == "beta"
+    except Exception:
+        return False
+
+
 def recent_releases(n: int = 6) -> list:
-    """Recent releases for the changelog: [{tag, name, published_at, body}]."""
+    """Recent releases for the changelog: [{tag, name, published_at, body}].
+
+    Hides prereleases from stable installs. The About window offers its first
+    entry as a download, so without this filter "Check again" hands a stable
+    user the very build the staging ring is keeping away from them.
+    """
     try:
         data = _api_json(f"https://api.github.com/repos/{REPO}/releases?per_page={int(n)}")
     except Exception as exc:
         log.info("releases list fetch failed: %s", exc)
         return []
     out = []
+    beta = _on_beta()
     for rel in (data if isinstance(data, list) else []):
+        if rel.get("draft"):
+            continue
+        if rel.get("prerelease") and not beta:
+            continue
         setup_url = sha_url = None
         for a in rel.get("assets", []):
             nm = a.get("name", "")

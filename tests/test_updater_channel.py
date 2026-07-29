@@ -118,3 +118,42 @@ def test_an_unreadable_config_still_updates_on_stable():
         updater.__version__ = original
     assert result["tag"] == "v2.32.1"
     assert all("per_page" not in u for u in urls)
+
+
+def test_about_window_does_not_leak_a_prerelease_to_stable():
+    # The About window offers recent_releases()[0] as a download, so without a
+    # channel filter "Check again" hands a stable user exactly the build the
+    # staging ring is keeping away from them — bypassing the ring with a button.
+    def fake_api(url, timeout=10):
+        return ALL
+
+    original_api = updater._api_json
+    updater._api_json = fake_api
+    try:
+        updater.config.Config.load = classmethod(
+            lambda cls: types.SimpleNamespace(update_channel="stable")
+        )
+        tags = [rel["tag"] for rel in updater.recent_releases(8)]
+        assert "v2.33.0" not in tags, "a prerelease must not reach a stable install"
+        assert "v9.9.9" not in tags, "a draft must reach nobody"
+        assert "v2.32.1" in tags, "promoted releases must still be listed"
+
+        updater.config.Config.load = classmethod(
+            lambda cls: types.SimpleNamespace(update_channel="beta")
+        )
+        beta_tags = [rel["tag"] for rel in updater.recent_releases(8)]
+        assert "v2.33.0" in beta_tags, "beta installs should see the prerelease"
+        assert "v9.9.9" not in beta_tags, "a draft must reach nobody, beta included"
+    finally:
+        updater._api_json = original_api
+
+
+def test_ci_publishes_tag_builds_as_a_prerelease():
+    # Publishing normally and editing afterwards leaves a window where any
+    # stable install polling receives the untested build — the ring would only
+    # work if nobody checked for updates during those few minutes.
+    workflow = pathlib.Path(__file__).resolve().parent.parent / ".github/workflows/build.yml"
+    text = workflow.read_text()
+    assert "prerelease: true" in text, (
+        "tag builds must publish as a prerelease; promotion is a deliberate act"
+    )
