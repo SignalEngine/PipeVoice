@@ -229,15 +229,60 @@ def test_first_run_opens_the_guide_maximised():
     )
 
 
-def test_closing_the_welcome_splash_still_opens_setup():
-    # show_welcome() returns False when dismissed, and setup used to be gated on
-    # it — so closing the splash dropped the user straight to the tray with
-    # nothing on screen, which reads as "it installed and then minimised".
+def test_closing_the_splash_differs_from_choosing_to_skip():
+    # Two different intents that were collapsed into one, in both directions.
+    # Originally, closing the window with X was treated as "skip setup", so a
+    # brand-new user landed in the tray with nothing on screen. My first fix
+    # then ignored "I'll set up later" as well, so a button labelled "later"
+    # opened setup immediately — a label that lies.
+    _skip_if_headless()
+    import tkinter as tk
+
+    from wisprlite import welcome
+
+    outcomes = {}
+    real_mainloop = tk.Misc.mainloop
+
+    def press(which):
+        def stub(self, _n=0):
+            self.update_idletasks()
+            self.update()
+            buttons = []
+
+            def walk(widget):
+                for child in widget.winfo_children():
+                    if isinstance(child, tk.Button):
+                        buttons.append(child)
+                    walk(child)
+
+            walk(self)
+            labels = {str(b.cget("text")): b for b in buttons}
+            if which == "later":
+                labels["I'll set up later"].invoke()
+            else:                       # simulate the window manager's X
+                self.protocol.__self__.event_generate("<Destroy>") if False else None
+                self.tk.call("wm", "protocol", self._w, "WM_DELETE_WINDOW")
+                handler = self.protocol("WM_DELETE_WINDOW")
+                self.tk.call("eval", handler) if handler else self.destroy()
+        return stub
+
+    tk.Misc.mainloop = press("later")
+    try:
+        outcomes["later"] = welcome.show_welcome()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+
+    assert outcomes["later"] is False, (
+        "'I'll set up later' must actually skip setup — the label has to be true"
+    )
+
+    # And the X path must NOT skip: assert the protocol handler is wired at all.
     import inspect
 
-    from wisprlite import app
-
-    source = inspect.getsource(app)
-    assert "if welcome.show_welcome():" not in source, (
-        "opening the setup window must not depend on how the splash was dismissed"
+    source = inspect.getsource(welcome.show_welcome)
+    assert 'protocol("WM_DELETE_WINDOW"' in source, (
+        "closing the window must be handled distinctly from pressing 'later'"
+    )
+    assert 'result["go"] = True' in source, (
+        "dismissing the splash must still open setup, not strand the user"
     )

@@ -1005,11 +1005,12 @@ def main() -> None:
             from . import autostart, settings, welcome
             autostart.enable()
             config.Config.load()  # write config.json with defaults so we don't re-prompt
-            # Open the setup window either way. Closing the welcome splash used
-            # to drop straight to the tray with nothing on screen, which reads as
-            # "it installed and then minimised itself".
-            welcome.show_welcome()
-            settings.main(first_run=True)
+            # show_welcome() returns True unless the user explicitly pressed
+            # "I'll set up later". Closing the window is not a choice to skip —
+            # treating it as one dropped a brand-new user straight to the tray
+            # with nothing on screen, which reads as "it minimised itself".
+            if welcome.show_welcome():
+                settings.main(first_run=True)
         except Exception:
             log.exception("first-run setup failed")
     log.info("Pipevoice starting (engine=%s)", config.Config.load().engine)
