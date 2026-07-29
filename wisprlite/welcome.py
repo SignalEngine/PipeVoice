@@ -147,7 +147,6 @@ def show_welcome() -> bool:
     def later():
         # An explicit choice to skip — honour it.
         result["go"] = False
-        result["chose"] = True
         root.destroy()
 
     def dismissed():
