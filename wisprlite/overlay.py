@@ -595,6 +595,60 @@ class Overlay:
             bottom[:0] = (x, cy + half)
         return top + bottom
 
+    @staticmethod
+    def _make_movable(top, frame, *, dismiss_after: int) -> None:
+        """Let a popup be dragged, and give it a real close button.
+
+        Binding <Button-1> to destroy meant ANY click killed it — including the
+        press that starts a drag, so it could never be moved out of the way. A
+        nudge that lands over the thing you are reading has to be movable, not
+        merely dismissible.
+
+        Dragging also cancels the auto-dismiss: if you are moving it somewhere,
+        you want to keep it.
+        """
+        import tkinter as tk
+
+        state = {"x": 0, "y": 0, "timer": top.after(dismiss_after, top.destroy)}
+
+        def press(event) -> None:
+            state["x"], state["y"] = event.x_root, event.y_root
+
+        def drag(event) -> None:
+            if state["timer"] is not None:
+                top.after_cancel(state["timer"])
+                state["timer"] = None
+            dx = event.x_root - state["x"]
+            dy = event.y_root - state["y"]
+            state["x"], state["y"] = event.x_root, event.y_root
+            top.geometry(f"+{top.winfo_x() + dx}+{top.winfo_y() + dy}")
+
+        # Reserve room for the button before creating it. It is placed at the
+        # frame's right edge, and the frame is only as wide as its widest child,
+        # so without this the longest line of text always runs under the glyph —
+        # on a wrapped PipeFocus tip the two overlapped exactly.
+        for child in frame.winfo_children():
+            child.pack_configure(padx=(0, 20))
+
+        close = tk.Label(frame, text="\u2715", bg=frame.cget("bg"),
+                         fg=PALETTE["muted"], cursor="hand2",
+                         font=("Segoe UI", 10, "bold"))
+        close.place(relx=1.0, rely=0.0, anchor="ne")
+        close.bind("<Button-1>", lambda _event: top.destroy())
+        close.bind("<Enter>", lambda _e: close.config(fg=PALETTE["fg"]))
+        close.bind("<Leave>", lambda _e: close.config(fg=PALETTE["muted"]))
+
+        # Bind ONLY the toplevel. Tk delivers a child's event to the toplevel's
+        # bindtag as well, so binding both fires every handler TWICE — and the
+        # second drag call computes dx=0 from an already-updated origin and an
+        # un-processed winfo_x(), writing the old position straight back. The
+        # popup stayed exactly where it was.
+        top.bind("<Button-1>", press, add="+")
+        top.bind("<B1-Motion>", drag, add="+")
+        for widget in (top, frame, *frame.winfo_children()):
+            if widget is not close:
+                widget.configure(cursor="fleur")
+
     def _render_focus_tip(self, canvas, tip: str, because: str) -> None:
         """A small, self-dismissing nudge. Never modal, never over the call."""
         try:
@@ -619,8 +673,7 @@ class Overlay:
             x = max(0, top.winfo_screenwidth() - width - 40)
             y = max(0, top.winfo_screenheight() - height - 190)
             top.geometry(f"+{x}+{y}")
-            top.after(14000, top.destroy)
-            top.bind("<Button-1>", lambda _event: top.destroy())
+            self._make_movable(top, frame, dismiss_after=14000)
         except Exception:
             pass          # a nudge must never disturb the meeting it comments on
 
@@ -665,8 +718,7 @@ class Overlay:
             y = max(0, top.winfo_screenheight() - height - 150)
             top.geometry(f"+{x}+{y}")
             # Never modal and never sticky: this must not sit over a live call.
-            top.after(12000, top.destroy)
-            top.bind("<Button-1>", lambda _event: top.destroy())
+            Overlay._make_movable(top, frame, dismiss_after=12000)
         except Exception:
             pass          # a warning must never disturb the recording itself
 

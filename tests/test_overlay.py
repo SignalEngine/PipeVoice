@@ -163,3 +163,77 @@ def test_bleed_warning_rearms_for_the_next_meeting():
     assert state["bleed_warned"] is True, "same meeting must not re-warn"
     tick(2.0)
     assert state["bleed_warned"] is False, "a new meeting must be able to warn"
+
+
+def test_a_popup_can_be_dragged_and_is_not_killed_by_a_click():
+    import pytest
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from uistub import have_display
+
+    if not have_display():
+        pytest.skip("no X display; run under xvfb-run")
+
+    # Binding <Button-1> to destroy meant ANY click closed it — including the
+    # press that starts a drag, so a nudge landing over what you were reading
+    # could not be moved out of the way.
+    import tkinter as tk
+
+    from wisprlite.overlay import Overlay
+
+    root = tk.Tk()
+    try:
+        canvas = tk.Canvas(root)
+        canvas.pack()
+        root.update()
+        Overlay._show_bleed_warning(object(), canvas)
+        root.update_idletasks()
+        root.update()
+
+        tops = [w for w in root.winfo_children() if isinstance(w, tk.Toplevel)]
+        assert len(tops) == 1
+        top = tops[0]
+        body = next(w for w in top.winfo_children() if isinstance(w, tk.Frame))
+        labels = [w for w in body.winfo_children() if isinstance(w, tk.Label)]
+        close = [w for w in labels if w.cget("text") == "✕"]
+        text = next(w for w in labels if w.cget("text") != "✕")
+        assert close, "it needs a real close control, since clicking no longer closes it"
+
+        x0, y0 = top.winfo_x(), top.winfo_y()
+        text.event_generate("<Button-1>", x=5, y=5)
+        root.update()
+        assert [w for w in root.winfo_children() if isinstance(w, tk.Toplevel)], (
+            "a plain click must NOT dismiss it"
+        )
+
+        # Handlers are bound only on the toplevel: Tk delivers child events to
+        # the toplevel bindtag too, so binding both fires twice and the second
+        # call writes the old position back, leaving it motionless.
+        # Drag by grabbing the TEXT, which is how anyone actually moves it, and
+        # is the path that double-fires: Tk delivers a child's event to the
+        # toplevel bindtag as well. Generating on `top` alone would pass even
+        # with the bug present.
+        text.event_generate("<Button-1>", rootx=x0 + 20, rooty=y0 + 20)
+        root.update()
+        text.event_generate("<B1-Motion>", rootx=x0 + 140, rooty=y0 + 90)
+        top.update_idletasks()
+        root.update()
+        assert (top.winfo_x() - x0, top.winfo_y() - y0) == (120, 70), (
+            f"drag should move it; got {(top.winfo_x() - x0, top.winfo_y() - y0)}"
+        )
+
+        # The button is placed at the frame's right edge and the frame is only
+        # as wide as its widest child, so text ran straight under the glyph.
+        button = close[0]
+        button_left = button.winfo_x()
+        for label in labels:
+            if label is not button:
+                assert label.winfo_x() + label.winfo_width() <= button_left, (
+                    "text runs under the close button"
+                )
+
+        button.event_generate("<Button-1>")
+        root.update()
+        assert not [w for w in root.winfo_children() if isinstance(w, tk.Toplevel)]
+    finally:
+        root.destroy()
