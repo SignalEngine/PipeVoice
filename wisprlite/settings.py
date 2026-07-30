@@ -165,12 +165,16 @@ def _build_guide(parent, wheel) -> None:
         inner.pack(fill="x")
         tk.Label(inner, text="ON THIS PAGE", bg=CARD, fg=MUTED,
                  font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 7))
+        # Re-flow into rows on resize. Packed side="left" in one strip, the
+        # rightmost chips fall off a narrower window silently — no scrollbar, no
+        # sign that navigation is missing.
         strip = tk.Frame(inner, bg=CARD)
         strip.pack(fill="x")
+        chips = []
         for label, key in entries:
             chip = tk.Label(strip, text=label, bg=BG, fg=FG, cursor="hand2",
                             font=("Segoe UI", 9), padx=10, pady=4)
-            chip.pack(side="left", padx=(0, 7), pady=2)
+            chips.append(chip)
 
             def jump(_event, k=key):
                 target = _anchors.get(k)
@@ -179,11 +183,30 @@ def _build_guide(parent, wheel) -> None:
                 gc.update_idletasks()
                 top = target.winfo_y()
                 total = max(1, g.winfo_height())
-                gc.yview_moveto(max(0.0, (top - 20) / total))
+                gc.yview_moveto(min(1.0, max(0.0, (top - 20) / total)))
 
             chip.bind("<Button-1>", jump)
             chip.bind("<Enter>", lambda e, c=chip: c.config(bg=winui.PALETTE["row_hover"]))
             chip.bind("<Leave>", lambda e, c=chip: c.config(bg=BG))
+
+        def reflow(event=None) -> None:
+            width = strip.winfo_width()
+            if width <= 1:
+                return
+            for chip in chips:
+                chip.grid_forget()
+            row = col = used = 0
+            for chip in chips:
+                need = chip.winfo_reqwidth() + 7
+                if used and used + need > width:
+                    row += 1
+                    col = used = 0
+                chip.grid(row=row, column=col, padx=(0, 7), pady=2, sticky="w")
+                used += need
+                col += 1
+
+        strip.bind("<Configure>", lambda e: reflow(), add="+")
+        strip.after(0, reflow)
 
     contents([
         ("How it works", "how"),
