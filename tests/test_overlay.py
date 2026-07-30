@@ -237,3 +237,73 @@ def test_a_popup_can_be_dragged_and_is_not_killed_by_a_click():
         assert not [w for w in root.winfo_children() if isinstance(w, tk.Toplevel)]
     finally:
         root.destroy()
+
+
+def test_dragging_the_meeting_pill_moves_it_instead_of_stopping_the_meeting():
+    # The pill has no title bar, and its body was bound straight to
+    # toggle_meeting — so grabbing it to move it STOPPED the recording and hid
+    # the window. Drag must move it; only a clean click may toggle.
+    import pytest
+    import tkinter as tk
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from uistub import have_display
+
+    if not have_display():
+        pytest.skip("no X display; run under xvfb-run")
+
+    from wisprlite.overlay import Overlay
+
+    root = tk.Tk()
+    try:
+        root.geometry("200x60+100+100")
+        canvas = tk.Canvas(root, width=200, height=60)
+        canvas.pack()
+        root.update()
+
+        clicks = []
+        Overlay._bind_drag_or_click(canvas, root, lambda: clicks.append(1))
+
+        x0, y0 = root.winfo_x(), root.winfo_y()
+        canvas.event_generate("<Button-1>", rootx=x0 + 10, rooty=y0 + 10)
+        canvas.event_generate("<B1-Motion>", rootx=x0 + 90, rooty=y0 + 50)
+        root.update_idletasks()
+        canvas.event_generate("<ButtonRelease-1>", rootx=x0 + 90, rooty=y0 + 50)
+        root.update()
+        assert (root.winfo_x() - x0, root.winfo_y() - y0) == (80, 40), (
+            f"drag must move the pill; got {(root.winfo_x() - x0, root.winfo_y() - y0)}"
+        )
+        assert clicks == [], "a drag must NOT toggle the meeting"
+
+        # A clean click still works, or the pill becomes impossible to use.
+        x1, y1 = root.winfo_x(), root.winfo_y()
+        canvas.event_generate("<Button-1>", rootx=x1 + 10, rooty=y1 + 10)
+        canvas.event_generate("<ButtonRelease-1>", rootx=x1 + 10, rooty=y1 + 10)
+        root.update()
+        assert clicks == [1], "a click without a drag must still toggle"
+        assert (root.winfo_x(), root.winfo_y()) == (x1, y1)
+
+        # A pixel of jitter during a click is still a click, not a drag.
+        canvas.event_generate("<Button-1>", rootx=x1 + 10, rooty=y1 + 10)
+        canvas.event_generate("<B1-Motion>", rootx=x1 + 11, rooty=y1 + 10)
+        canvas.event_generate("<ButtonRelease-1>", rootx=x1 + 11, rooty=y1 + 10)
+        root.update()
+        assert clicks == [1, 1], "1px of jitter must not swallow the click"
+    finally:
+        root.destroy()
+
+
+def test_the_pill_actually_uses_the_drag_binding():
+    # A working helper nobody calls fixes nothing: the drag test builds its own
+    # canvas, so it stays green even if _run still binds <Button-1> straight to
+    # the queue. This asserts the wiring itself.
+    import inspect
+
+    from wisprlite.overlay import Overlay
+
+    source = inspect.getsource(Overlay._run)
+    assert "_bind_drag_or_click" in source, "the pill must be bound through the drag helper"
+    assert 'bind("<Button-1>"' not in source, (
+        "a raw <Button-1> binding on the pill toggles the meeting on the press "
+        "that starts a drag"
+    )

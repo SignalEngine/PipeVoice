@@ -181,7 +181,8 @@ class Overlay:
 
         canvas = tk.Canvas(root, width=WIN_W, height=WIN_H, bg=bg, highlightthickness=0)
         canvas.pack()
-        canvas.bind("<Button-1>", lambda _event: self._q.put(("meeting_click", None, "")))
+        self._bind_drag_or_click(
+            canvas, root, lambda: self._q.put(("meeting_click", None, "")))
         canvas.bind("<Enter>", lambda _event: self._q.put(("hover", True, "")))
         canvas.bind("<Leave>", lambda _event: self._q.put(("hover", False, "")))
         root.withdraw()
@@ -594,6 +595,42 @@ class Overlay:
             top.extend((x, cy - half))
             bottom[:0] = (x, cy + half)
         return top + bottom
+
+    @staticmethod
+    def _bind_drag_or_click(widget, window, on_click, *, threshold: int = 3) -> None:
+        """Drag `window` by `widget`; only a click that did NOT drag fires on_click.
+
+        The overlay pill has no title bar, so the only way to move it is to drag
+        its body — and its body was wired straight to "toggle the meeting". Every
+        attempt to reposition it stopped the recording and hid the window, which
+        reads exactly like the pill closing the instant you touch it.
+
+        The threshold keeps a normal click a click: a few pixels of mouse jitter
+        between press and release must not be read as a drag, or the pill would
+        become impossible to click instead of impossible to move.
+        """
+        state = {"x": 0, "y": 0, "moved": False}
+
+        def press(event) -> None:
+            state["x"], state["y"] = event.x_root, event.y_root
+            state["moved"] = False
+
+        def drag(event) -> None:
+            dx = event.x_root - state["x"]
+            dy = event.y_root - state["y"]
+            if not state["moved"] and abs(dx) + abs(dy) < threshold:
+                return
+            state["moved"] = True
+            state["x"], state["y"] = event.x_root, event.y_root
+            window.geometry(f"+{window.winfo_x() + dx}+{window.winfo_y() + dy}")
+
+        def release(_event) -> None:
+            if not state["moved"]:
+                on_click()
+
+        widget.bind("<Button-1>", press)
+        widget.bind("<B1-Motion>", drag)
+        widget.bind("<ButtonRelease-1>", release)
 
     @staticmethod
     def _make_movable(top, frame, *, dismiss_after: int) -> None:
