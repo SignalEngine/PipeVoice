@@ -545,7 +545,6 @@ def main(first_run: bool = False) -> None:
             tk.Frame(c, bg=DIV, height=1).pack(fill="x")
         c._first = False
 
-    _pending_tips: list = []
 
     def row(c, text, desc=None):
         _divide(c)
@@ -559,20 +558,15 @@ def main(first_run: bool = False) -> None:
         if desc:
             tk.Label(left, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 8),
                      wraplength=330, justify="left").pack(anchor="w", pady=(2, 0))
-            # The inline description wraps at 330px and gets clipped on a narrow
-            # row; the tooltip carries the whole thing, and follows the control
-            # so hovering the thing you are about to change explains it.
-            winui.tooltip(r, desc)
-            winui.tooltip(left, desc)
-            _pending_tips.append((right, desc))
+            # No tooltip here. The description is already printed above, in full
+            # — wraplength wraps, it never truncates — so a popup repeating it
+            # said nothing new and covered the next row while it did so.
         return right
 
     def stack(c, text, desc=None):
         _divide(c)
         r = tk.Frame(c, bg=CARD, padx=18, pady=13)
         r.pack(fill="x")
-        if desc:
-            winui.tooltip(r, desc)
         tk.Label(r, text=text, bg=CARD, fg=FG, font=("Segoe UI", 10)).pack(anchor="w")
         if desc:
             tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 8),
@@ -587,9 +581,6 @@ def main(first_run: bool = False) -> None:
         r.pack(fill="x")
         box = ttk.Checkbutton(r, text=text, variable=var, style="Card.TCheckbutton")
         box.pack(anchor="w")
-        if desc:
-            winui.tooltip(r, desc)
-            winui.tooltip(box, desc)
         if desc:
             tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 8),
                      wraplength=470, justify="left").pack(anchor="w", padx=(25, 0), pady=(3, 0))
@@ -686,23 +677,14 @@ def main(first_run: bool = False) -> None:
             value=dict(voice_opts).get((_e.get("voice") if isinstance(_e, dict) else ""), "(none)")))
     picker_var = tk.StringVar(value=cfg.voice_picker_hotkey)
 
-    def _inherit_tip(widget, parent):
-        """Give a control the same explanation as the row it was created in."""
-        for holder, desc in _pending_tips:
-            if holder is parent:
-                winui.tooltip(widget, desc)
-                return
-
     def combo(parent, var, options, width=22):
         c = ttk.Combobox(parent, textvariable=var, values=options, state="readonly", width=width)
         c.pack(side="left")
-        _inherit_tip(c, parent)
         return c
 
     def entry(parent, var, width=22, show=None):
         e = ttk.Entry(parent, textvariable=var, width=width, show=(show or ""))
         e.pack(side="left")
-        _inherit_tip(e, parent)
         return e
 
     # --- General ---

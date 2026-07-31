@@ -92,25 +92,56 @@ def apply_theme(root):
     return style
 
 
-def tooltip(widget, text: str) -> None:
+# Exactly one tooltip may be on screen. Each widget used to own its own popup
+# and hide it only on its OWN <Leave>; a missed leave (the pointer jumping, the
+# widget scrolling away, the popup landing under the cursor) stranded it, so
+# they stacked up as the mouse moved — three were mapped at once from a single
+# hover, two of them duplicates.
+_ACTIVE: dict = {"tip": None, "timer": None}
+
+
+def _hide_tooltip(widget) -> None:
+    timer = _ACTIVE.get("timer")
+    if timer is not None:
+        try:
+            widget.after_cancel(timer)
+        except Exception:
+            pass
+        _ACTIVE["timer"] = None
+    tip = _ACTIVE.get("tip")
+    if tip is not None:
+        try:
+            tip.destroy()
+        except Exception:
+            pass
+        _ACTIVE["tip"] = None
+
+
+def tooltip(widget, text: str, *, delay: int = 450) -> None:
     """Attach a hover tooltip (plain Tk, dark themed, coral hairline border).
 
-    Shows `text` in a small popup below the widget on mouse-enter; hides on leave
-    or destroy. Safe to call on any widget; no-op if text is empty.
+    Beside the widget, never under it: a tooltip placed below covers whatever
+    comes next, so it hid the very row you were moving toward.
+
+    It waits `delay` ms before appearing, so sweeping the pointer across a list
+    or scrolling past a control does not fire a trail of popups, and it hides on
+    scroll or click. Only one is ever on screen. No-op if text is empty.
+
+    Do NOT attach one whose text is already visible on screen — a popup that
+    repeats the description printed under the label adds nothing and occludes
+    its neighbours.
     """
     if not text:
         return
     import tkinter as tk
 
     p = PALETTE
-    state = {"tip": None}
 
-    def show(_=None):
-        if state["tip"] is not None:
-            return
+    def build() -> None:
+        _ACTIVE["timer"] = None
         try:
-            x = widget.winfo_rootx() + 14
-            y = widget.winfo_rooty() + widget.winfo_height() + 6
+            if not widget.winfo_ismapped():
+                return
             tip = tk.Toplevel(widget)
             tip.wm_overrideredirect(True)
             tip.configure(bg=p["accent"])  # 1px coral hairline
@@ -118,26 +149,47 @@ def tooltip(widget, text: str) -> None:
             frame.pack(padx=1, pady=1)
             tk.Label(frame, text=text, bg=p["popover"], fg=p["fg"], justify="left",
                      wraplength=320, font=("Segoe UI", 9)).pack()
+            tip.update_idletasks()
+            width, height = tip.winfo_reqwidth(), tip.winfo_reqheight()
+            screen_w, screen_h = tip.winfo_screenwidth(), tip.winfo_screenheight()
+
+            # Beside the control, flipping to its left when the right edge of
+            # the screen is too close, and pulled up when it would run off the
+            # bottom. Off-screen is just a different way of being unreadable.
+            x = widget.winfo_rootx() + widget.winfo_width() + 12
+            if x + width > screen_w - 8:
+                x = widget.winfo_rootx() - width - 12
+            x = max(8, min(x, screen_w - width - 8))
+            y = max(8, min(widget.winfo_rooty(), screen_h - height - 8))
+
             tip.wm_geometry(f"+{x}+{y}")
             try:
                 tip.attributes("-topmost", True)
             except Exception:
                 pass
-            state["tip"] = tip
+            _ACTIVE["tip"] = tip
         except Exception:
-            state["tip"] = None
+            _ACTIVE["tip"] = None
 
-    def hide(_=None):
-        if state["tip"] is not None:
-            try:
-                state["tip"].destroy()
-            except Exception:
-                pass
-            state["tip"] = None
+    def show(_=None) -> None:
+        _hide_tooltip(widget)          # never let two coexist
+        try:
+            _ACTIVE["timer"] = widget.after(delay, build)
+        except Exception:
+            _ACTIVE["timer"] = None
+
+    def hide(_=None) -> None:
+        _hide_tooltip(widget)
 
     widget.bind("<Enter>", show, add="+")
     widget.bind("<Leave>", hide, add="+")
     widget.bind("<Destroy>", hide, add="+")
+    # <Button> covers clicks AND the X11 wheel, which arrives as buttons 4/5.
+    # Windows does not: there the wheel is <MouseWheel>, so it needs its own
+    # binding — and a Linux test cannot tell the two apart, because <Button>
+    # silently satisfies it. That is the binding every real user depends on.
+    widget.bind("<Button>", hide, add="+")
+    widget.bind("<MouseWheel>", hide, add="+")
 
 
 def dark_titlebar(root, color: str = DARK) -> None:
