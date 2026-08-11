@@ -181,5 +181,8 @@ def test_the_installer_creates_the_config_dir_the_key_shortcut_points_into():
     """Notepad cannot save into a folder that does not exist yet."""
     iss = (pathlib.Path(__file__).resolve().parent.parent
            / "installer" / "Pipevoice.iss").read_text(encoding="utf-8")
-    assert "[Dirs]" in iss
-    assert 'Name: "{userappdata}\\{#AppName}"' in iss
+    # Inno comments start with ';'. Match live directives only — otherwise
+    # commenting the section out still passes, which is no gate at all.
+    live = [ln.strip() for ln in iss.splitlines() if not ln.lstrip().startswith(";")]
+    assert "[Dirs]" in live
+    assert 'Name: "{userappdata}\\{#AppName}"' in live
