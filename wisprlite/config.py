@@ -34,22 +34,78 @@ CONFIG_PATH = config_dir() / "config.json"
 
 
 def _load_env() -> None:
-    """Load .env from cwd, next to the executable, and the config dir."""
+    """Load API keys from .env — config dir first, then the exe's dir, then cwd.
+
+    A key that is present but BLANK does not count as set. That one rule is the
+    whole fix for "Deepgram API key is missing" on an install that plainly had
+    one: the installer used to seed {app}\\.env from .env.example, which ships
+    `DEEPGRAM_API_KEY=` empty, and python-dotenv's override=False treats "" as
+    already-set. So the blank line won and the real key in %APPDATA% was never
+    read. It only bit the SHIPPED build: PyInstaller sets sys.frozen, which is
+    what makes dotenv search the working directory — and every Windows shortcut
+    starts Pipevoice with its working directory set to {app}.
+
+    Order is now explicit rather than a side effect of which call ran first.
+    %APPDATA%\\Pipevoice\\.env is the store of record because that is where
+    Settings and the first-run prompt write.
+    """
+    _apply_env_files(override=False)
+
+
+def reload_keys() -> None:
+    """Re-read the .env files after the user saves a key, and adopt the changes.
+
+    Same precedence as startup, and the same blank rule — this used to be a bare
+    load_dotenv(override=True) on the config dir alone, which read only one of
+    the three locations and would happily overwrite a working key with an empty
+    string if the file carried a blank line for it.
+    """
+    _apply_env_files(override=True)
+
+
+def _env_paths() -> list:
+    """The .env files we read, in precedence order. First non-blank value wins."""
+    paths = [config_dir() / ".env"]
     try:
-        from dotenv import load_dotenv
-    except Exception:
-        return
-    load_dotenv()  # cwd / parents
-    candidates = [config_dir() / ".env"]
-    try:
-        exe_dir = Path(sys.executable).resolve().parent
-        candidates.append(exe_dir / ".env")
+        paths.append(Path(sys.executable).resolve().parent / ".env")
     except Exception:
         pass
-    for p in candidates:
+    try:
+        from dotenv import find_dotenv
+
+        found = find_dotenv(usecwd=True)
+        if found:
+            paths.append(Path(found))
+    except Exception:
+        pass
+    return paths
+
+
+# Keys this process took from a .env file. A reload may replace those; it must
+# not touch a variable the user exported in their own environment, which outranks
+# every file and is nobody's business but theirs.
+_FROM_FILE: set = set()
+
+
+def _apply_env_files(*, override: bool) -> None:
+    try:
+        from dotenv import dotenv_values
+    except Exception:
+        return
+    seen = set()
+    for p in _env_paths():
         try:
-            if p.exists():
-                load_dotenv(p, override=False)
+            if not p.exists():
+                continue
+            for k, v in dotenv_values(p).items():
+                if k in seen or not (v or "").strip():
+                    continue
+                seen.add(k)   # a later file must not undercut an earlier one
+                current = os.environ.get(k, "").strip()
+                if current and not (override and k in _FROM_FILE):
+                    continue
+                os.environ[k] = v
+                _FROM_FILE.add(k)
         except Exception:
             pass
 

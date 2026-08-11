@@ -35,12 +35,17 @@ UninstallDisplayIcon={app}\{#AppExe}
 Source: "..\dist\Pipevoice\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\.env.example"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
-; Seed a real .env on first install only (user pastes their key into it).
-Source: "..\.env.example"; DestDir: "{app}"; DestName: ".env"; Flags: onlyifdoesntexist
+; NO stub .env here. Seeding one from .env.example gave every install a SECOND
+; key store next to the exe whose DEEPGRAM_API_KEY= was blank, and a blank read
+; as "already set" — so it silently masked the real key in %APPDATA%. Keys are
+; entered in the app (Settings > API keys) and live in {userappdata}\Pipevoice\.env.
+; An existing {app}\.env is left alone and is still read, so nobody loses a key.
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{group}\Edit API keys (.env)"; Filename: "notepad.exe"; Parameters: """{app}\.env"""
+; Point at the store the app actually writes to. This used to open {app}\.env,
+; so a key typed here and a key typed in Settings landed in different files.
+Name: "{group}\Edit API keys (.env)"; Filename: "notepad.exe"; Parameters: """{userappdata}\{#AppName}\.env"""
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: startup
 

@@ -890,9 +890,7 @@ class App:
     def _reload_config(self) -> None:
         # Pick up any API key the settings window just saved to the .env file.
         try:
-            from dotenv import load_dotenv
-
-            load_dotenv(config.config_dir() / ".env", override=True)
+            config.reload_keys()
         except Exception:
             pass
 
