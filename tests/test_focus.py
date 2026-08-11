@@ -375,3 +375,41 @@ def test_every_path_out_of_a_meeting_releases_the_socket():
     assert "_stop_pipefocus()" in after_start_failure, (
         "focus starts BEFORE the recorder; if the recorder throws it must be released"
     )
+
+
+def test_a_repeating_connect_failure_is_logged_once_not_once_per_retry(caplog):
+    """One meeting with no key wrote ~400 identical lines into the log."""
+    import logging
+    from wisprlite import focus as focus_mod
+
+    session = focus_mod.FocusSession.__new__(focus_mod.FocusSession)
+    session._connect = lambda _cb: (_ for _ in ()).throw(
+        RuntimeError("no Deepgram API key"))
+
+    with caplog.at_level(logging.INFO, logger="wisprlite"):
+        for _ in range(50):
+            assert session._open_conn() is False
+
+    same = [r for r in caplog.records if "no Deepgram API key" in r.getMessage()]
+    assert len(same) == 1, f"logged {len(same)} times"
+
+
+def test_a_different_failure_still_gets_logged(caplog):
+    """Deduping must not swallow a NEW problem."""
+    import logging
+    from wisprlite import focus as focus_mod
+
+    session = focus_mod.FocusSession.__new__(focus_mod.FocusSession)
+    errors = iter(["no Deepgram API key", "no Deepgram API key",
+                   "connection refused", "connection refused"])
+
+    def _connect(_cb):
+        raise RuntimeError(next(errors))
+
+    session._connect = _connect
+    with caplog.at_level(logging.INFO, logger="wisprlite"):
+        for _ in range(4):
+            session._open_conn()
+
+    msgs = [r.getMessage() for r in caplog.records if "connect failed" in r.getMessage()]
+    assert len(msgs) == 2, msgs

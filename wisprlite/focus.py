@@ -318,10 +318,16 @@ class FocusSession:
     def _open_conn(self) -> bool:
         try:
             self._conn = self._connect(self.on_text)
+            self._last_logged_error = ""
             return True
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
-            log.info("focus: connect failed: %s", exc)
+            # Once per streak, not once per retry. A missing key backs off to a
+            # 20s retry that never resolves itself, so one meeting wrote ~400
+            # identical lines — enough to bury anything else in the log.
+            if str(exc) != getattr(self, "_last_logged_error", None):
+                self._last_logged_error = str(exc)
+                log.info("focus: connect failed: %s", exc)
             return False
 
     def _run(self) -> None:

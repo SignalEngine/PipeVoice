@@ -86,6 +86,11 @@ def _env_paths() -> list:
 # every file and is nobody's business but theirs.
 _FROM_FILE: set = set()
 
+# Which .env supplied each key, for the startup log. Diagnosing "the key is
+# missing" took a theory and a repro because nothing recorded WHERE each key
+# came from — with three candidate files, that is the one fact that settles it.
+KEY_SOURCES: dict = {}
+
 
 def _apply_env_files(*, override: bool) -> None:
     try:
@@ -106,8 +111,23 @@ def _apply_env_files(*, override: bool) -> None:
                     continue
                 os.environ[k] = v
                 _FROM_FILE.add(k)
+                KEY_SOURCES[k] = str(p)
         except Exception:
             pass
+
+
+def key_sources_summary() -> str:
+    """One log line: where each API key came from. NEVER the key itself."""
+    names = ("DEEPGRAM_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
+             "OPENAI_API_KEY", "OPENROUTER_API_KEY")
+    bits = []
+    for name in names:
+        if not os.getenv(name, "").strip():
+            bits.append(f"{name}=MISSING")
+        else:
+            bits.append(f"{name}<-{KEY_SOURCES.get(name, 'environment')}")
+    files = [str(p) for p in _env_paths() if p.exists()]
+    return f"cwd={os.getcwd()} env files={files or 'none'} | " + " ".join(bits)
 
 
 _load_env()

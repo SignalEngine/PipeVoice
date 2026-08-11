@@ -34,6 +34,7 @@ def _isolate(monkeypatch, tmp_path, *, appdata: str | None, app: str | None,
     """
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     config._FROM_FILE.clear()
+    config.KEY_SOURCES.clear()
     for k in KEYS:
         monkeypatch.delenv(k, raising=False)
 
@@ -186,3 +187,33 @@ def test_the_installer_creates_the_config_dir_the_key_shortcut_points_into():
     live = [ln.strip() for ln in iss.splitlines() if not ln.lstrip().startswith(";")]
     assert "[Dirs]" in live
     assert 'Name: "{userappdata}\\{#AppName}"' in live
+
+
+def test_the_startup_log_line_names_the_file_and_never_the_key(monkeypatch, tmp_path):
+    """This line goes into a log users paste into chat. It must not carry secrets."""
+    secret = "dg_supersecret_value_9876543210"
+    _isolate(monkeypatch, tmp_path, appdata=f"DEEPGRAM_API_KEY={secret}\n", app=None)
+    config._load_env()
+
+    line = config.key_sources_summary()
+    assert secret not in line
+    assert "DEEPGRAM_API_KEY" in line
+    assert str(tmp_path / "appdata" / ".env") in line   # says WHICH file won
+
+
+def test_a_missing_key_is_reported_as_missing(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path, appdata=None, app=None)
+    config._load_env()
+    assert "DEEPGRAM_API_KEY=MISSING" in config.key_sources_summary()
+
+
+def test_the_summary_never_leaks_a_key_from_the_real_environment(monkeypatch, tmp_path):
+    """A shell-exported key is reported as sourced, not printed."""
+    secret = "env_secret_abcdefghijklmnop"
+    _isolate(monkeypatch, tmp_path, appdata=None, app=None)
+    monkeypatch.setenv("DEEPGRAM_API_KEY", secret)
+    config._load_env()
+
+    line = config.key_sources_summary()
+    assert secret not in line
+    assert "DEEPGRAM_API_KEY<-environment" in line
