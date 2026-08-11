@@ -175,3 +175,11 @@ def test_a_reload_does_not_trample_a_key_the_user_exported_themselves(monkeypatc
                                                encoding="utf-8")
     config.reload_keys()
     assert config.deepgram_key() == "fromenv123456789"
+
+
+def test_the_installer_creates_the_config_dir_the_key_shortcut_points_into():
+    """Notepad cannot save into a folder that does not exist yet."""
+    iss = (pathlib.Path(__file__).resolve().parent.parent
+           / "installer" / "Pipevoice.iss").read_text(encoding="utf-8")
+    assert "[Dirs]" in iss
+    assert 'Name: "{userappdata}\\{#AppName}"' in iss

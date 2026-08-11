@@ -41,6 +41,12 @@ Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 ; entered in the app (Settings > API keys) and live in {userappdata}\Pipevoice\.env.
 ; An existing {app}\.env is left alone and is still read, so nobody loses a key.
 
+[Dirs]
+; The app creates this on first run, but the "Edit API keys" shortcut below can
+; be clicked before the app has ever started — Notepad cannot save into a folder
+; that does not exist.
+Name: "{userappdata}\{#AppName}"
+
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 ; Point at the store the app actually writes to. This used to open {app}\.env,
