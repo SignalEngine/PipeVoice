@@ -164,6 +164,8 @@ def test_input_overflow_does_not_drop_good_mic_audio_from_transcript():
         recorder._on_mic_block(block, 160, None, "input overflow")
         recorder._on_mic_block(block, 160, None, None)
         recorder._write_block("desktop", block)
+        # The callback only queues now; stop() drains before closing.
+        recorder._drain_queue()
         recorder._close_waves()
         recorder._write_meta(stopped_at=None, duration=0.02)
 

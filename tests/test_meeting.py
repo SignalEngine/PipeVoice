@@ -159,9 +159,11 @@ def test_mid_recording_checkpoint_patches_wave_header():
         recorder._waves["mic"] = recorder._open_wave(path)
         block = np.full((1_600, 1), 0.25, dtype=np.float32)
 
-        with patch.object(meeting.time, "monotonic", side_effect=(10.0, 16.0)):
-            recorder._write_block("mic", block)
-            recorder._write_block("mic", block)
+        recorder._write_block("mic", block)
+        recorder._write_block("mic", block)
+        # The audio callback only appends. The checkpoint thread is what makes
+        # the half-written file playable.
+        recorder._checkpoint_once()
 
         with wave.open(str(path), "rb") as audio:
             assert audio.getnframes() == 3_200
@@ -755,8 +757,8 @@ def test_mic_only_live_session_refreshes_heartbeat_and_stays_live():
         stale = time.time() - 120.0
         os.utime(session / "meta.json", (stale, stale))
 
-        with patch.object(meeting.time, "monotonic", return_value=6.0):
-            recorder._write_block("mic", np.full((1_600, 1), 0.25, dtype=np.float32))
+        recorder._write_block("mic", np.full((1_600, 1), 0.25, dtype=np.float32))
+        recorder._checkpoint_once()
 
         listed = meetings_tab.list_sessions(pathlib.Path(tmp))
         assert listed[0]["status"] == "recording"
@@ -770,3 +772,183 @@ if __name__ == "__main__":
             fn()
             print(f"  ok  {name}")
     print("OK")
+
+
+def test_the_audio_callback_does_not_block_on_a_held_wave_lock():
+    """The P1 a reviewer caught: moving the disk I/O off the callback is not
+    enough while the callback still WAITS on the lock the slow work holds.
+
+    Both locks are taken by another thread here, exactly as the checkpoint's
+    seek+flush would hold them, and the callback must still return at once.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder._waves["mic"] = recorder._open_wave(pathlib.Path(tmp) / "mic.wav")
+        block = np.full((800, 1), 0.25, dtype=np.float32)
+
+        # The locks are held by ANOTHER thread that lets go shortly. A callback
+        # that waits on them finishes late instead of deadlocking, so a
+        # regression shows up as a failure rather than a hung test run.
+        holding = threading.Event()
+        release = threading.Event()
+
+        def hold_the_locks():
+            with recorder._wave_locks["mic"], recorder._state_lock:
+                holding.set()
+                release.wait(2.0)
+
+        holder = threading.Thread(target=hold_the_locks, daemon=True)
+        holder.start()
+        assert holding.wait(2.0)
+
+        # Drive the REAL PortAudio callback, not _enqueue — otherwise putting
+        # the direct write back into _on_mic_block leaves this test green.
+        started = time.monotonic()
+        for _ in range(20):
+            recorder._on_mic_block(block, 800, None, None)
+        elapsed = time.monotonic() - started
+
+        release.set()
+        holder.join(timeout=2.0)
+
+        assert elapsed < 0.25, f"callback blocked for {elapsed:.3f}s while locks were held"
+        recorder._close_waves()
+
+
+def test_the_callback_copies_the_buffer_it_is_handed():
+    """sounddevice reuses one buffer, so queueing a view records later audio."""
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        path = pathlib.Path(tmp) / "mic.wav"
+        recorder._waves["mic"] = recorder._open_wave(path)
+
+        reused = np.full((800, 1), 0.5, dtype=np.float32)
+        recorder._enqueue("mic", reused)
+        reused[:] = -0.5          # PortAudio refilling its buffer
+        recorder._drain_queue()
+        recorder._close_waves()
+
+        with wave.open(str(path), "rb") as audio:
+            first = np.frombuffer(audio.readframes(1), dtype="<i2")[0]
+        assert first > 0, f"queued a live view, not a copy (got {first})"
+
+
+def test_the_tail_of_a_recording_is_written_before_the_files_close():
+    """Everything still queued at stop is audio the user spoke."""
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        path = pathlib.Path(tmp) / "mic.wav"
+        recorder._waves["mic"] = recorder._open_wave(path)
+
+        block = np.full((800, 1), 0.25, dtype=np.float32)
+        for _ in range(10):
+            recorder._enqueue("mic", block)
+        recorder._drain_queue()
+        recorder._close_waves()
+
+        with wave.open(str(path), "rb") as audio:
+            assert audio.getnframes() == 8_000
+
+
+def test_a_full_queue_drops_a_block_rather_than_stalling_the_callback():
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder._waves["mic"] = recorder._open_wave(pathlib.Path(tmp) / "mic.wav")
+        block = np.full((800, 1), 0.25, dtype=np.float32)
+
+        for _ in range(meeting.PCM_QUEUE_LIMIT + 5):
+            recorder._enqueue("mic", block)
+
+        assert recorder.dropped_blocks == 5
+        recorder._drain_queue()
+        recorder._close_waves()
+
+
+def test_the_checkpoint_still_makes_a_half_written_recording_playable():
+    """Moving the patch must not cost the crash-safety it was there for."""
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp) / "meeting-crash"
+        session.mkdir()
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder.session_dir = session
+        recorder._started_at = "2026-08-11T12:00:00+00:00"
+        recorder._active = True
+        path = session / "mic.wav"
+        recorder._waves["mic"] = recorder._open_wave(path)
+
+        block = np.full((1_600, 1), 0.25, dtype=np.float32)
+        for _ in range(5):
+            recorder._write_block("mic", block)
+        recorder._checkpoint_once()
+
+        # Read it WITHOUT closing — this is the crashed-process case.
+        with wave.open(str(path), "rb") as audio:
+            assert audio.getnframes() == 8_000
+        recorder._close_waves()
+
+
+def test_a_checkpoint_before_any_audio_does_not_record_an_error():
+    """The checkpoint thread starts with the capture, so it gets there first."""
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder._waves["mic"] = recorder._open_wave(pathlib.Path(tmp) / "mic.wav")
+
+        recorder._checkpoint_once()
+
+        assert recorder.errors["mic"] is None, recorder.errors["mic"]
+        recorder._close_waves()
+
+
+def test_a_crash_in_the_first_seconds_still_leaves_a_playable_file():
+    """The header used to be patched by the first write. Keep that property:
+    waiting for the 5s checkpoint would leave real PCM behind a 0-frame header."""
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        path = pathlib.Path(tmp) / "mic.wav"
+        recorder._waves["mic"] = recorder._open_wave(path)
+
+        recorder._enqueue("mic", np.full((800, 1), 0.25, dtype=np.float32))
+        recorder._drain_queue()
+        # No _checkpoint_once() — this is the process dying two seconds in.
+
+        with wave.open(str(path), "rb") as audio:
+            assert audio.getnframes() == 800
+
+
+def test_a_stalled_writer_is_not_drained_underneath():
+    """Two threads writing one WAV interleaves the audio. If the writer will
+    not stop, leave the tail to it rather than racing it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder._waves["mic"] = recorder._open_wave(pathlib.Path(tmp) / "mic.wav")
+        recorder._enqueue("mic", np.full((800, 1), 0.25, dtype=np.float32))
+
+        stuck = threading.Event()
+        recorder._writer_thread = threading.Thread(
+            target=stuck.wait, kwargs={"timeout": 30}, daemon=True)
+        recorder._writer_thread.start()
+
+        with patch.object(meeting, "CAPTURE_JOIN_TIMEOUT", 0.01):
+            recorder._finish_writer()
+
+        assert recorder._pcm_queue.qsize() == 1, "drained while the writer was alive"
+        assert "did not stop" in (recorder.errors["mic"] or "")
+        stuck.set()
+        recorder._close_waves()
+
+
+def test_a_writer_that_finished_hands_over_its_tail():
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        path = pathlib.Path(tmp) / "mic.wav"
+        recorder._waves["mic"] = recorder._open_wave(path)
+        recorder._enqueue("mic", np.full((800, 1), 0.25, dtype=np.float32))
+
+        recorder._writer_thread = threading.Thread(target=lambda: None, daemon=True)
+        recorder._writer_thread.start()
+        recorder._finish_writer()
+
+        assert recorder._pcm_queue.qsize() == 0
+        recorder._close_waves()
+        with wave.open(str(path), "rb") as audio:
+            assert audio.getnframes() == 800

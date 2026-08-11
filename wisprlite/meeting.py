@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import queue
 import shutil
 import sys
 import threading
@@ -30,6 +31,9 @@ MIC_BLOCKSIZE = 800
 DESKTOP_BLOCKSIZE = 1_600
 CAPTURE_JOIN_TIMEOUT = 3.0
 HEADER_PATCH_INTERVAL = 5.0
+# ~30s of audio in hand before we start dropping. Dropping is a last resort,
+# but stalling the audio callback loses the recording, which is worse.
+PCM_QUEUE_LIMIT = 2_000
 DEFAULT_RETENTION_SESSIONS = 20
 SPEAKER_MAP_FILE = "speaker_map.json"
 CORRECTIONS_FILE = "corrections.json"
@@ -753,6 +757,9 @@ class MeetingRecorder:
         self._checkpoint_thread: threading.Thread | None = None
         self._snap_detector = None
         self._pending_acoustic_t: float | None = None
+        self._pcm_queue: queue.Queue = queue.Queue(maxsize=PCM_QUEUE_LIMIT)
+        self._writer_thread: threading.Thread | None = None
+        self.dropped_blocks = 0
 
     @property
     def active(self) -> bool:
@@ -871,6 +878,10 @@ class MeetingRecorder:
                 self._active = False
             raise
         self._write_meta(stopped_at=None, duration=0.0)
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop, name="meeting-writer", daemon=True
+        )
+        self._writer_thread.start()
         self._checkpoint_thread = threading.Thread(
             target=self._checkpoint_loop, name="meeting-checkpoint", daemon=True
         )
@@ -955,6 +966,8 @@ class MeetingRecorder:
             self._checkpoint_thread.join(timeout=1.0)
             self._checkpoint_thread = None
 
+        self._finish_writer()
+
         self._close_waves()
         stopped_at = datetime.now(timezone.utc)
         duration = max(0.0, time.monotonic() - started) if started is not None else 0.0
@@ -976,18 +989,28 @@ class MeetingRecorder:
         while not self._stop.is_set():
             self._checkpoint_wakeup.wait(HEADER_PATCH_INTERVAL)
             self._checkpoint_wakeup.clear()
-            if self.session_dir is None:
-                continue
-            self._write_meta(stopped_at=None, duration=self.elapsed)
+            self._checkpoint_once()
+
+    def _checkpoint_once(self) -> None:
+        """One checkpoint: playable WAV headers, a fresh meta, saved bookmarks.
+
+        Split out from the loop so a test can drive the real thing instead of
+        the write path — the header patch and the meta heartbeat both used to
+        hang off _write_block, which is the audio callback.
+        """
+        self._patch_headers()
+        if self.session_dir is None:
+            return
+        self._write_meta(stopped_at=None, duration=self.elapsed)
+        with self._bookmark_lock:
+            bookmarks = list(self._bookmarks)
+        pending = self._pending_acoustic_t
+        self._pending_acoustic_t = None
+        if pending is not None:
+            self._append_bookmark(pending, "acoustic")
             with self._bookmark_lock:
                 bookmarks = list(self._bookmarks)
-            pending = self._pending_acoustic_t
-            self._pending_acoustic_t = None
-            if pending is not None:
-                self._append_bookmark(pending, "acoustic")
-                with self._bookmark_lock:
-                    bookmarks = list(self._bookmarks)
-            save_bookmarks(self.session_dir, bookmarks)
+        save_bookmarks(self.session_dir, bookmarks)
 
     def _stop_at_limit(
         self,
@@ -1106,7 +1129,7 @@ class MeetingRecorder:
             # callback never allocates a bookmark dict or performs JSON I/O.
             self._pending_acoustic_t = max(0.0, self.elapsed)
             self._checkpoint_wakeup.set()
-        self._write_block("mic", indata, realtime=True)
+        self._enqueue("mic", indata)
 
     def _capture_desktop(self, sc) -> None:
         com_initialized = False
@@ -1141,16 +1164,87 @@ class MeetingRecorder:
             with device.recorder(samplerate=SAMPLE_RATE, channels=CHANNELS) as recorder:
                 while not self._stop.is_set():
                     block = recorder.record(numframes=DESKTOP_BLOCKSIZE)
-                    self._write_block("desktop", block)
+                    self._enqueue("desktop", block)
         except Exception as exc:
             self._record_error("desktop", exc)
         finally:
             if com_initialized:
                 ctypes.windll.ole32.CoUninitialize()
 
+    def _enqueue(self, label: str, block) -> None:
+        """Hand a block to the writer thread. Safe from an audio callback.
+
+        This is all the mic's PortAudio callback is allowed to do. It must not
+        write, seek, flush, or wait on a lock that a slow thing holds — the
+        work the callback does not finish in time is audio PortAudio throws
+        away, and it says so as `input overflow`.
+
+        The copy is mandatory: sounddevice hands out a VIEW over a buffer it
+        reuses for the next block, so queueing it uncopied would give the
+        writer audio that changes underneath it.
+        """
+        try:
+            import numpy as np
+
+            self._pcm_queue.put_nowait(
+                (label, np.array(block, dtype=np.float32, copy=True))
+            )
+        except queue.Full:
+            # Dropping a block is bad. Blocking the callback is worse: that is
+            # how the stream goes inactive and takes the whole capture with it.
+            self.dropped_blocks += 1
+        except Exception as exc:
+            self._record_error(label, exc, recoverable=True)
+
+    def _writer_loop(self) -> None:
+        """Sole owner of the WAV files. Everything slow happens here."""
+        while True:
+            try:
+                label, block = self._pcm_queue.get(timeout=0.25)
+            except queue.Empty:
+                if self._stop.is_set():
+                    return
+                continue
+            self._write_block(label, block)
+
+    def _finish_writer(self) -> None:
+        """Stop the writer, then write the tail — never both at the same time.
+
+        The tail of the recording is still queued at stop, so it has to be
+        written before the files close or every meeting loses its last second.
+        But draining here while the writer is STILL GOING puts two threads on
+        one WAV: the wave lock keeps each write intact and does nothing about
+        the order they land in, so blocks would interleave. If the writer will
+        not stop, the tail is its problem, not ours.
+        """
+        writer, self._writer_thread = self._writer_thread, None
+        if writer is not None:
+            writer.join(timeout=CAPTURE_JOIN_TIMEOUT + 1.0)
+            if writer.is_alive():
+                self._record_error(
+                    "mic",
+                    RuntimeError(
+                        "writer thread did not stop within "
+                        f"{CAPTURE_JOIN_TIMEOUT + 1.0:g} seconds"
+                    ),
+                    recoverable=True,
+                )
+                return
+        self._drain_queue()
+
+    def _drain_queue(self) -> None:
+        """Write what is still in hand, before the files get closed."""
+        while True:
+            try:
+                label, block = self._pcm_queue.get_nowait()
+            except queue.Empty:
+                return
+            self._write_block(label, block)
+
     def _write_block(self, label: str, block, *, realtime: bool = False) -> None:
+        """Append one block. Runs on the writer thread, never on an audio
+        callback — see _enqueue()."""
         arrived_at = time.monotonic()
-        checkpointed = False
         try:
             import numpy as np
 
@@ -1177,31 +1271,55 @@ class MeetingRecorder:
             focus_session = self.focus_session
             if focus_session is not None:
                 focus_session.feed(label, pcm)
+            first_block = False
             with self._wave_locks[label]:
                 output = self._waves.get(label)
                 if output is None:
                     return
                 if self._first_blocks[label] is None:
                     self._first_blocks[label] = arrived_at
+                    first_block = True
                 output.writeframesraw(pcm)
-                if (
-                    arrived_at - self._last_header_patches[label]
-                    >= HEADER_PATCH_INTERVAL
-                ):
-                    output._patchheader()
-                    output._file.flush()
-                    self._last_header_patches[label] = arrived_at
-                    checkpointed = True
         except Exception as exc:
             self._record_error(label, exc)
-        if checkpointed and not self._stop.is_set():
-            if realtime:
-                self._checkpoint_wakeup.set()
-            else:
-                with self._heartbeat_lock:
-                    if arrived_at - self._last_meta_heartbeat >= HEADER_PATCH_INTERVAL:
-                        self._last_meta_heartbeat = arrived_at
-                        self._write_meta(stopped_at=None, duration=self.elapsed)
+            return
+        # Patch as soon as there IS something to patch, not up to five seconds
+        # later. The old code got this for free by patching from the first
+        # write; waiting for the checkpoint tick would leave a crash in the
+        # first few seconds with real PCM behind a zero-frame header. Outside
+        # the lock above — _patch_headers takes it again.
+        if first_block:
+            self._patch_headers()
+
+    def _patch_headers(self) -> None:
+        """Make the in-progress WAVs playable, from the checkpoint thread.
+
+        This used to run inside the mic's PortAudio callback: every 5 seconds it
+        seeked to byte 0, rewrote the RIFF header, seeked back to the end and
+        flushed. A blocking disk seek in a real-time audio callback is the
+        textbook cause of `input overflow` — PortAudio drops the input it could
+        not hand over in time — and James's log shows exactly that on
+        2026-07-30, twice, the second one followed two seconds later by the
+        stream going inactive and killing the meeting capture.
+
+        The crash-safety this buys is unchanged: the same patch, at the same
+        5-second cadence, just on the thread that was already waking up for it.
+        """
+        for label in tuple(self._waves):
+            try:
+                with self._wave_locks[label]:
+                    output = self._waves.get(label)
+                    # Nothing written yet means no header to patch, and
+                    # _patchheader() asserts rather than tolerating that. The
+                    # checkpoint thread starts with the capture, so it can and
+                    # does arrive before the first block.
+                    if output is None or self._first_blocks[label] is None:
+                        continue
+                    output._patchheader()
+                    output._file.flush()
+                    self._last_header_patches[label] = time.monotonic()
+            except Exception as exc:
+                self._record_error(label, exc)
 
     def _record_error(
         self,
