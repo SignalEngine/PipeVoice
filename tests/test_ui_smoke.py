@@ -742,13 +742,15 @@ def _agent_app(**over):
     """An App shaped just enough to run the agent screen-recording path."""
     import types
     from unittest import mock
-    from wisprlite.app import App
+    from wisprlite.app import App, ScreenrecUI
 
     app = App.__new__(App)
     app._screenrec = None
     app._screenrec_selecting = False
     app._screenrec_agent = None
     app._screenrec_agent_result = None
+    app._screenrec_ui = ScreenrecUI()
+    app._finished_recording = None
     app.paused = False
     app.overlay = mock.Mock()
     app._notify = mock.Mock()
@@ -782,11 +784,11 @@ def test_an_agent_call_never_uploads_the_recording():
     app._transcribe_recording = mock.Mock(return_value=None)
 
     with mock.patch.object(screenrec, "send") as send, \
-         mock.patch.object(screenrec, "ask_name") as ask:
+         mock.patch.object(App, "_ask_name_in_pill") as ask:
         App._finish_screen_recording(app)
 
     assert not send.called, "an agent-driven recording must never be uploaded"
-    assert not ask.called, "an agent-driven recording must not block on a dialog"
+    assert not ask.called, "an agent-driven recording must not stop for a name"
     assert app._screenrec_agent_result["status"] == "ok"
     assert app._screenrec_agent_result["uploaded"] is False
     assert app._screenrec_agent_result["video_path"].endswith(".mp4")
@@ -855,12 +857,14 @@ def test_quitting_does_not_open_the_naming_dialog():
     """
     import types
     from unittest import mock
-    from wisprlite.app import App
+    from wisprlite.app import App, ScreenrecUI
     from wisprlite import screenrec
 
     app = App.__new__(App)
     app._screenrec_agent = None
     app._screenrec_agent_result = None
+    app._screenrec_ui = ScreenrecUI()
+    app._finished_recording = None
     recording = types.SimpleNamespace(
         stem="2026-08-12 10-33-25",
         errors=[],
@@ -873,12 +877,12 @@ def test_quitting_does_not_open_the_naming_dialog():
     app._fail = mock.Mock()
     app._transcribe_recording = mock.Mock(return_value=None)
 
-    with mock.patch.object(screenrec, "ask_name") as ask:
+    with mock.patch.object(App, "_ask_name_in_pill") as ask:
         App._finish_screen_recording(app, ask=False)
-        assert not ask.called, "shutdown must not open a modal that waits for input"
+        assert not ask.called, "shutdown must not wait for a name it cannot be given"
 
     app._screenrec = recording
-    with mock.patch.object(screenrec, "ask_name", return_value="") as ask:
+    with mock.patch.object(App, "_ask_name_in_pill", return_value="") as ask:
         App._finish_screen_recording(app)
         assert ask.called, "the normal stop path still asks for a name"
 
@@ -944,3 +948,73 @@ def test_pressing_stop_twice_does_not_start_a_new_recording():
     App._screenrec_action(app, "pause")
     App._screenrec_action(app, "resume")
     assert not app._fail.called
+
+
+def test_the_finished_pill_never_announces_the_scp_destination():
+    """It used to sit open reading "sent to root@host:/srv/inbox/" - a string
+    the user configured, that never changes, and that they had to dismiss.
+
+    Drives the REAL finish path with a destination configured: asserting on a
+    hand-built state object cannot catch the caller putting a host back in.
+    """
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import screenrec
+
+    app = _agent_app()
+    app._screenrec_agent = None
+    recording = mock.Mock()
+    recording.errors = []
+    recording.stem = "2026-08-12 17-32-18"
+    recording.stop.return_value = pathlib.Path("/out/2026-08-12 17-32-18.mp4")
+    recording.audio_path = pathlib.Path("/out/2026-08-12 17-32-18.wav")
+    app._screenrec = recording
+    app._transcribe_recording = mock.Mock(return_value=None)
+
+    with mock.patch.object(App, "_ask_name_in_pill", return_value=""), \
+         mock.patch.object(screenrec, "send", return_value=(True, "ok")):
+        App._finish_screen_recording(app)
+
+    state = app._screenrec_ui.snapshot()
+    assert state["phase"] == "done"
+    blob = " ".join(str(v) for v in state.values())
+    assert "root@vps" not in blob and ":/inbox/" not in blob, \
+        f"the pill is naming a destination again: {blob}"
+    assert "sent" in state["title"].lower(), \
+        "it must still say the clip went somewhere, just not where"
+
+
+def test_a_failed_send_does_not_strand_the_pill_on_a_progress_bar():
+    """The pill is phase-driven, so any path that does not reach "done" must
+    put it away. Left as-is the user watches a sweeping bar for ever."""
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import screenrec
+
+    app = _agent_app()
+    app._screenrec_agent = None
+    recording = mock.Mock()
+    recording.errors = []
+    recording.stem = "2026-08-12 17-32-18"
+    recording.stop.return_value = pathlib.Path("/out/clip.mp4")
+    recording.audio_path = pathlib.Path("/out/clip.wav")
+    app._screenrec = recording
+    app._transcribe_recording = mock.Mock(return_value=None)
+
+    with mock.patch.object(App, "_ask_name_in_pill", return_value=""), \
+         mock.patch.object(screenrec, "send", return_value=(False, "connection refused")):
+        App._finish_screen_recording(app)
+
+    assert app._screenrec_ui.snapshot()["phase"] == "recording", \
+        "a failed send left the pill mid-flight"
+    assert app.overlay.hide.called, "the pill must be put away, not left up"
+    assert app._fail.called, "and the failure must still be reported"
+
+    # An exception anywhere in the flow must land the same way.
+    app2 = _agent_app()
+    app2._screenrec_agent = None
+    app2._screenrec = recording
+    app2._transcribe_recording = mock.Mock(side_effect=RuntimeError("boom"))
+    with mock.patch.object(App, "_ask_name_in_pill", return_value=""):
+        App._finish_screen_recording(app2)
+    assert app2._screenrec_ui.snapshot()["phase"] == "recording"
