@@ -262,7 +262,10 @@ def test_dragging_the_meeting_pill_moves_it_instead_of_stopping_the_meeting():
         root.update()
 
         clicks = []
-        Overlay._bind_drag_or_click(canvas, root, lambda: clicks.append(1))
+        # The callback takes coordinates now: the recording pill carries
+        # buttons, so a click has to say WHERE it landed.
+        Overlay._bind_drag_or_click(canvas, root,
+                                    lambda x, y: clicks.append((x, y)))
 
         x0, y0 = root.winfo_x(), root.winfo_y()
         canvas.event_generate("<Button-1>", rootx=x0 + 10, rooty=y0 + 10)
@@ -280,7 +283,7 @@ def test_dragging_the_meeting_pill_moves_it_instead_of_stopping_the_meeting():
         canvas.event_generate("<Button-1>", rootx=x1 + 10, rooty=y1 + 10)
         canvas.event_generate("<ButtonRelease-1>", rootx=x1 + 10, rooty=y1 + 10)
         root.update()
-        assert clicks == [1], "a click without a drag must still toggle"
+        assert len(clicks) == 1, "a click without a drag must still toggle"
         assert (root.winfo_x(), root.winfo_y()) == (x1, y1)
 
         # A pixel of jitter during a click is still a click, not a drag.
@@ -288,7 +291,7 @@ def test_dragging_the_meeting_pill_moves_it_instead_of_stopping_the_meeting():
         canvas.event_generate("<B1-Motion>", rootx=x1 + 11, rooty=y1 + 10)
         canvas.event_generate("<ButtonRelease-1>", rootx=x1 + 11, rooty=y1 + 10)
         root.update()
-        assert clicks == [1, 1], "1px of jitter must not swallow the click"
+        assert len(clicks) == 2, "1px of jitter must not swallow the click"
     finally:
         root.destroy()
 

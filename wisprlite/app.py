@@ -47,6 +47,8 @@ class App:
             level_provider=lambda: self.recorder.level,
             meeting_provider=self._meeting_overlay_state,
             on_meeting_click=self.toggle_meeting,
+            screenrec_provider=self._screenrec_overlay_state,
+            on_screenrec_action=self._screenrec_action,
             enabled=self.cfg.overlay,
         )
         self.tray = Tray(self)
@@ -475,6 +477,39 @@ class App:
         return bool(self.paused) and self._screenrec is None
 
 
+    def _screenrec_overlay_state(self) -> dict:
+        """What the pill draws. Read from the recorder, never from a copy."""
+        recording = self._screenrec
+        if recording is None:
+            return {"elapsed": 0.0, "paused": False}
+        try:
+            return {"elapsed": recording.elapsed(), "paused": recording.paused}
+        except Exception:
+            return {"elapsed": 0.0, "paused": False}
+
+    def _screenrec_action(self, action: str) -> None:
+        """A button on the recording pill. Runs on the overlay's worker thread."""
+        recording = self._screenrec
+        if recording is None:
+            # Stop clears _screenrec immediately and then muxes, transcribes and
+            # uploads on a thread — seconds during which the pill is still up.
+            # Without this guard a second press of Stop in that window falls
+            # through to toggle_screen_recording's "nothing is recording" branch
+            # and opens a region selector to start a NEW one.
+            return
+        if action == "stop":
+            # Same path as the hotkey, so there is exactly one way to finish a
+            # recording and both routes get the naming, transcript and send.
+            self.toggle_screen_recording()
+            return
+        try:
+            if action == "pause":
+                recording.pause()
+            elif action == "resume":
+                recording.resume()
+        except Exception as exc:
+            self._fail(f"screen recording: {exc}")
+
     def toggle_screen_recording(self) -> None:
         """Hotkey once: pick a region and record. Again: stop, transcribe, send."""
         if self._screenrec is not None:
@@ -510,7 +545,7 @@ class App:
             )
             recording.start()
             self._screenrec = recording
-            self.overlay.show("recording", "\u23fa recording — press the hotkey again to stop")
+            self.overlay.show_screenrec()
         except Exception as exc:
             self._screenrec = None
             self._fail(f"screen recording: {exc}")
@@ -590,6 +625,10 @@ class App:
                 self.overlay.show("done", f"\u2713 sent to {destination}{note}")
             else:
                 self.overlay.show("done", f"\u2713 saved to {video.parent}{note}")
+            # Hand the clip straight over: the path on the clipboard is what
+            # gets pasted to an agent, and the tab opens on the new recording so
+            # you can play it back without going looking for it.
+            self._handoff_recording(video, recording.stem)
         except Exception as exc:
             self._fail(f"screen recording: {exc}")
         finally:
@@ -603,6 +642,22 @@ class App:
                     "error": "; ".join(recording.errors[:2]) or "the recording produced no file",
                 }
                 waiter.set()
+
+    def _handoff_recording(self, video, stem: str) -> None:
+        """Clipboard, then the Recordings tab open on this clip.
+
+        Deliberately AFTER the send: the path is only worth pasting once the
+        file it names is finished. Failures here are cosmetic - the recording
+        is already safe on disk - so neither step is allowed to raise.
+        """
+        try:
+            copy_clipboard(str(video))
+        except Exception as exc:
+            log.info("screenrec: could not copy the path: %s", exc)
+        try:
+            self.open_settings(tab="Recordings", select=stem)
+        except Exception as exc:
+            log.info("screenrec: could not open the Recordings tab: %s", exc)
 
     @staticmethod
     def _read_text(path) -> str:
@@ -937,18 +992,26 @@ class App:
             self.stop_mcp_bridge()
         self.tray.update()
 
-    def open_settings(self) -> None:
+    def open_settings(self, tab: str = "", select: str = "") -> None:
         import os
         import subprocess
 
+        # The settings window is a separate process, so "open it on the
+        # Recordings tab with this clip picked" has to travel as environment.
+        env = dict(os.environ)
+        if tab:
+            env["PV_TAB"] = tab
+        if select:
+            env["PV_SELECT"] = select
         try:
             if getattr(sys, "frozen", False):
-                subprocess.Popen([sys.executable, "--settings"])
+                subprocess.Popen([sys.executable, "--settings"], env=env)
             else:
                 from .autostart import _pythonw
 
                 parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                subprocess.Popen([_pythonw(), "-m", "wisprlite", "--settings"], cwd=parent)
+                subprocess.Popen([_pythonw(), "-m", "wisprlite", "--settings"],
+                                 cwd=parent, env=env)
         except Exception as exc:
             self._fail(f"settings: {exc}")
 

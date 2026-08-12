@@ -44,6 +44,7 @@ ACCENT = {
     "idle": PALETTE["muted"],
     "picker": PALETTE["picker"],
     "meeting": PALETTE["meeting"],
+    "screenrec": PALETTE["meeting"],
 }
 
 
@@ -111,10 +112,17 @@ class Overlay:
         enabled: bool = True,
         meeting_provider: Optional[Callable[[], dict]] = None,
         on_meeting_click: Optional[Callable[[], None]] = None,
+        screenrec_provider: Optional[Callable[[], dict]] = None,
+        on_screenrec_action: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.level_provider = level_provider or (lambda: 0.0)
         self.meeting_provider = meeting_provider or (lambda: {})
         self.on_meeting_click = on_meeting_click
+        # {"elapsed": float, "paused": bool} — polled each frame so the pill's
+        # clock and its button states come from the recorder, never from a copy
+        # of them that can drift out of step with it.
+        self.screenrec_provider = screenrec_provider or (lambda: {})
+        self.on_screenrec_action = on_screenrec_action
         self.enabled = enabled
         self._q: "queue.Queue[tuple]" = queue.Queue()
         self._thread: Optional[threading.Thread] = None
@@ -149,6 +157,10 @@ class Overlay:
     def show_meeting(self) -> None:
         self._q.put(("meeting", None, ""))
 
+    def show_screenrec(self) -> None:
+        """Show the recording pill. Its clock and buttons poll the recorder."""
+        self._q.put(("screenrec", None, ""))
+
     # ---- tkinter thread ---------------------------------------------------
     def _run(self) -> None:
         try:
@@ -182,7 +194,7 @@ class Overlay:
         canvas = tk.Canvas(root, width=WIN_W, height=WIN_H, bg=bg, highlightthickness=0)
         canvas.pack()
         self._bind_drag_or_click(
-            canvas, root, lambda: self._q.put(("meeting_click", None, "")))
+            canvas, root, lambda x, y: self._q.put(("click", x, y)))
         canvas.bind("<Enter>", lambda _event: self._q.put(("hover", True, "")))
         canvas.bind("<Leave>", lambda _event: self._q.put(("hover", False, "")))
         root.withdraw()
@@ -248,10 +260,16 @@ class Overlay:
                         # state = tip, text = because. Rendered on THIS thread,
                         # which is the only one allowed to touch Tk.
                         self._render_focus_tip(canvas, state, text)
-                    if kind == "meeting_click":
+                    if kind == "click":
                         if st["name"] == "meeting" and self.on_meeting_click:
                             callback = self.on_meeting_click
                             threading.Thread(target=callback, daemon=True).start()
+                        elif st["name"] == "screenrec" and self.on_screenrec_action:
+                            action = self._screenrec_hit(state, text)
+                            if action:
+                                handler = self.on_screenrec_action
+                                threading.Thread(target=handler, args=(action,),
+                                                 daemon=True).start()
                     elif kind == "hover":
                         st["hover"] = bool(state)
                     if kind == "hide":
@@ -262,6 +280,13 @@ class Overlay:
                         st["name"] = state or "listening"
                         st["text"] = text or ""
                         st["hide_at"] = 0.0
+                        resize(WIN_H)
+                        reveal()
+                    elif kind == "screenrec":
+                        st["name"] = "screenrec"
+                        st["text"] = ""
+                        st["hide_at"] = 0.0
+                        st["scene"] = None
                         resize(WIN_H)
                         reveal()
                     elif kind == "meeting":
@@ -326,6 +351,9 @@ class Overlay:
             return
         if st["name"] == "meeting":
             self._draw_meeting(c, st, H, accent)
+            return
+        if st["name"] == "screenrec":
+            self._draw_screenrec(c, st, H, accent)
             return
         self._draw_status(c, st, H, accent)
 
@@ -529,6 +557,91 @@ class Overlay:
                 items[f"{label}_label"],
                 fill=PALETTE["error"] if dead else PALETTE["muted"],
             )
+    # Button geometry for the recording pill, in canvas coordinates. One table,
+    # used to DRAW and to HIT-TEST, so a button can never sit somewhere other
+    # than where the click for it is caught.
+    SCREENREC_BUTTONS = (
+        ("resume", WIN_W - 122),
+        ("pause", WIN_W - 84),
+        ("stop", WIN_W - 46),
+    )
+    SCREENREC_BUTTON_R = 15
+
+    def _screenrec_hit(self, x, y) -> str:
+        """Which button a click at (x, y) landed on, or "" for the pill body."""
+        cy = WIN_H // 2
+        for action, cx in self.SCREENREC_BUTTONS:
+            if (x - cx) ** 2 + (y - cy) ** 2 <= (self.SCREENREC_BUTTON_R + 3) ** 2:
+                return action
+        return ""
+
+    def _draw_screenrec(self, c, st, H: int, accent: str) -> None:
+        """The recording pill: a breathing REC dot, a clock, and real controls.
+
+        It used to be a grey box reading "recording - press the hotkey again to
+        stop", which told you the one thing you had just done and gave you
+        nothing to press.
+        """
+        items = self._base_scene(c, st, "screenrec", H, accent)
+        cy = H // 2
+        info = {}
+        try:
+            info = self.screenrec_provider() or {}
+        except Exception:
+            info = {}
+        paused = bool(info.get("paused"))
+        elapsed = self._elapsed_text(info.get("elapsed", 0.0))
+
+        if "dot" not in items:
+            items["dot"] = c.create_oval(0, 0, 0, 0, outline="")
+            items["clock"] = c.create_text(
+                44, cy, anchor="w", fill=PALETTE["fg"],
+                font=("Segoe UI Semibold", 15),
+            )
+            items["label"] = c.create_text(
+                44, cy + 15, anchor="w", fill=PALETTE["muted"],
+                font=("Segoe UI", 8),
+            )
+            for action, cx in self.SCREENREC_BUTTONS:
+                r = self.SCREENREC_BUTTON_R
+                items[f"{action}_bg"] = c.create_oval(
+                    cx - r, cy - r, cx + r, cy + r,
+                    fill=PALETTE["card"], outline="", width=1,
+                )
+                items[f"{action}_icon"] = c.create_text(
+                    cx, cy, text="", fill=PALETTE["fg"], font=("Segoe UI", 11),
+                )
+
+        # A paused recording must not keep breathing — a pulsing red dot is the
+        # universal "still rolling", and showing it while paused is a lie.
+        breath = 0.0 if paused else (math.sin(st["phase"]) + 1.0) / 2.0
+        dot_colour = PALETTE["muted"] if paused else self._blend(
+            PALETTE["meeting"], PALETTE["meeting_hi"], breath)
+        dot_r = 6.0 + (0.0 if paused else 2.0 * breath)
+        c.coords(items["dot"], 24 - dot_r, cy - dot_r, 24 + dot_r, cy + dot_r)
+        c.itemconfigure(items["dot"], fill=dot_colour)
+        c.itemconfigure(items["clock"], text=elapsed,
+                        fill=PALETTE["muted"] if paused else PALETTE["fg"])
+        c.itemconfigure(items["label"], text="Paused" if paused else "Recording")
+
+        # Grey out the control that cannot do anything right now, rather than
+        # hiding it: buttons that move around are worse than buttons that dim.
+        states = {
+            "resume": ("▶", paused),
+            "pause": ("⏸", not paused),
+            "stop": ("⏹", True),
+        }
+        for action, _cx in self.SCREENREC_BUTTONS:
+            glyph, live = states[action]
+            c.itemconfigure(items[f"{action}_icon"], text=glyph,
+                            fill=PALETTE["fg"] if live else PALETTE["div"])
+            # A disabled button keeps a faint ring. Filled flat with the pill's
+            # own background it disappeared, which reads as "a button is
+            # missing" rather than "that one cannot do anything right now".
+            c.itemconfigure(items[f"{action}_bg"],
+                            fill=PALETTE["card"] if live else PALETTE["bg"],
+                            outline="" if live else PALETTE["div"])
+
     def _draw_status(self, c, st, H: int, accent: str) -> None:
         items = self._base_scene(c, st, "status", H, accent)
         cy = WIN_H // 2
@@ -624,9 +737,11 @@ class Overlay:
             state["x"], state["y"] = event.x_root, event.y_root
             window.geometry(f"+{window.winfo_x() + dx}+{window.winfo_y() + dy}")
 
-        def release(_event) -> None:
+        def release(event) -> None:
             if not state["moved"]:
-                on_click()
+                # Coordinates matter now: the recording pill carries buttons, so
+                # WHERE the click landed decides what it means.
+                on_click(event.x, event.y)
 
         widget.bind("<Button-1>", press)
         widget.bind("<B1-Motion>", drag)

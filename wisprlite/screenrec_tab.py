@@ -347,16 +347,25 @@ def build(container, root, wheel=None, with_settings=False):
         ("Copy text", _copy_words, "Copy the transcript."),
         ("Delete", _delete_selected, "Remove the video, transcript and audio from this PC."),
     )
+    action_buttons = {}
     for index, (label, command, tip) in enumerate(actions):
         btn = ttk.Button(buttons, text=label, command=command, width=11)
         btn.grid(row=index // 3, column=index % 3, padx=(0, 5), pady=(0, 5), sticky="w")
         tooltip(btn, tip)
+        action_buttons[label] = btn
 
     refresh_btn = ttk.Button(head, text="Refresh", command=lambda: refresh(
         state["selected"]["stem"] if state["selected"] else None))
     refresh_btn.pack(side="right", padx=(0, 12))
 
-    refresh()
+    # Opened straight after a recording: land on that clip with Play accented,
+    # so the obvious next move is the one under the cursor rather than something
+    # to go hunting for. Any other way of opening the tab is unaffected.
+    just_recorded = os.environ.get("PV_SELECT", "").strip()
+    refresh(just_recorded or None)
+    if just_recorded and state["selected"] and state["selected"]["stem"] == just_recorded:
+        action_buttons["Play"].configure(style="Accent.TButton")
+        action_buttons["Play"].focus_set()
 
     # Poll, the way the Meetings tab does. Without this the tab is a snapshot
     # from whenever it was opened: record with it on screen and it still says

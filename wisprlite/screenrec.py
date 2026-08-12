@@ -83,6 +83,12 @@ class ScreenRecording:
         # drop that leading second instead of guessing.
         self.first_frame_at: float | None = None
         self.first_audio_at: float | None = None
+        # Pause drops BOTH streams together. Skipped frames and skipped audio
+        # blocks simply never exist, so the paused stretch is cut out of the
+        # finished clip and the two stay aligned without any extra bookkeeping.
+        self._paused = threading.Event()
+        self.paused_seconds = 0.0
+        self._paused_at: float | None = None
 
     # -- paths ---------------------------------------------------------------
 
@@ -216,6 +222,13 @@ class ScreenRecording:
             with mss.mss() as sct:
                 next_at = time.monotonic()
                 while not self._stop.is_set():
+                    if self._paused.is_set():
+                        # Skip the grab entirely rather than encoding a frozen
+                        # frame: a paused stretch should not exist in the clip.
+                        if self._stop.wait(0.1):
+                            return
+                        next_at = time.monotonic()
+                        continue
                     shot = sct.grab(box)
                     # BGRA -> RGB, dropping alpha.
                     frame = np.array(shot, dtype=np.uint8)[:, :, :3][:, :, ::-1]
@@ -291,6 +304,8 @@ class ScreenRecording:
         try:
             import numpy as np
 
+            if self._paused.is_set():
+                return               # dropped here, so the mic is genuinely off
             if self.first_audio_at is None:
                 self.first_audio_at = time.monotonic()
             self._audio_queue.put_nowait(
@@ -373,6 +388,37 @@ class ScreenRecording:
         except Exception as exc:
             self._record_error(exc)
             return None
+
+    # -- pause ---------------------------------------------------------------
+
+    @property
+    def paused(self) -> bool:
+        return self._paused.is_set()
+
+    def pause(self) -> None:
+        if self._paused.is_set():
+            return
+        self._paused_at = time.monotonic()
+        self._paused.set()
+
+    def resume(self) -> None:
+        if not self._paused.is_set():
+            return
+        if self._paused_at is not None:
+            self.paused_seconds += max(0.0, time.monotonic() - self._paused_at)
+            self._paused_at = None
+        self._paused.clear()
+
+    def elapsed(self) -> float:
+        """Seconds of RECORDING, excluding any time spent paused."""
+        if self.first_audio_at is None and self.first_frame_at is None:
+            return 0.0
+        started = min(t for t in (self.first_audio_at, self.first_frame_at)
+                      if t is not None)
+        paused = self.paused_seconds
+        if self._paused_at is not None:
+            paused += max(0.0, time.monotonic() - self._paused_at)
+        return max(0.0, time.monotonic() - started - paused)
 
     def lead_seconds(self) -> float:
         """How long the microphone ran before the first frame was encoded."""
