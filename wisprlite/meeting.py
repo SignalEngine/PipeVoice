@@ -1358,6 +1358,11 @@ class MeetingRecorder:
             "duration_seconds": duration,
             "stop_reason": self._stop_reason,
             "recording_pid": os.getpid(),
+            # Blocks the writer could not keep up with. 0 is the whole point:
+            # without it a wav that ends a second short of the clock cannot be
+            # told apart from a second of device-open latency, and "did the
+            # overflow fix hold?" stays an inference instead of a fact.
+            "dropped_blocks": self.dropped_blocks,
             "sample_rate": SAMPLE_RATE,
             "channels": CHANNELS,
             "mic": {

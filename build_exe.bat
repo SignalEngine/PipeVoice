@@ -12,6 +12,7 @@ pyinstaller --noconfirm --clean --noconsole --onedir --noupx --name Pipevoice ^
     --collect-all deepgram ^
     --collect-all faster_whisper ^
     --collect-all ctranslate2 ^
+    --collect-all mss ^
     --collect-all pystray ^
     --collect-all PIL ^
     --collect-all mcp ^

@@ -8,6 +8,7 @@ import logging
 import sys
 import threading
 import time
+from pathlib import Path
 
 from . import autostart, config
 from .audio import Recorder
@@ -71,6 +72,13 @@ class App:
             on_stop=self.toggle_meeting,
             is_paused=lambda: self.paused and not self._meeting_active,
         )
+        self.screenrec_hotkeys = HotkeyManager(
+            get_hotkey=lambda: self.cfg.screenrec_hotkey,
+            get_mode=lambda: "toggle",
+            on_start=self.toggle_screen_recording,
+            on_stop=self.toggle_screen_recording,
+            is_paused=self._screen_recording_paused,
+        )
         self.bookmark_hotkeys = HotkeyManager(
             get_hotkey=lambda: self.cfg.bookmark_hotkey,
             get_mode=lambda: "ptt",
@@ -79,6 +87,9 @@ class App:
             is_paused=lambda: not self._meeting_active,
         )
 
+        self._screenrec = None        # the live ScreenRecording, None when idle
+        self._screenrec_selecting = False   # the region selector is open
+        self._screenrec_finishing = None    # the thread muxing/sending, if any
         self._armed_voice = None      # a Voice armed by the picker, consumed by the next utterance
         self._voice_mgrs = []         # dedicated voice HotkeyManagers
         self._picker_mgr = None       # the picker HotkeyManager
@@ -448,6 +459,139 @@ class App:
             "errors": self._meeting.fatal_errors,
             "bleed": self._meeting.bleed_suspected,
         }
+
+    # ---- screen recording ------------------------------------------------
+
+    def _screen_recording_paused(self) -> bool:
+        """Paused means paused.
+
+        Screen + microphone is the most invasive capture this app performs, so
+        it must not be the one that ignores the switch. A recording that is
+        already running can still be STOPPED while paused — otherwise pausing
+        mid-recording would strand it with no way to finish the file.
+        """
+        return bool(self.paused) and self._screenrec is None
+
+
+    def toggle_screen_recording(self) -> None:
+        """Hotkey once: pick a region and record. Again: stop, transcribe, send."""
+        if self._screenrec is not None:
+            thread = threading.Thread(target=self._finish_screen_recording,
+                                      name="screenrec-finish", daemon=True)
+            self._screenrec_finishing = thread
+            thread.start()
+            return
+        if self._screenrec_selecting:
+            # The region selector is already open. A second press is the user
+            # trying again, not asking for a second selector on top.
+            return
+        self._screenrec_selecting = True
+        threading.Thread(target=self._begin_screen_recording,
+                         name="screenrec-begin", daemon=True).start()
+
+    def _begin_screen_recording(self) -> None:
+        from . import screenrec
+
+        try:
+            # The overlay would otherwise sit on top of the very thing being
+            # framed, and end up inside the recording.
+            self.overlay.hide()
+            region = screenrec.select_region()
+            if not region:
+                return
+            out_dir = (self.cfg.screenrec_dir or "").strip()
+            recording = screenrec.ScreenRecording(
+                region,
+                Path(out_dir) if out_dir else screenrec.default_output_dir(),
+                fps=self.cfg.screenrec_fps,
+                device=config.device_arg(self.cfg),
+            )
+            recording.start()
+            self._screenrec = recording
+            self.overlay.show("recording", "\u23fa recording — press the hotkey again to stop")
+        except Exception as exc:
+            self._screenrec = None
+            self._fail(f"screen recording: {exc}")
+        finally:
+            self._screenrec_selecting = False
+
+    def _finish_screen_recording(self, ask: bool = True) -> None:
+        """Mux, transcribe and send. `ask=False` skips the naming dialog.
+
+        Shutdown passes ask=False: a modal that waits for input is the one
+        thing quitting must not do. Nobody is looking at a window that is in
+        the middle of closing, so it would hang the quit until the dialog is
+        found and dismissed. The recording keeps its timestamp name.
+        """
+        from . import screenrec
+
+        recording, self._screenrec = self._screenrec, None
+        if recording is None:
+            return
+        try:
+            self.overlay.show("thinking", "\u23f9 finishing the recording\u2026")
+            video = recording.stop()
+            if video is None:
+                self._fail("screen recording: " + "; ".join(recording.errors[:2]))
+                return
+
+            # Named AFTER the fact: the moment you want to hit record is the
+            # wrong moment to be filling in a form. The timestamp always leads
+            # so an inbox full of these still sorts.
+            typed = screenrec.ask_name(recording.stem) if ask else ""
+            if typed:
+                recording.rename(screenrec.stamped_stem(recording.stem, typed))
+                video = recording.video_path
+            files = [video]
+            transcript = self._transcribe_recording(recording)
+            if transcript is not None:
+                files.append(transcript)
+            # Say so. The transcript is the thing that makes the clip cheap for
+            # an agent to read, and silently shipping without it looks
+            # identical to shipping with it.
+            note = "" if transcript is not None else " (no transcript — check the mic)"
+
+            destination = (self.cfg.screenrec_destination or "").strip()
+            if destination:
+                ok, message = screenrec.send(files, destination)
+                if not ok:
+                    # Never delete on failure, and never claim it arrived.
+                    self._fail(f"kept locally — send failed: {message}")
+                    return
+                if not self.cfg.screenrec_keep_local:
+                    for path in [*files, recording.audio_path]:
+                        try:
+                            Path(path).unlink()
+                        except OSError:
+                            pass
+                self.overlay.show("done", f"\u2713 sent to {destination}{note}")
+            else:
+                self.overlay.show("done", f"\u2713 saved to {video.parent}{note}")
+        except Exception as exc:
+            self._fail(f"screen recording: {exc}")
+
+    def _transcribe_recording(self, recording) -> Path | None:
+        """Narration as text, so the agent reads it instead of decoding frames."""
+        try:
+            from .engines import transcribe as T
+
+            if not recording.audio_path.exists():
+                return None
+            # transcribe_file returns a dict, not a string.
+            result = T.transcribe_file(
+                str(recording.audio_path),
+                model_size=(self.cfg.transcribe_model_size or self.cfg.local_model_size),
+                device=self.cfg.local_device,
+                compute_type=self.cfg.local_compute_type,
+            )
+            text = str((result or {}).get("text") or "").strip()
+            if not text:
+                return None
+            recording.transcript_path.write_text(text, encoding="utf-8")
+            return recording.transcript_path
+        except Exception as exc:
+            log.info("screenrec: transcript failed: %s", exc)
+            return None
 
     def toggle_meeting(self) -> None:
         if self._meeting_active:
@@ -849,6 +993,24 @@ class App:
         self.hotkeys.stop()
         self.clip_hotkeys.stop()
         self.meeting_hotkeys.stop()
+        self.screenrec_hotkeys.stop()
+        from . import screenrec
+
+        if self._screenrec is not None:
+            # Quitting must not throw away what was already recorded: the
+            # capture threads are daemons, so without this they die with no
+            # mux step and leave no playable file at all.
+            try:
+                self._finish_screen_recording(ask=False)
+            except Exception:
+                pass
+        finishing = self._screenrec_finishing
+        if finishing is not None and finishing.is_alive():
+            # Already muxing, transcribing or uploading. That work is on a
+            # daemon thread, so returning here would kill it mid-file.
+            # Must exceed the scp timeout in screenrec.send, or quitting
+            # kills a slow upload that was still perfectly on track.
+            finishing.join(timeout=screenrec.UPLOAD_TIMEOUT + 60.0)
         self.bookmark_hotkeys.stop()
         for m in self._voice_mgrs:
             m.stop()
@@ -1001,6 +1163,7 @@ class App:
         self.hotkeys.start()
         self.clip_hotkeys.start()
         self.meeting_hotkeys.start()
+        self.screenrec_hotkeys.start()
         self.bookmark_hotkeys.start()
         self._start_voice_hotkeys()
         if self.cfg.mcp_enabled:

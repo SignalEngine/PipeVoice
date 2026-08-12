@@ -531,3 +531,124 @@ def test_export_with_empty_transcript_reports_status_not_silent_noop():
             assert not errors, f"invoking Export raised: {errors}"
     finally:
         tk.Tk.report_callback_exception = real_report
+
+
+def test_the_screen_recorder_settings_are_actually_on_screen():
+    """A card that exists in the source but never gets packed is invisible.
+
+    build_window destroys the root before returning, so this walks the tree
+    from inside its own stub mainloop, while the widgets still exist.
+    """
+    _skip_if_headless()
+    install_platform_stubs()
+    import os
+    import tkinter as tk
+    from wisprlite import settings
+
+    os.environ["PV_TAB"] = "Settings"
+    found: list[str] = []
+    real_mainloop = tk.Misc.mainloop
+
+    def walk(widget):
+        for child in widget.winfo_children():
+            try:
+                text = child.cget("text")
+            except Exception:
+                text = ""
+            if text:
+                found.append(str(text))
+            walk(child)
+
+    def stub_mainloop(self, _n=0):
+        try:
+            self.update_idletasks()
+            self.update()
+            walk(self)
+        finally:
+            try:
+                self.destroy()
+            except Exception:
+                pass
+
+    tk.Misc.mainloop = stub_mainloop
+    try:
+        settings.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+
+    joined = " | ".join(found)
+    for wanted in ("Screen recording hotkey", "Screen recordings", "Send to",
+                   "Keep a local copy after sending"):
+        assert wanted in joined, f"{wanted!r} was never mounted"
+
+
+def test_quitting_does_not_open_the_naming_dialog():
+    """Quit must still finish the recording, but never wait on a modal.
+
+    ask_name() blocks on wait_window. On the shutdown path nobody is looking at
+    a window that is already closing, so the dialog would hold the quit open
+    until it was hunted down and dismissed.
+    """
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import screenrec
+
+    app = App.__new__(App)
+    recording = types.SimpleNamespace(
+        stem="2026-08-12 10-33-25",
+        errors=[],
+        stop=lambda: pathlib.Path("2026-08-12 10-33-25.mp4"),
+        audio_path=pathlib.Path("nope.wav"),
+    )
+    app._screenrec = recording
+    app.overlay = mock.Mock()
+    app.cfg = types.SimpleNamespace(screenrec_destination="", screenrec_keep_local=True)
+    app._fail = mock.Mock()
+    app._transcribe_recording = mock.Mock(return_value=None)
+
+    with mock.patch.object(screenrec, "ask_name") as ask:
+        App._finish_screen_recording(app, ask=False)
+        assert not ask.called, "shutdown must not open a modal that waits for input"
+
+    app._screenrec = recording
+    with mock.patch.object(screenrec, "ask_name", return_value="") as ask:
+        App._finish_screen_recording(app)
+        assert ask.called, "the normal stop path still asks for a name"
+
+    # And prove quit() is the caller that passes it — asserting on the method
+    # in isolation would pass just as happily if quit() never set the flag.
+    quitting = App.__new__(App)
+    quitting._screenrec = recording
+    quitting._screenrec_finishing = None
+    quitting._stop = mock.Mock()
+    quitting._voice_mgrs, quitting._picker_mgr = [], None
+    quitting._meeting_active = False
+    for name in ("stop_mcp_bridge", "hotkeys", "clip_hotkeys", "meeting_hotkeys",
+                 "screenrec_hotkeys", "bookmark_hotkeys", "overlay", "tray"):
+        setattr(quitting, name, mock.Mock())
+    quitting._finish_screen_recording = mock.Mock()
+
+    App.quit(quitting)
+
+    quitting._finish_screen_recording.assert_called_once_with(ask=False)
+
+
+def test_pausing_pipevoice_also_stops_screen_recording():
+    """Screen + mic is the most invasive capture in the app. Pausing must block
+    a new one — while still letting a running one be stopped.
+
+    Calls the REAL predicate the HotkeyManager is given, not a copy of it.
+    """
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+
+    app.paused, app._screenrec = True, None
+    assert App._screen_recording_paused(app) is True, "paused must block a new recording"
+
+    app.paused, app._screenrec = True, object()
+    assert App._screen_recording_paused(app) is False, "a running one must still stop"
+
+    app.paused, app._screenrec = False, None
+    assert App._screen_recording_paused(app) is False

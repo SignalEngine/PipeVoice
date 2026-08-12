@@ -597,6 +597,11 @@ def main(first_run: bool = False) -> None:
     hotkey_var = tk.StringVar(value=cfg.hotkey)
     clip_hotkey_var = tk.StringVar(value=cfg.clipboard_hotkey)
     meeting_hotkey_var = tk.StringVar(value=cfg.meeting_hotkey)
+    screenrec_hotkey_var = tk.StringVar(value=cfg.screenrec_hotkey)
+    screenrec_dest_var = tk.StringVar(value=cfg.screenrec_destination)
+    screenrec_dir_var = tk.StringVar(value=cfg.screenrec_dir)
+    screenrec_keep_var = tk.BooleanVar(value=cfg.screenrec_keep_local)
+    screenrec_fps_var = tk.StringVar(value=str(cfg.screenrec_fps))
     bookmark_hotkey_var = tk.StringVar(value=cfg.bookmark_hotkey)
     bookmark_acoustic_var = tk.BooleanVar(value=cfg.bookmark_acoustic)
     bookmark_sensitivity_var = tk.DoubleVar(value=cfg.bookmark_sensitivity)
@@ -762,6 +767,17 @@ def main(first_run: bool = False) -> None:
     meeting_cap_btn.config(
         command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
     )
+
+    r = row(
+        c,
+        "Screen recording hotkey",
+        "Tap once to drag a box over what you want to show, and again to stop. "
+        "Records that area plus your microphone.",
+    )
+    entry(r, screenrec_hotkey_var, width=14)
+    screenrec_cap_btn = ttk.Button(r, text="Capture", width=8)
+    screenrec_cap_btn.pack(side="left", padx=(8, 0))
+    screenrec_cap_btn.config(command=_mk_capture(screenrec_cap_btn, screenrec_hotkey_var))
 
     r = row(c, "Bookmark hotkey", "Tap while recording to mark the current moment.")
     entry(r, bookmark_hotkey_var, width=14)
@@ -966,6 +982,26 @@ def main(first_run: bool = False) -> None:
     _pcap.config(command=_mk_capture(_pcap, picker_var))
 
     # --- Audio ---
+    c = card(
+        "Screen recordings",
+        "Show a bug instead of describing it. Recordings are sent with a text "
+        "transcript of what you said, so a coding agent can read it without "
+        "watching the video.",
+    )
+    entry(row(c, "Send to",
+              "An scp destination, e.g. root@your-vps:/root/project/inbox/. Uses the "
+              "SSH keys you already have — Pipevoice never stores one. Leave blank "
+              "to only save locally."),
+          screenrec_dest_var, width=34)
+    entry(row(c, "Save to",
+              "Blank uses your Videos folder."), screenrec_dir_var, width=34)
+    check(c, "Keep a local copy after sending", screenrec_keep_var,
+          "Off deletes the files once they have arrived. A failed send never deletes anything.")
+    entry(row(c, "Frames per second",
+              "10-15 is realistic at 1080p. Higher costs CPU on the machine you are "
+              "recording, which is the same one running what you are showing."),
+          screenrec_fps_var, width=6)
+
     c = card("Audio")
     combo(row(c, "Microphone"), device_var, [lbl for lbl, _ in devices], width=30)
     combo(row(c, "Accent / language", "Pick yours for better accuracy, including non-native accents."),
@@ -1207,6 +1243,14 @@ def main(first_run: bool = False) -> None:
         cfg.hotkey = hotkey_var.get().strip() or "right ctrl"
         cfg.clipboard_hotkey = clip_hotkey_var.get().strip()
         cfg.meeting_hotkey = meeting_hotkey_var.get().strip()
+        cfg.screenrec_hotkey = screenrec_hotkey_var.get().strip()
+        cfg.screenrec_destination = screenrec_dest_var.get().strip()
+        cfg.screenrec_dir = screenrec_dir_var.get().strip()
+        cfg.screenrec_keep_local = bool(screenrec_keep_var.get())
+        try:
+            cfg.screenrec_fps = max(1, min(60, int(screenrec_fps_var.get().strip() or 12)))
+        except ValueError:
+            cfg.screenrec_fps = 12
         cfg.bookmark_hotkey = bookmark_hotkey_var.get().strip()
         cfg.bookmark_acoustic = bool(bookmark_acoustic_var.get())
         cfg.bookmark_phrases = bookmark_phrases_var.get().strip()

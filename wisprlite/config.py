@@ -191,6 +191,12 @@ class Config:
     meetings_dir: str = ""            # where recordings are stored; blank = machine-local default
     update_channel: str = "stable"    # stable | beta — beta also sees prereleases
     pipefocus: bool = False           # live focus nudges during a meeting (Deepgram only)
+    # Screen recorder — off until a hotkey is set, like meeting capture.
+    screenrec_hotkey: str = ""        # drag a region, record it with narration
+    screenrec_destination: str = ""   # scp target, e.g. root@host:/path/inbox-files/
+    screenrec_keep_local: bool = True # keep the files after a successful send
+    screenrec_dir: str = ""           # blank = %USERPROFILE%\\Videos\\PipeVoice
+    screenrec_fps: int = 12           # pure-python capture; 10-15 is realistic at 1080p
 
     @property
     def meetings_keep(self) -> int:
