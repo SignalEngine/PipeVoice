@@ -8,6 +8,7 @@ import logging
 import sys
 import threading
 import time
+from pathlib import Path
 
 from . import autostart, config
 from .audio import Recorder
@@ -71,6 +72,13 @@ class App:
             on_stop=self.toggle_meeting,
             is_paused=lambda: self.paused and not self._meeting_active,
         )
+        self.screenrec_hotkeys = HotkeyManager(
+            get_hotkey=lambda: self.cfg.screenrec_hotkey,
+            get_mode=lambda: "toggle",
+            on_start=self.toggle_screen_recording,
+            on_stop=self.toggle_screen_recording,
+            is_paused=lambda: False,
+        )
         self.bookmark_hotkeys = HotkeyManager(
             get_hotkey=lambda: self.cfg.bookmark_hotkey,
             get_mode=lambda: "ptt",
@@ -79,6 +87,7 @@ class App:
             is_paused=lambda: not self._meeting_active,
         )
 
+        self._screenrec = None        # the live ScreenRecording, None when idle
         self._armed_voice = None      # a Voice armed by the picker, consumed by the next utterance
         self._voice_mgrs = []         # dedicated voice HotkeyManagers
         self._picker_mgr = None       # the picker HotkeyManager
@@ -448,6 +457,100 @@ class App:
             "errors": self._meeting.fatal_errors,
             "bleed": self._meeting.bleed_suspected,
         }
+
+    # ---- screen recording ------------------------------------------------
+
+    def toggle_screen_recording(self) -> None:
+        """Hotkey once: pick a region and record. Again: stop, transcribe, send."""
+        if self._screenrec is not None:
+            threading.Thread(target=self._finish_screen_recording,
+                             name="screenrec-finish", daemon=True).start()
+            return
+        threading.Thread(target=self._begin_screen_recording,
+                         name="screenrec-begin", daemon=True).start()
+
+    def _begin_screen_recording(self) -> None:
+        from . import screenrec
+
+        try:
+            # The overlay would otherwise sit on top of the very thing being
+            # framed, and end up inside the recording.
+            self.overlay.hide()
+            region = screenrec.select_region()
+            if not region:
+                return
+            out_dir = (self.cfg.screenrec_dir or "").strip()
+            recording = screenrec.ScreenRecording(
+                region,
+                Path(out_dir) if out_dir else screenrec.default_output_dir(),
+                fps=self.cfg.screenrec_fps,
+                device=config.device_arg(self.cfg),
+            )
+            recording.start()
+            self._screenrec = recording
+            self.overlay.show("recording", "\u23fa recording — press the hotkey again to stop")
+        except Exception as exc:
+            self._screenrec = None
+            self._fail(f"screen recording: {exc}")
+
+    def _finish_screen_recording(self) -> None:
+        from . import screenrec
+
+        recording, self._screenrec = self._screenrec, None
+        if recording is None:
+            return
+        try:
+            self.overlay.show("thinking", "\u23f9 finishing the recording\u2026")
+            video = recording.stop()
+            if video is None:
+                self._fail("screen recording: " + "; ".join(recording.errors[:2]))
+                return
+            files = [video]
+            transcript = self._transcribe_recording(recording)
+            if transcript is not None:
+                files.append(transcript)
+
+            destination = (self.cfg.screenrec_destination or "").strip()
+            if destination:
+                ok, message = screenrec.send(files, destination)
+                if not ok:
+                    # Never delete on failure, and never claim it arrived.
+                    self._fail(f"kept locally — send failed: {message}")
+                    return
+                if not self.cfg.screenrec_keep_local:
+                    for path in [*files, recording.audio_path]:
+                        try:
+                            Path(path).unlink()
+                        except OSError:
+                            pass
+                self.overlay.show("done", f"\u2713 sent to {destination}")
+            else:
+                self.overlay.show("done", f"\u2713 saved to {video.parent}")
+        except Exception as exc:
+            self._fail(f"screen recording: {exc}")
+
+    def _transcribe_recording(self, recording) -> Path | None:
+        """Narration as text, so the agent reads it instead of decoding frames."""
+        try:
+            from .engines import transcribe as T
+
+            if not recording.audio_path.exists():
+                return None
+            # transcribe_file returns a dict, not a string.
+            result = T.transcribe_file(
+                str(recording.audio_path),
+                model_size=(self.cfg.transcribe_model_size or self.cfg.local_model_size),
+                device=self.cfg.local_device,
+                compute_type=self.cfg.local_compute_type,
+            )
+            text = str((result or {}).get("text") or "").strip()
+            if not text:
+                return None
+            recording.transcript_path.write_text(text, encoding="utf-8")
+            return recording.transcript_path
+        except Exception as exc:
+            log.info("screenrec: transcript failed: %s", exc)
+            return None
 
     def toggle_meeting(self) -> None:
         if self._meeting_active:
@@ -849,6 +952,7 @@ class App:
         self.hotkeys.stop()
         self.clip_hotkeys.stop()
         self.meeting_hotkeys.stop()
+        self.screenrec_hotkeys.stop()
         self.bookmark_hotkeys.stop()
         for m in self._voice_mgrs:
             m.stop()
@@ -1001,6 +1105,7 @@ class App:
         self.hotkeys.start()
         self.clip_hotkeys.start()
         self.meeting_hotkeys.start()
+        self.screenrec_hotkeys.start()
         self.bookmark_hotkeys.start()
         self._start_voice_hotkeys()
         if self.cfg.mcp_enabled:

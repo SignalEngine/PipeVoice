@@ -531,3 +531,52 @@ def test_export_with_empty_transcript_reports_status_not_silent_noop():
             assert not errors, f"invoking Export raised: {errors}"
     finally:
         tk.Tk.report_callback_exception = real_report
+
+
+def test_the_screen_recorder_settings_are_actually_on_screen():
+    """A card that exists in the source but never gets packed is invisible.
+
+    build_window destroys the root before returning, so this walks the tree
+    from inside its own stub mainloop, while the widgets still exist.
+    """
+    _skip_if_headless()
+    install_platform_stubs()
+    import os
+    import tkinter as tk
+    from wisprlite import settings
+
+    os.environ["PV_TAB"] = "Settings"
+    found: list[str] = []
+    real_mainloop = tk.Misc.mainloop
+
+    def walk(widget):
+        for child in widget.winfo_children():
+            try:
+                text = child.cget("text")
+            except Exception:
+                text = ""
+            if text:
+                found.append(str(text))
+            walk(child)
+
+    def stub_mainloop(self, _n=0):
+        try:
+            self.update_idletasks()
+            self.update()
+            walk(self)
+        finally:
+            try:
+                self.destroy()
+            except Exception:
+                pass
+
+    tk.Misc.mainloop = stub_mainloop
+    try:
+        settings.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+
+    joined = " | ".join(found)
+    for wanted in ("Screen recording hotkey", "Screen recordings", "Send to",
+                   "Keep a local copy after sending"):
+        assert wanted in joined, f"{wanted!r} was never mounted"

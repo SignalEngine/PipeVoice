@@ -11,6 +11,11 @@ openai>=1.30          # OpenAI Whisper API (default engine)
 deepgram-sdk>=3,<4     # Deepgram streaming (v4+ changed the API; pin to v3)
 faster-whisper>=1.0   # Local/offline Whisper (no internet needed)
 
+# --- Screen recorder ---
+mss>=9.0              # grabs a screen region; ~0.1 MB
+# H.264 encoding uses PyAV, which faster-whisper already pulls in (av>=11) and
+# whose wheels ship libx264 — so the encoder costs nothing extra in the build.
+
 # --- UI niceties ---
 pystray>=0.19         # system tray icon + menu
 Pillow>=10.0          # renders the tray icon
