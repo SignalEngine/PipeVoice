@@ -213,6 +213,32 @@ def test_late_checkpoint_does_not_overwrite_final_meta():
         assert meta["duration_seconds"] == 1800.0
 
 
+def test_meta_records_the_dropped_block_count():
+    """The count is the only on-disk proof the writer kept up.
+
+    A recording whose wav ends short of the clock is ambiguous — device-open
+    latency and dropped audio look identical — unless this number is saved.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp) / "meeting-drops"
+        session.mkdir()
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder.session_dir = session
+        recorder._started_at = "2026-07-27T12:00:00+00:00"
+
+        recorder._write_meta(stopped_at=None, duration=1.0)
+        assert json.loads((session / "meta.json").read_text(encoding="utf-8"))[
+            "dropped_blocks"
+        ] == 0
+
+        for _ in range(meeting.PCM_QUEUE_LIMIT + 3):
+            recorder._enqueue("mic", np.zeros((1, 1), dtype=np.float32))
+        recorder._write_meta(stopped_at="2026-07-27T12:00:02+00:00", duration=2.0)
+
+        meta = json.loads((session / "meta.json").read_text(encoding="utf-8"))
+        assert meta["dropped_blocks"] == 3
+
+
 def test_recoverable_overflow_is_not_persisted_as_session_error():
     with tempfile.TemporaryDirectory() as tmp:
         session = pathlib.Path(tmp) / "meeting-overflow"
