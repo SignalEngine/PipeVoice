@@ -432,20 +432,7 @@ class App:
             out = self._eff("output_mode")
             to_clipboard = (self._clipboard_only or out == "clipboard"
                             or foreground.is_no_text_target(self._fg_ctx))
-            if to_clipboard:
-                if text:
-                    copy_clipboard(text)
-                self.overlay.set_state("done", "Copied to clipboard" if text else "↵")
-            else:
-                self.overlay.set_state("done", text or "↵")
-                type_text(text, out, press_enter=press_enter, paste_speed=self.cfg.paste_speed)
-            if self.cfg.history_enabled and text:
-                try:
-                    from . import history
-
-                    history.record(text, "clipboard" if self._clipboard_only else "typed")
-                except Exception:
-                    pass
+            self._deliver(text, to_clipboard, out, press_enter)
             self._beep(990, 60)
             self._set_icon("idle")
         finally:
@@ -453,6 +440,46 @@ class App:
             self._active = {}
             self._fg_ctx = {}
             self._release()
+
+    def _deliver(self, text: str, to_clipboard: bool, out: str, press_enter: bool) -> None:
+        """Save the words, then hand them over. In that order, deliberately."""
+        # Record BEFORE delivering. Typing is the fragile half - a window
+        # that refuses synthetic input, a keyboard backend that raises - and
+        # this used to run AFTER it, inside a try that has only a finally.
+        # So a failed paste took the transcript down with it: nothing in the
+        # box AND nothing in the history, which is how you lose words you
+        # have already said.
+        if self.cfg.history_enabled and text:
+            try:
+                from . import history
+
+                history.record(text, "clipboard" if to_clipboard else "typed")
+            except Exception:
+                log.exception("history record failed")
+
+        if to_clipboard:
+            if text:
+                copy_clipboard(text)
+            self.overlay.set_state("done", "Copied to clipboard" if text else "↵")
+        else:
+            try:
+                type_text(text, out, press_enter=press_enter,
+                          paste_speed=self.cfg.paste_speed)
+                # "done" only once it IS done. Set before the attempt, a failure
+                # showed the polished text as a success for a frame and then
+                # flipped to an error - two contradictory answers to "did that
+                # work?", in the order that reads as yes.
+                self.overlay.set_state("done", text or "↵")
+            except Exception as exc:
+                # Never swallow the words. Put them somewhere usable and say
+                # so, rather than showing the polished text on the overlay
+                # and delivering nothing.
+                log.exception("typing failed (mode=%s)", out)
+                if text and copy_clipboard(text):
+                    self.overlay.set_state(
+                        "error", "Couldn't type there — copied instead, press Ctrl+V")
+                else:
+                    self._fail(f"couldn't type that: {exc}")
 
     def _fallback(self, audio, err) -> str:
         """If a cloud engine failed (e.g. offline), try local Whisper once."""
