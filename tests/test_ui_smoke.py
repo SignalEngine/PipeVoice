@@ -582,6 +582,114 @@ def test_the_screen_recorder_settings_are_actually_on_screen():
         assert wanted in joined, f"{wanted!r} was never mounted"
 
 
+def _agent_app(**over):
+    """An App shaped just enough to run the agent screen-recording path."""
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app._screenrec = None
+    app._screenrec_selecting = False
+    app._screenrec_agent = None
+    app._screenrec_agent_result = None
+    app.paused = False
+    app.overlay = mock.Mock()
+    app._notify = mock.Mock()
+    app._fail = mock.Mock()
+    app.cfg = types.SimpleNamespace(
+        screenrec_hotkey="ctrl+alt+r",
+        screenrec_destination="root@vps:/inbox/",
+        screenrec_keep_local=True,
+    )
+    for k, v in over.items():
+        setattr(app, k, v) if not hasattr(app.cfg, k) else setattr(app.cfg, k, v)
+    return app
+
+
+def test_an_agent_call_never_uploads_the_recording():
+    """The agent gets the local path. Sending it to a remote host is a second,
+    larger act, and the agent asking for a clip did not consent to it."""
+    import threading
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import screenrec
+
+    app = _agent_app()
+    recording = mock.Mock()
+    recording.errors = []
+    recording.stop.return_value = pathlib.Path("/out/2026-08-12 10-00-00.mp4")
+    recording.stem = "2026-08-12 10-00-00"
+    recording.audio_path = pathlib.Path("/out/2026-08-12 10-00-00.wav")
+    app._screenrec = recording
+    app._screenrec_agent = threading.Event()
+    app._transcribe_recording = mock.Mock(return_value=None)
+
+    with mock.patch.object(screenrec, "send") as send, \
+         mock.patch.object(screenrec, "ask_name") as ask:
+        App._finish_screen_recording(app)
+
+    assert not send.called, "an agent-driven recording must never be uploaded"
+    assert not ask.called, "an agent-driven recording must not block on a dialog"
+    assert app._screenrec_agent_result["status"] == "ok"
+    assert app._screenrec_agent_result["uploaded"] is False
+    assert app._screenrec_agent_result["video_path"].endswith(".mp4")
+
+
+def test_an_agent_cannot_record_without_a_way_to_stop_or_while_paused():
+    from unittest import mock
+    from wisprlite.app import App
+
+    paused = _agent_app()
+    paused.paused = True
+    assert App.on_agent_record_screen(paused)["status"] == "error"
+
+    no_hotkey = _agent_app(screenrec_hotkey="")
+    result = App.on_agent_record_screen(no_hotkey)
+    assert result["status"] == "error"
+    assert "hotkey" in result["error"], "must say WHY, not just fail"
+
+    busy = _agent_app()
+    busy._screenrec = object()
+    assert App.on_agent_record_screen(busy)["status"] == "error"
+
+
+def test_esc_during_an_agent_recording_writes_nothing():
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = _agent_app()
+    app._begin_screen_recording = mock.Mock()   # leaves _screenrec None, as Esc does
+
+    result = App.on_agent_record_screen(app, prompt="show me the bug")
+
+    assert result["status"] == "cancelled"
+    app._notify.assert_called_once_with("show me the bug")
+    assert app._screenrec_agent is None, "the waiter must not be left dangling"
+
+
+def test_a_failed_agent_recording_releases_the_caller():
+    """Every early return must wake the agent, or it blocks for its full timeout
+    with no idea what happened."""
+    import threading
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = _agent_app()
+    recording = mock.Mock()
+    recording.errors = ["RuntimeError: no frames were captured"]
+    recording.stop.return_value = None
+    app._screenrec = recording
+    waiter = threading.Event()
+    app._screenrec_agent = waiter
+
+    App._finish_screen_recording(app)
+
+    assert waiter.is_set(), "the agent must be woken even when the recording failed"
+    assert app._screenrec_agent_result["status"] == "error"
+    assert "no frames" in app._screenrec_agent_result["error"]
+
+
 def test_quitting_does_not_open_the_naming_dialog():
     """Quit must still finish the recording, but never wait on a modal.
 
@@ -595,6 +703,8 @@ def test_quitting_does_not_open_the_naming_dialog():
     from wisprlite import screenrec
 
     app = App.__new__(App)
+    app._screenrec_agent = None
+    app._screenrec_agent_result = None
     recording = types.SimpleNamespace(
         stem="2026-08-12 10-33-25",
         errors=[],
