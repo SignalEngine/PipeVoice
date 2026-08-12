@@ -88,6 +88,7 @@ class App:
         )
 
         self._screenrec = None        # the live ScreenRecording, None when idle
+        self._screenrec_selecting = False   # the region selector is open
         self._armed_voice = None      # a Voice armed by the picker, consumed by the next utterance
         self._voice_mgrs = []         # dedicated voice HotkeyManagers
         self._picker_mgr = None       # the picker HotkeyManager
@@ -466,6 +467,11 @@ class App:
             threading.Thread(target=self._finish_screen_recording,
                              name="screenrec-finish", daemon=True).start()
             return
+        if self._screenrec_selecting:
+            # The region selector is already open. A second press is the user
+            # trying again, not asking for a second selector on top.
+            return
+        self._screenrec_selecting = True
         threading.Thread(target=self._begin_screen_recording,
                          name="screenrec-begin", daemon=True).start()
 
@@ -492,6 +498,8 @@ class App:
         except Exception as exc:
             self._screenrec = None
             self._fail(f"screen recording: {exc}")
+        finally:
+            self._screenrec_selecting = False
 
     def _finish_screen_recording(self) -> None:
         from . import screenrec
@@ -961,6 +969,14 @@ class App:
         self.clip_hotkeys.stop()
         self.meeting_hotkeys.stop()
         self.screenrec_hotkeys.stop()
+        if self._screenrec is not None:
+            # Quitting must not throw away what was already recorded: the
+            # capture threads are daemons, so without this they die with no
+            # mux step and leave no playable file at all.
+            try:
+                self._finish_screen_recording()
+            except Exception:
+                pass
         self.bookmark_hotkeys.stop()
         for m in self._voice_mgrs:
             m.stop()

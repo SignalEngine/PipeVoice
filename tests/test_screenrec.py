@@ -40,6 +40,16 @@ def _frames(count, width=320, height=240):
     return out
 
 
+def _feed(rec, frames):
+    """Push frames through the real streaming encoder, as the grab loop does."""
+    for frame in frames:
+        with rec._encode_lock:
+            if rec._container is None:
+                rec._open_container(frame.shape[1], frame.shape[0])
+            rec._encode_frame(np.ascontiguousarray(frame))
+        rec.frames_written += 1
+
+
 def _write_wav(path, seconds=1.0):
     samples = (np.sin(np.linspace(0, 220 * 2 * np.pi, int(screenrec.AUDIO_RATE * seconds)))
                * 12000).astype("<i2")
@@ -54,8 +64,7 @@ def test_it_produces_an_mp4_that_decodes_back_to_the_frames_put_in():
     """"It wrote a file" is not the bar. It has to decode."""
     with tempfile.TemporaryDirectory() as tmp:
         rec = _recording(tmp, fps=10)
-        rec._frames = _frames(20)
-        rec.frames_written = 20
+        _feed(rec, _frames(20))
         _write_wav(rec.audio_path, seconds=2.0)
 
         out = rec._mux()
@@ -71,8 +80,7 @@ def test_it_produces_an_mp4_that_decodes_back_to_the_frames_put_in():
 def test_the_narration_survives_into_the_mp4():
     with tempfile.TemporaryDirectory() as tmp:
         rec = _recording(tmp, fps=10)
-        rec._frames = _frames(10)
-        rec.frames_written = 10
+        _feed(rec, _frames(10))
         _write_wav(rec.audio_path, seconds=1.0)
 
         out = rec._mux()
@@ -88,8 +96,7 @@ def test_a_recording_with_no_audio_still_produces_a_playable_video():
     """A muted mic must not cost you the recording."""
     with tempfile.TemporaryDirectory() as tmp:
         rec = _recording(tmp, fps=10)
-        rec._frames = _frames(8)
-        rec.frames_written = 8
+        _feed(rec, _frames(8))
 
         out = rec._mux()
 
@@ -248,8 +255,7 @@ def test_the_colours_that_go_in_are_the_colours_that_come_out():
         rec = _recording(tmp, fps=10)
         red = np.zeros((240, 320, 3), dtype=np.uint8); red[:, :, 0] = 220
         green = np.zeros((240, 320, 3), dtype=np.uint8); green[:, :, 1] = 220
-        rec._frames = [red] * 5 + [green] * 5
-        rec.frames_written = 10
+        _feed(rec, [red] * 5 + [green] * 5)
 
         out = rec._mux()
 
@@ -438,3 +444,26 @@ def test_the_name_dialog_returns_what_was_typed(typed, expected):
     root.destroy()
 
     assert got == expected
+
+
+def test_a_long_recording_does_not_hold_every_frame_in_memory():
+    """A 1080p raw frame is 6 MB. Buffering a minute at 12 fps is ~4.5 GB, so
+    the recording dies before producing anything. Memory must stay flat."""
+    import tracemalloc
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp, fps=12)
+        frame = np.random.randint(0, 255, (480, 854, 3), dtype=np.uint8)
+
+        _feed(rec, [frame] * 12)          # warm the encoder
+        tracemalloc.start()
+        base = tracemalloc.get_traced_memory()[0]
+        _feed(rec, [frame] * 240)         # 20 more seconds
+        peak_growth = tracemalloc.get_traced_memory()[0] - base
+        tracemalloc.stop()
+
+        raw_size = frame.nbytes * 240     # what buffering them would have cost
+        assert peak_growth < raw_size / 10, (
+            f"grew {peak_growth/1e6:.1f} MB over 240 frames; "
+            f"buffering them all would be {raw_size/1e6:.1f} MB")
+        rec._mux()

@@ -67,6 +67,10 @@ class ScreenRecording:
         self._wave: wave.Wave_write | None = None
         self._wave_lock = threading.Lock()
         self._mic_stream = None
+        self._container = None
+        self._video_stream = None
+        self._audio_stream = None
+        self._encode_lock = threading.Lock()
         self.errors: list[str] = []
         self.dropped_audio_blocks = 0
         self.frames_written = 0
@@ -146,7 +150,40 @@ class ScreenRecording:
 
     # -- video ---------------------------------------------------------------
 
+    def _open_container(self, width: int, height: int) -> None:
+        """Open the mp4 and its video stream, ready to take frames one at a time."""
+        import av
+
+        self._container = av.open(str(self.video_path), mode="w")
+        stream = self._container.add_stream("libx264", rate=self.fps)
+        stream.width, stream.height = width, height
+        stream.pix_fmt = "yuv420p"
+        # Small enough to send over a phone tether, still readable text.
+        stream.options = {"crf": "28", "preset": "veryfast"}
+        self._video_stream = stream
+        # Both streams MUST be declared before the first packet is muxed — the
+        # header is written then, and adding a stream afterwards fails with
+        # "Cannot rebase to zero time". The mic is always recorded, so the
+        # audio track is always declared, even if it ends up empty.
+        audio = self._container.add_stream("aac", rate=AUDIO_RATE)
+        audio.layout = "mono"
+        self._audio_stream = audio
+
+    def _encode_frame(self, frame) -> None:
+        import av
+
+        picture = av.VideoFrame.from_ndarray(frame, format="rgb24")
+        for packet in self._video_stream.encode(picture):
+            self._container.mux(packet)
+
     def _grab_loop(self) -> None:
+        """Grab, encode, mux — one frame at a time.
+
+        Frames are NEVER accumulated. A 1080p frame is 6 MB of raw RGB, so a
+        one-minute recording at 12 fps would be about 4.5 GB held in memory
+        waiting to be encoded, and the recording would die before it produced
+        anything. Encoding as they arrive keeps memory flat.
+        """
         try:
             import mss
             import numpy as np
@@ -155,14 +192,15 @@ class ScreenRecording:
             box = {"left": left, "top": top, "width": width, "height": height}
             interval = 1.0 / self.fps
             with mss.mss() as sct:
-                self._frames: list = []
                 next_at = time.monotonic()
                 while not self._stop.is_set():
                     shot = sct.grab(box)
-                    # BGRA -> RGB, dropping alpha. np.asarray on the raw buffer
-                    # is a view, so copy: the next grab reuses it.
+                    # BGRA -> RGB, dropping alpha.
                     frame = np.array(shot, dtype=np.uint8)[:, :, :3][:, :, ::-1]
-                    self._frames.append(frame.copy())
+                    with self._encode_lock:
+                        if self._container is None:
+                            self._open_container(frame.shape[1], frame.shape[0])
+                        self._encode_frame(np.ascontiguousarray(frame))
                     self.frames_written += 1
                     next_at += interval
                     sleep_for = next_at - time.monotonic()
@@ -263,37 +301,22 @@ class ScreenRecording:
     # -- mux -----------------------------------------------------------------
 
     def _mux(self) -> Path | None:
-        """Write the frames and the narration into one mp4."""
+        """Flush the video, add the narration, close the file."""
         try:
             import av
-            import numpy as np
 
-            frames = getattr(self, "_frames", [])
-            if not frames:
+            with self._encode_lock:
+                container, self._container = self._container, None
+                video, self._video_stream = self._video_stream, None
+                audio, self._audio_stream = self._audio_stream, None
+            if container is None:
                 return None
-            height, width = frames[0].shape[:2]
-            container = av.open(str(self.video_path), mode="w")
             try:
-                video = container.add_stream("libx264", rate=self.fps)
-                video.width, video.height = width, height
-                video.pix_fmt = "yuv420p"
-                # Small enough to send over a phone tether, still readable text.
-                video.options = {"crf": "28", "preset": "veryfast"}
-
-                audio = None
-                samples = self._read_wav()
-                if samples is not None and samples.size:
-                    audio = container.add_stream("aac", rate=AUDIO_RATE)
-                    audio.layout = "mono"
-
-                for frame in frames:
-                    picture = av.VideoFrame.from_ndarray(frame, format="rgb24")
-                    for packet in video.encode(picture):
-                        container.mux(packet)
-                for packet in video.encode():
+                for packet in video.encode():          # flush the encoder
                     container.mux(packet)
 
-                if audio is not None:
+                samples = self._read_wav()
+                if audio is not None and samples is not None and samples.size:
                     frame = av.AudioFrame.from_ndarray(
                         samples.reshape(1, -1), format="s16", layout="mono"
                     )
@@ -375,9 +398,22 @@ def select_region(root=None) -> tuple[int, int, int, int] | None:
         top.attributes("-topmost", True)
     except Exception:
         pass
+    # mss reports the union of every monitor as monitors[0]. Tk only knows the
+    # primary screen and origin 0,0, so a display positioned LEFT of the primary
+    # (negative x) could not be covered or selected at all.
+    origin_x, origin_y = 0, 0
     width = root.winfo_screenwidth()
     height = root.winfo_screenheight()
-    top.geometry(f"{width}x{height}+0+0")
+    try:
+        import mss
+
+        with mss.mss() as sct:
+            desktop = sct.monitors[0]
+        origin_x, origin_y = desktop["left"], desktop["top"]
+        width, height = desktop["width"], desktop["height"]
+    except Exception:
+        pass
+    top.geometry(f"{width}x{height}+{origin_x}+{origin_y}")
 
     canvas = tk.Canvas(top, cursor="crosshair", bg="#000000", highlightthickness=0)
     canvas.pack(fill="both", expand=True)
@@ -401,7 +437,8 @@ def select_region(root=None) -> tuple[int, int, int, int] | None:
             canvas.coords(state["box"], state["x"], state["y"], event.x, event.y)
 
     def release(event):
-        left, top_ = min(state["x"], event.x), min(state["y"], event.y)
+        left = min(state["x"], event.x) + origin_x
+        top_ = min(state["y"], event.y) + origin_y
         w, h = abs(event.x - state["x"]), abs(event.y - state["y"])
         # A stray click is a cancel, not a 3x2 recording.
         state["result"] = (left, top_, w, h) if w >= 16 and h >= 16 else None
