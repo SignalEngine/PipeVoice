@@ -505,6 +505,14 @@ class App:
             if video is None:
                 self._fail("screen recording: " + "; ".join(recording.errors[:2]))
                 return
+
+            # Named AFTER the fact: the moment you want to hit record is the
+            # wrong moment to be filling in a form. The timestamp always leads
+            # so an inbox full of these still sorts.
+            typed = screenrec.ask_name(recording.stem)
+            if typed:
+                recording.rename(screenrec.stamped_stem(recording.stem, typed))
+                video = recording.video_path
             files = [video]
             transcript = self._transcribe_recording(recording)
             if transcript is not None:

@@ -120,6 +120,25 @@ class ScreenRecording:
             return None
         return self._mux()
 
+    def rename(self, stem: str) -> None:
+        """Give the finished files a new stem, keeping every extension."""
+        stem = (stem or "").strip()
+        if not stem or stem == self.stem:
+            return
+        target = self.out_dir / f"{stem}.mp4"
+        if target.exists():
+            # Never silently overwrite an earlier recording with the same name.
+            stem = f"{stem} ({self.stem})"
+        for suffix in (".mp4", ".wav", ".txt"):
+            source = self.out_dir / f"{self.stem}{suffix}"
+            if source.exists():
+                try:
+                    source.rename(self.out_dir / f"{stem}{suffix}")
+                except OSError as exc:
+                    self._record_error(exc)
+                    return
+        self.stem = stem
+
     def _record_error(self, exc: Exception) -> None:
         message = f"{type(exc).__name__}: {exc}"
         self.errors.append(message)
@@ -397,6 +416,99 @@ def select_region(root=None) -> tuple[int, int, int, int] | None:
     canvas.bind("<ButtonRelease-1>", release)
     top.bind("<Escape>", cancel)
     top.focus_force()
+    top.grab_set()
+    top.wait_window()
+    if owns_root:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+    return state["result"]
+
+
+# Windows forbids these outright; a remote inbox is no place for them either.
+_ILLEGAL = '<>:"/\\|?*'
+
+
+def safe_name(text: str, *, limit: int = 60) -> str:
+    """Turn what the user typed into something both Windows and scp accept."""
+    cleaned = "".join(
+        " " if ch in _ILLEGAL or ord(ch) < 32 else ch
+        for ch in str(text or "")
+    )
+    cleaned = " ".join(cleaned.split())          # collapse runs of whitespace
+    # A name that is only dots is a directory reference, and a trailing dot or
+    # space is silently dropped by Windows, which makes the file unfindable.
+    cleaned = cleaned.strip(". ")
+    return cleaned[:limit].strip()
+
+
+def stamped_stem(stamp: str, name: str = "") -> str:
+    """`<timestamp> <name>` — the timestamp always leads, so the inbox sorts."""
+    clean = safe_name(name)
+    return f"{stamp} {clean}" if clean else stamp
+
+
+def ask_name(default_stamp: str, root=None) -> str | None:
+    """Ask what to call this recording. Returns "" for no name, None to cancel.
+
+    Shown after recording stops, so naming never delays hitting record — the
+    moment you want to capture something is the wrong moment for a form.
+    """
+    import tkinter as tk
+
+    owns_root = root is None
+    if owns_root:
+        root = tk.Tk()
+        root.withdraw()
+
+    top = tk.Toplevel(root)
+    top.title("Name this recording")
+    top.configure(bg="#13151d")
+    top.resizable(False, False)
+
+    wrap = tk.Frame(top, bg="#13151d", padx=24, pady=20)
+    wrap.pack()
+    tk.Label(wrap, text="Name this recording", bg="#13151d", fg="#e5e7eb",
+             font=("Segoe UI", 13, "bold")).pack(anchor="w")
+    tk.Label(wrap, text=f"Saved as  {default_stamp} <name>", bg="#13151d",
+             fg="#94a3b8", font=("Segoe UI", 9)).pack(anchor="w", pady=(2, 12))
+
+    var = tk.StringVar()
+    field = tk.Entry(wrap, textvariable=var, width=38, bg="#1b1e29", fg="#e5e7eb",
+                     insertbackground="#e5e7eb", relief="flat", font=("Segoe UI", 11))
+    field.pack(ipady=6, fill="x")
+    field.focus_set()
+
+    state = {"result": None}
+
+    def save(_event=None):
+        state["result"] = safe_name(var.get())
+        top.destroy()
+
+    def skip(_event=None):
+        state["result"] = ""          # no name, keep the timestamp
+        top.destroy()
+
+    buttons = tk.Frame(wrap, bg="#13151d")
+    buttons.pack(fill="x", pady=(14, 0))
+    tk.Button(buttons, text="Skip", command=skip, bg="#1b1e29", fg="#e5e7eb",
+              relief="flat", padx=14, pady=6, font=("Segoe UI", 9)).pack(side="left")
+    tk.Button(buttons, text="Save & send", command=save, bg="#e06c75", fg="#1a0c0d",
+              relief="flat", padx=16, pady=6,
+              font=("Segoe UI", 9, "bold")).pack(side="right")
+    field.bind("<Return>", save)
+    top.bind("<Escape>", skip)
+    top.protocol("WM_DELETE_WINDOW", skip)
+
+    top.update_idletasks()
+    width, height = top.winfo_width(), top.winfo_height()
+    top.geometry(f"+{(top.winfo_screenwidth() - width) // 2}"
+                 f"+{(top.winfo_screenheight() - height) // 3}")
+    try:
+        top.attributes("-topmost", True)
+    except Exception:
+        pass
     top.grab_set()
     top.wait_window()
     if owns_root:

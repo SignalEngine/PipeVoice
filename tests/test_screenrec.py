@@ -324,3 +324,117 @@ def test_a_stray_click_is_a_cancel_not_a_tiny_recording():
     box = screenrec.select_region(root)
     root.destroy()
     assert box is None
+
+
+# -- naming ------------------------------------------------------------------
+
+def test_the_timestamp_always_leads_so_an_inbox_sorts():
+    assert screenrec.stamped_stem("2026-08-12 10-33-25", "login bug") == \
+        "2026-08-12 10-33-25 login bug"
+
+
+def test_no_name_still_gives_a_timestamped_file():
+    assert screenrec.stamped_stem("2026-08-12 10-33-25", "") == "2026-08-12 10-33-25"
+    assert screenrec.stamped_stem("2026-08-12 10-33-25", "   ") == "2026-08-12 10-33-25"
+
+
+@pytest.mark.parametrize("typed", ['a/b', 'a\\b', 'a:b', 'a*b', 'a?b', 'a"b', 'a<b>', 'a|b'])
+def test_characters_windows_and_scp_reject_are_stripped(typed):
+    cleaned = screenrec.safe_name(typed)
+    assert not (set(cleaned) & set('<>:"/\\|?*')), cleaned
+    assert cleaned
+
+
+def test_a_name_that_windows_would_silently_mangle_is_cleaned():
+    """A trailing dot or space is dropped by Windows, making the file
+    unfindable by the name you typed."""
+    assert screenrec.safe_name("report. ") == "report"
+    assert screenrec.safe_name("...") == ""
+    assert screenrec.safe_name("a\tb\nc") == "a b c"
+
+
+def test_a_very_long_name_is_capped():
+    assert len(screenrec.safe_name("x" * 500)) <= 60
+
+
+def test_renaming_moves_every_file_of_the_recording():
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        for suffix in (".mp4", ".wav", ".txt"):
+            (rec.out_dir / f"{rec.stem}{suffix}").write_bytes(b"x")
+
+        rec.rename("2026-08-12 10-33-25 login bug")
+
+        assert rec.video_path.name == "2026-08-12 10-33-25 login bug.mp4"
+        for suffix in (".mp4", ".wav", ".txt"):
+            assert (rec.out_dir / f"2026-08-12 10-33-25 login bug{suffix}").exists()
+
+
+def test_renaming_never_overwrites_an_earlier_recording():
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        (rec.out_dir / f"{rec.stem}.mp4").write_bytes(b"new")
+        (rec.out_dir / "login bug.mp4").write_bytes(b"older recording")
+
+        rec.rename("login bug")
+
+        assert (rec.out_dir / "login bug.mp4").read_bytes() == b"older recording"
+        assert rec.video_path.read_bytes() == b"new"
+
+
+def _click(parent, label):
+    """Press the button a user would press."""
+    import tkinter as tk
+
+    def walk(widget):
+        for child in widget.winfo_children():
+            if isinstance(child, tk.Button) and child.cget("text") == label:
+                child.invoke()
+                return True
+            if walk(child):
+                return True
+        return False
+
+    assert walk(parent), f"no {label!r} button"
+
+
+@pytest.mark.skipif(not uistub.have_display(), reason="no display")
+@pytest.mark.parametrize("typed,expected", [("log", "log"), (None, "")])
+def test_the_name_dialog_returns_what_was_typed(typed, expected):
+    """A failsafe closes the dialog no matter what, so a broken driver fails
+    this test instead of hanging the whole run."""
+    import tkinter as tk
+
+    root = tk.Tk()
+    root.update_idletasks()
+
+    def dialogs():
+        return [w for w in root.winfo_children() if isinstance(w, tk.Toplevel)]
+
+    def drive():
+        top = dialogs()[0]
+        if typed is None:
+            _click(top, "Skip")
+            return
+        entries = []
+
+        def walk(widget):
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Entry):
+                    entries.append(child)
+                walk(child)
+
+        walk(top)
+        entries[0].insert("end", typed)
+        _click(top, "Save & send")
+
+    def failsafe():
+        for top in dialogs():
+            top.destroy()
+
+    root.after(300, drive)
+    root.after(4000, failsafe)
+    got = screenrec.ask_name("2026-08-12 10-33-25", root)
+    root.destroy()
+
+    assert got == expected
