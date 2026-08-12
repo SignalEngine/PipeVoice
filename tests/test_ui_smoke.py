@@ -1018,3 +1018,42 @@ def test_a_failed_send_does_not_strand_the_pill_on_a_progress_bar():
     with mock.patch.object(App, "_ask_name_in_pill", return_value=""):
         App._finish_screen_recording(app2)
     assert app2._screenrec_ui.snapshot()["phase"] == "recording"
+
+
+def test_a_failed_paste_still_leaves_the_words_in_history_and_on_the_clipboard():
+    """James, 2026-08-12: it "records the dictation, polishes it, then does not
+    paste into the box" - and the transcript was missing from history too.
+
+    history.record ran AFTER type_text inside a try that has only a finally, so
+    a raising keyboard backend skipped it entirely. Words you have already said
+    must not be destroyed by a failure to deliver them.
+    """
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import history
+
+    recorded = []
+    app = App.__new__(App)
+    app.cfg = types.SimpleNamespace(
+        history_enabled=True, replacements={}, voice_commands=False,
+        paste_speed="normal", min_seconds=0.0, engine="gemini", language="",
+    )
+    app._clipboard_only = False
+    app._active = {}
+    app._fg_ctx = {}
+    app.overlay = mock.Mock()
+    app._fail = mock.Mock()
+    app._beep = mock.Mock()
+    app._set_icon = mock.Mock()
+
+    with mock.patch.object(history, "record", side_effect=lambda t, k: recorded.append((t, k))), \
+         mock.patch("wisprlite.app.type_text", side_effect=RuntimeError("no window")), \
+         mock.patch("wisprlite.app.copy_clipboard", return_value=True) as clip:
+        App._deliver(app, "hello there", False, "type", False)
+
+    assert recorded == [("hello there", "typed")], \
+        f"the transcript was lost when typing failed: {recorded}"
+    clip.assert_called_once_with("hello there")
+    states = [c.args[0] for c in app.overlay.set_state.call_args_list]
+    assert "error" in states, "a failed paste must say so, not look like success"
