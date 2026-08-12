@@ -77,7 +77,7 @@ class App:
             get_mode=lambda: "toggle",
             on_start=self.toggle_screen_recording,
             on_stop=self.toggle_screen_recording,
-            is_paused=lambda: False,
+            is_paused=self._screen_recording_paused,
         )
         self.bookmark_hotkeys = HotkeyManager(
             get_hotkey=lambda: self.cfg.bookmark_hotkey,
@@ -89,6 +89,7 @@ class App:
 
         self._screenrec = None        # the live ScreenRecording, None when idle
         self._screenrec_selecting = False   # the region selector is open
+        self._screenrec_finishing = None    # the thread muxing/sending, if any
         self._armed_voice = None      # a Voice armed by the picker, consumed by the next utterance
         self._voice_mgrs = []         # dedicated voice HotkeyManagers
         self._picker_mgr = None       # the picker HotkeyManager
@@ -461,11 +462,24 @@ class App:
 
     # ---- screen recording ------------------------------------------------
 
+    def _screen_recording_paused(self) -> bool:
+        """Paused means paused.
+
+        Screen + microphone is the most invasive capture this app performs, so
+        it must not be the one that ignores the switch. A recording that is
+        already running can still be STOPPED while paused — otherwise pausing
+        mid-recording would strand it with no way to finish the file.
+        """
+        return bool(self.paused) and self._screenrec is None
+
+
     def toggle_screen_recording(self) -> None:
         """Hotkey once: pick a region and record. Again: stop, transcribe, send."""
         if self._screenrec is not None:
-            threading.Thread(target=self._finish_screen_recording,
-                             name="screenrec-finish", daemon=True).start()
+            thread = threading.Thread(target=self._finish_screen_recording,
+                                      name="screenrec-finish", daemon=True)
+            self._screenrec_finishing = thread
+            thread.start()
             return
         if self._screenrec_selecting:
             # The region selector is already open. A second press is the user
@@ -525,6 +539,10 @@ class App:
             transcript = self._transcribe_recording(recording)
             if transcript is not None:
                 files.append(transcript)
+            # Say so. The transcript is the thing that makes the clip cheap for
+            # an agent to read, and silently shipping without it looks
+            # identical to shipping with it.
+            note = "" if transcript is not None else " (no transcript — check the mic)"
 
             destination = (self.cfg.screenrec_destination or "").strip()
             if destination:
@@ -539,9 +557,9 @@ class App:
                             Path(path).unlink()
                         except OSError:
                             pass
-                self.overlay.show("done", f"\u2713 sent to {destination}")
+                self.overlay.show("done", f"\u2713 sent to {destination}{note}")
             else:
-                self.overlay.show("done", f"\u2713 saved to {video.parent}")
+                self.overlay.show("done", f"\u2713 saved to {video.parent}{note}")
         except Exception as exc:
             self._fail(f"screen recording: {exc}")
 
@@ -977,6 +995,11 @@ class App:
                 self._finish_screen_recording()
             except Exception:
                 pass
+        finishing = self._screenrec_finishing
+        if finishing is not None and finishing.is_alive():
+            # Already muxing, transcribing or uploading. That work is on a
+            # daemon thread, so returning here would kill it mid-file.
+            finishing.join(timeout=120.0)
         self.bookmark_hotkeys.stop()
         for m in self._voice_mgrs:
             m.stop()

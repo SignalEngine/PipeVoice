@@ -580,3 +580,23 @@ def test_the_screen_recorder_settings_are_actually_on_screen():
     for wanted in ("Screen recording hotkey", "Screen recordings", "Send to",
                    "Keep a local copy after sending"):
         assert wanted in joined, f"{wanted!r} was never mounted"
+
+
+def test_pausing_pipevoice_also_stops_screen_recording():
+    """Screen + mic is the most invasive capture in the app. Pausing must block
+    a new one — while still letting a running one be stopped.
+
+    Calls the REAL predicate the HotkeyManager is given, not a copy of it.
+    """
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+
+    app.paused, app._screenrec = True, None
+    assert App._screen_recording_paused(app) is True, "paused must block a new recording"
+
+    app.paused, app._screenrec = True, object()
+    assert App._screen_recording_paused(app) is False, "a running one must still stop"
+
+    app.paused, app._screenrec = False, None
+    assert App._screen_recording_paused(app) is False
