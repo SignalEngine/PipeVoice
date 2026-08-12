@@ -34,6 +34,8 @@ DEFAULT_FPS = 12
 # ~30s of audio in hand before dropping. The mic callback must never block —
 # see feedback_audio_callback_must_not_touch_disk.
 AUDIO_QUEUE_LIMIT = 2_000
+# Shutdown waits longer than this, so quitting never kills a live upload.
+UPLOAD_TIMEOUT = 300.0
 
 
 def default_output_dir() -> Path:
@@ -343,7 +345,7 @@ class ScreenRecording:
             return None
 
 
-def send(paths, destination: str, *, timeout: float = 300.0) -> tuple[bool, str]:
+def send(paths, destination: str, *, timeout: float = UPLOAD_TIMEOUT) -> tuple[bool, str]:
     """scp the files to `destination`. Returns (ok, message).
 
     Shells out to the scp that ships with Windows so the user's own keys, agent
@@ -375,6 +377,17 @@ def send(paths, destination: str, *, timeout: float = 300.0) -> tuple[bool, str]
         detail = (done.stderr or done.stdout or "").strip().splitlines()
         return False, detail[-1] if detail else f"scp exited {done.returncode}"
     return True, f"sent {len(files)} file(s)"
+
+
+def _offset(value: int) -> str:
+    """Tk geometry wants `-1920`, not `+-1920`.
+
+    A monitor positioned left of the primary gives a negative origin, and the
+    naive f"+{x}" produces `+-1920`, which raises TclError — so the selector
+    would not open at all on exactly the setup the virtual-desktop handling
+    was added for.
+    """
+    return f"+{value}" if value >= 0 else str(value)
 
 
 def select_region(root=None) -> tuple[int, int, int, int] | None:
@@ -413,7 +426,7 @@ def select_region(root=None) -> tuple[int, int, int, int] | None:
         width, height = desktop["width"], desktop["height"]
     except Exception:
         pass
-    top.geometry(f"{width}x{height}+{origin_x}+{origin_y}")
+    top.geometry(f"{width}x{height}{_offset(origin_x)}{_offset(origin_y)}")
 
     canvas = tk.Canvas(top, cursor="crosshair", bg="#000000", highlightthickness=0)
     canvas.pack(fill="both", expand=True)

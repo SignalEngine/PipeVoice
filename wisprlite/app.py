@@ -987,6 +987,8 @@ class App:
         self.clip_hotkeys.stop()
         self.meeting_hotkeys.stop()
         self.screenrec_hotkeys.stop()
+        from . import screenrec
+
         if self._screenrec is not None:
             # Quitting must not throw away what was already recorded: the
             # capture threads are daemons, so without this they die with no
@@ -999,7 +1001,9 @@ class App:
         if finishing is not None and finishing.is_alive():
             # Already muxing, transcribing or uploading. That work is on a
             # daemon thread, so returning here would kill it mid-file.
-            finishing.join(timeout=120.0)
+            # Must exceed the scp timeout in screenrec.send, or quitting
+            # kills a slow upload that was still perfectly on track.
+            finishing.join(timeout=screenrec.UPLOAD_TIMEOUT + 60.0)
         self.bookmark_hotkeys.stop()
         for m in self._voice_mgrs:
             m.stop()

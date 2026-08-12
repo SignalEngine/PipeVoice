@@ -467,3 +467,18 @@ def test_a_long_recording_does_not_hold_every_frame_in_memory():
             f"grew {peak_growth/1e6:.1f} MB over 240 frames; "
             f"buffering them all would be {raw_size/1e6:.1f} MB")
         rec._mux()
+
+
+@pytest.mark.parametrize("value,expected", [(0, "+0"), (1920, "+1920"), (-1920, "-1920")])
+def test_a_negative_monitor_origin_makes_valid_tk_geometry(value, expected):
+    """f"+{-1920}" gives "+-1920", which Tk rejects — so the selector would not
+    open at all on a monitor placed left of the primary."""
+    assert screenrec._offset(value) == expected
+
+
+def test_shutdown_waits_longer_than_an_upload_can_take():
+    from wisprlite import app as app_module
+
+    source = pathlib.Path(app_module.__file__).read_text()
+    assert "screenrec.UPLOAD_TIMEOUT + 60.0" in source
+    assert screenrec.UPLOAD_TIMEOUT >= 300.0
