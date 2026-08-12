@@ -54,6 +54,39 @@ def main() -> None:
         return _send("transcribe", read_timeout=900.0,
                      path=path, format=format, language=language, model_size=model_size)
 
+    @mcp.tool()
+    def record_screen(prompt: str = "", timeout_seconds: int = 300) -> dict:
+        """Ask the user to SHOW you the problem, and get back a video plus what they said.
+
+        Use this when words are the wrong medium: a visual bug, a layout that
+        looks wrong, a UI that behaves oddly, an animation that stutters, or any
+        "it does a weird thing" you would otherwise need three rounds of
+        questions to pin down. Also use it when the user is clearly struggling
+        to describe something in text.
+
+        The user drags a box over the part of the screen that matters, narrates
+        what is wrong, and presses their hotkey to stop. You get:
+          video_path      an .mp4 you can read directly if you handle video
+          transcript      what they said, already transcribed locally
+          transcript_path the same text as a file
+        Read `transcript` first - it is usually enough to locate the problem,
+        and it costs nothing compared with decoding frames.
+
+        `prompt` is shown to the user, so say what you want to see:
+        "show me the checkout page and click the button that does nothing".
+
+        Consent is built in and you cannot bypass it: the user chooses the
+        region by hand, and Esc cancels and writes nothing. The file stays on
+        their machine - this tool never uploads it anywhere, even if they have
+        configured a destination for their own use.
+
+        Returns status 'cancelled' if they pressed Esc, 'timeout' if they are
+        still recording after timeout_seconds. Neither is an error; a person
+        changed their mind or is taking their time.
+        """
+        return _send("record_screen", read_timeout=float(timeout_seconds) + 120.0,
+                     prompt=prompt, timeout=timeout_seconds)
+
     mcp.run()  # stdio transport by default
 
 

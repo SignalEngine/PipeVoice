@@ -154,7 +154,15 @@ def build(container, root, wheel=None) -> None:
                 else:
                     status.config(text="Update failed. Check your connection and try again.", fg=WARN)
                     btn.config(state="normal", text="Try again", command=do_update)
-            root.after(0, done)
+            # Close the window while this check is still in flight and the root
+            # is already gone. Tk then raises "main thread is not in main loop"
+            # from THIS thread - at best a traceback the user cannot act on, at
+            # worst it aborts the interpreter.
+            try:
+                if root.winfo_exists():
+                    root.after(0, done)
+            except Exception:
+                pass
         threading.Thread(target=work, daemon=True).start()
 
     def load():
@@ -182,7 +190,15 @@ def build(container, root, wheel=None) -> None:
                 else:
                     status.config(text="You're on the latest version.", fg=GOOD)
                     btn.config(state="normal", text="Check again", command=load, style="TButton")
-            root.after(0, done)
+            # Close the window while this check is still in flight and the root
+            # is already gone. Tk then raises "main thread is not in main loop"
+            # from THIS thread - at best a traceback the user cannot act on, at
+            # worst it aborts the interpreter.
+            try:
+                if root.winfo_exists():
+                    root.after(0, done)
+            except Exception:
+                pass
         threading.Thread(target=work, daemon=True).start()
 
     def render_changelog(rels):

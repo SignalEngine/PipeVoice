@@ -90,6 +90,8 @@ class App:
         self._screenrec = None        # the live ScreenRecording, None when idle
         self._screenrec_selecting = False   # the region selector is open
         self._screenrec_finishing = None    # the thread muxing/sending, if any
+        self._screenrec_agent = None        # Event an MCP caller is waiting on
+        self._screenrec_agent_result = None
         self._armed_voice = None      # a Voice armed by the picker, consumed by the next utterance
         self._voice_mgrs = []         # dedicated voice HotkeyManagers
         self._picker_mgr = None       # the picker HotkeyManager
@@ -538,7 +540,10 @@ class App:
             # Named AFTER the fact: the moment you want to hit record is the
             # wrong moment to be filling in a form. The timestamp always leads
             # so an inbox full of these still sorts.
-            typed = screenrec.ask_name(recording.stem) if ask else ""
+            # An agent is blocked waiting on this, and the user recorded because
+            # the agent asked — do not stop them for a filename.
+            agent_call = self._screenrec_agent is not None
+            typed = screenrec.ask_name(recording.stem) if (ask and not agent_call) else ""
             if typed:
                 recording.rename(screenrec.stamped_stem(recording.stem, typed))
                 video = recording.video_path
@@ -550,6 +555,24 @@ class App:
             # an agent to read, and silently shipping without it looks
             # identical to shipping with it.
             note = "" if transcript is not None else " (no transcript — check the mic)"
+
+            # An agent asked for this one. It already gets the local path back,
+            # so shipping the file to a remote host on the agent's say-so is a
+            # second, larger act that nobody consented to. Hand back the path
+            # and stop; the user can still send it themselves with the hotkey.
+            waiter = self._screenrec_agent
+            if waiter is not None:
+                self._screenrec_agent = None
+                self._screenrec_agent_result = {
+                    "status": "ok",
+                    "video_path": str(video),
+                    "transcript_path": str(transcript) if transcript else "",
+                    "transcript": self._read_text(transcript),
+                    "uploaded": False,
+                }
+                self.overlay.show("done", f"✓ saved to {video.parent}{note}")
+                waiter.set()
+                return
 
             destination = (self.cfg.screenrec_destination or "").strip()
             if destination:
@@ -569,6 +592,61 @@ class App:
                 self.overlay.show("done", f"\u2713 saved to {video.parent}{note}")
         except Exception as exc:
             self._fail(f"screen recording: {exc}")
+        finally:
+            # Every early return above (no frames, send failed, exception) would
+            # otherwise leave an agent blocked until its own timeout with no
+            # idea why. Release it with the reason instead.
+            waiter, self._screenrec_agent = self._screenrec_agent, None
+            if waiter is not None:
+                self._screenrec_agent_result = {
+                    "status": "error",
+                    "error": "; ".join(recording.errors[:2]) or "the recording produced no file",
+                }
+                waiter.set()
+
+    @staticmethod
+    def _read_text(path) -> str:
+        try:
+            return Path(path).read_text(encoding="utf-8") if path else ""
+        except OSError:
+            return ""
+
+    def on_agent_record_screen(self, prompt: str = "", timeout: int = 300) -> dict:
+        """An agent asks the user to SHOW it the problem. Returns clip + words.
+
+        The user drags the region and presses the hotkey to stop, so nothing is
+        captured without a deliberate act — an agent cannot silently start
+        recording a screen and a microphone. Esc during selection returns
+        `cancelled` and writes no file.
+        """
+        if self._screenrec is not None or self._screenrec_selecting:
+            return {"status": "error", "error": "a screen recording is already in progress"}
+        if self.paused:
+            return {"status": "error", "error": "PipeVoice is paused"}
+        hotkey = (self.cfg.screenrec_hotkey or "").strip()
+        if not hotkey:
+            # Without it the user has started something they cannot stop.
+            return {"status": "error",
+                    "error": "no screen recording hotkey is set — Settings > Screen recording"}
+
+        self._screenrec_agent_result = None
+        waiter = threading.Event()
+        self._screenrec_agent = waiter
+        try:
+            self._screenrec_selecting = True
+            if prompt:
+                self._notify(prompt)
+            self._begin_screen_recording()
+            if self._screenrec is None:
+                return {"status": "cancelled", "error": "no region was selected"}
+            if not waiter.wait(timeout=max(5.0, float(timeout))):
+                return {"status": "timeout",
+                        "error": f"still recording after {timeout}s — press {hotkey} to stop"}
+            return self._screenrec_agent_result or {
+                "status": "error", "error": "the recording finished without a result"}
+        finally:
+            if self._screenrec_agent is waiter:
+                self._screenrec_agent = None
 
     def _transcribe_recording(self, recording) -> Path | None:
         """Narration as text, so the agent reads it instead of decoding frames."""
@@ -733,6 +811,8 @@ class App:
         if op == "transcribe":
             return self.on_agent_transcribe(req.get("path", ""), req.get("format", "json"),
                                             req.get("language", ""), req.get("model_size", ""))
+        if op == "record_screen":
+            return self.on_agent_record_screen(req.get("prompt", ""), req.get("timeout", 300))
         return {"status": "error", "error": f"unknown op: {op}"}
 
     def on_agent_transcribe(self, path="", fmt="json", language="", model_size="") -> dict:

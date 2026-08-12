@@ -582,6 +582,270 @@ def test_the_screen_recorder_settings_are_actually_on_screen():
         assert wanted in joined, f"{wanted!r} was never mounted"
 
 
+def test_settings_live_in_the_tab_they_belong_to():
+    """Screen-recording settings under Recordings, meeting settings under Meetings.
+
+    Walking for the text alone is not enough - every tab frame exists in the
+    tree whether or not it is the visible one, so "the widget is somewhere"
+    passes even when a card is packed into the wrong tab. This checks ANCESTRY:
+    the card must share a container with its own tab's intro text, and must not
+    share one with the Settings form.
+    """
+    _skip_if_headless()
+    install_platform_stubs()
+    import os
+    import tkinter as tk
+    from wisprlite import settings
+
+    os.environ["PV_TAB"] = "Settings"
+    seen: dict[str, object] = {}
+    real_mainloop = tk.Misc.mainloop
+
+    def walk(widget):
+        for child in widget.winfo_children():
+            try:
+                text = str(child.cget("text"))
+            except Exception:
+                text = ""
+            if text and text not in seen:
+                seen[text] = child
+            walk(child)
+
+    def stub_mainloop(self, _n=0):
+        try:
+            self.update_idletasks()
+            self.update()
+            walk(self)
+        finally:
+            try:
+                self.destroy()
+            except Exception:
+                pass
+
+    tk.Misc.mainloop = stub_mainloop
+    try:
+        settings.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+
+    def find(prefix):
+        for text, widget in seen.items():
+            if text.startswith(prefix):
+                return widget
+        raise AssertionError(f"no widget whose text starts with {prefix!r}")
+
+    def ancestors(widget):
+        chain, node = [], widget
+        while node is not None:
+            chain.append(node)
+            node = getattr(node, "master", None)
+        return chain
+
+    settings_form = set(ancestors(find("Min seconds")))          # still in Advanced
+    recordings_tab = set(ancestors(find("Press your screen recording hotkey")))
+    meetings_tab_frames = set(ancestors(find("Press your meeting hotkey")))
+
+    screenrec_card = set(ancestors(find("Screen recordings")))
+    assert screenrec_card & (recordings_tab - settings_form), \
+        "the screen-recording card is not inside the Recordings tab"
+    assert not (screenrec_card & (settings_form - recordings_tab)), \
+        "the screen-recording card is still in the Settings form"
+
+    meeting_card = set(ancestors(find("Meeting hotkey")))
+    assert meeting_card & (meetings_tab_frames - settings_form), \
+        "the meeting settings are not inside the Meetings tab"
+    assert not (meeting_card & (settings_form - meetings_tab_frames)), \
+        "the meeting settings are still in the Settings form"
+
+    assert "Recordings" in seen, "the Recordings tab button was never mounted"
+
+
+def test_the_settings_link_swaps_the_view_and_swaps_it_back():
+    """Opening settings must hide the browser, and closing must bring it back.
+
+    Packed ABOVE the list instead, the settings shoved it off the bottom and
+    then ran off the bottom themselves — neither usable. And a toggle that only
+    goes one way strands the user in a settings panel with no way out.
+    """
+    _skip_if_headless()
+    install_platform_stubs()
+    import os
+    import tkinter as tk
+    from wisprlite import settings
+
+    os.environ["PV_TAB"] = "Recordings"
+    outcome: dict[str, bool] = {}
+    real_mainloop = tk.Misc.mainloop
+
+    def find_visible_link(widget):
+        for child in widget.winfo_children():
+            try:
+                if str(child.cget("text")).startswith("Settings  ") and child.winfo_ismapped():
+                    return child
+            except Exception:
+                pass
+            found = find_visible_link(child)
+            if found is not None:
+                return found
+        return None
+
+    def find_by_text(widget, prefix):
+        for child in widget.winfo_children():
+            try:
+                if str(child.cget("text")).startswith(prefix):
+                    return child
+            except Exception:
+                pass
+            found = find_by_text(child, prefix)
+            if found is not None:
+                return found
+        return None
+
+    def stub_mainloop(self, _n=0):
+        try:
+            self.update_idletasks()
+            self.update()
+            intro = find_by_text(self, "Press your screen recording hotkey")
+            link = find_visible_link(self)
+            outcome["found_link"] = link is not None
+            outcome["browser_before"] = bool(intro and intro.winfo_ismapped())
+            link.event_generate("<Button-1>")
+            self.update_idletasks()
+            self.update()
+            outcome["browser_hidden"] = not intro.winfo_ismapped()
+            hotkey = find_by_text(self, "Screen recording hotkey")
+            outcome["settings_shown"] = bool(hotkey and hotkey.winfo_ismapped())
+            link.event_generate("<Button-1>")
+            self.update_idletasks()
+            self.update()
+            outcome["browser_back"] = intro.winfo_ismapped()
+        finally:
+            try:
+                self.destroy()
+            except Exception:
+                pass
+
+    tk.Misc.mainloop = stub_mainloop
+    try:
+        settings.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+
+    assert outcome.get("found_link"), "no visible Settings link on the Recordings tab"
+    assert outcome.get("browser_before"), "the browser should start visible"
+    assert outcome.get("browser_hidden"), "opening settings must hide the browser"
+    assert outcome.get("settings_shown"), "the settings never became visible"
+    assert outcome.get("browser_back"), "closing settings must restore the browser"
+
+
+def _agent_app(**over):
+    """An App shaped just enough to run the agent screen-recording path."""
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app._screenrec = None
+    app._screenrec_selecting = False
+    app._screenrec_agent = None
+    app._screenrec_agent_result = None
+    app.paused = False
+    app.overlay = mock.Mock()
+    app._notify = mock.Mock()
+    app._fail = mock.Mock()
+    app.cfg = types.SimpleNamespace(
+        screenrec_hotkey="ctrl+alt+r",
+        screenrec_destination="root@vps:/inbox/",
+        screenrec_keep_local=True,
+    )
+    for k, v in over.items():
+        setattr(app, k, v) if not hasattr(app.cfg, k) else setattr(app.cfg, k, v)
+    return app
+
+
+def test_an_agent_call_never_uploads_the_recording():
+    """The agent gets the local path. Sending it to a remote host is a second,
+    larger act, and the agent asking for a clip did not consent to it."""
+    import threading
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import screenrec
+
+    app = _agent_app()
+    recording = mock.Mock()
+    recording.errors = []
+    recording.stop.return_value = pathlib.Path("/out/2026-08-12 10-00-00.mp4")
+    recording.stem = "2026-08-12 10-00-00"
+    recording.audio_path = pathlib.Path("/out/2026-08-12 10-00-00.wav")
+    app._screenrec = recording
+    app._screenrec_agent = threading.Event()
+    app._transcribe_recording = mock.Mock(return_value=None)
+
+    with mock.patch.object(screenrec, "send") as send, \
+         mock.patch.object(screenrec, "ask_name") as ask:
+        App._finish_screen_recording(app)
+
+    assert not send.called, "an agent-driven recording must never be uploaded"
+    assert not ask.called, "an agent-driven recording must not block on a dialog"
+    assert app._screenrec_agent_result["status"] == "ok"
+    assert app._screenrec_agent_result["uploaded"] is False
+    assert app._screenrec_agent_result["video_path"].endswith(".mp4")
+
+
+def test_an_agent_cannot_record_without_a_way_to_stop_or_while_paused():
+    from unittest import mock
+    from wisprlite.app import App
+
+    paused = _agent_app()
+    paused.paused = True
+    assert App.on_agent_record_screen(paused)["status"] == "error"
+
+    no_hotkey = _agent_app(screenrec_hotkey="")
+    result = App.on_agent_record_screen(no_hotkey)
+    assert result["status"] == "error"
+    assert "hotkey" in result["error"], "must say WHY, not just fail"
+
+    busy = _agent_app()
+    busy._screenrec = object()
+    assert App.on_agent_record_screen(busy)["status"] == "error"
+
+
+def test_esc_during_an_agent_recording_writes_nothing():
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = _agent_app()
+    app._begin_screen_recording = mock.Mock()   # leaves _screenrec None, as Esc does
+
+    result = App.on_agent_record_screen(app, prompt="show me the bug")
+
+    assert result["status"] == "cancelled"
+    app._notify.assert_called_once_with("show me the bug")
+    assert app._screenrec_agent is None, "the waiter must not be left dangling"
+
+
+def test_a_failed_agent_recording_releases_the_caller():
+    """Every early return must wake the agent, or it blocks for its full timeout
+    with no idea what happened."""
+    import threading
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = _agent_app()
+    recording = mock.Mock()
+    recording.errors = ["RuntimeError: no frames were captured"]
+    recording.stop.return_value = None
+    app._screenrec = recording
+    waiter = threading.Event()
+    app._screenrec_agent = waiter
+
+    App._finish_screen_recording(app)
+
+    assert waiter.is_set(), "the agent must be woken even when the recording failed"
+    assert app._screenrec_agent_result["status"] == "error"
+    assert "no frames" in app._screenrec_agent_result["error"]
+
+
 def test_quitting_does_not_open_the_naming_dialog():
     """Quit must still finish the recording, but never wait on a modal.
 
@@ -595,6 +859,8 @@ def test_quitting_does_not_open_the_naming_dialog():
     from wisprlite import screenrec
 
     app = App.__new__(App)
+    app._screenrec_agent = None
+    app._screenrec_agent_result = None
     recording = types.SimpleNamespace(
         stem="2026-08-12 10-33-25",
         errors=[],
