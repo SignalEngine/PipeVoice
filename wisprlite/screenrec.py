@@ -131,18 +131,31 @@ class ScreenRecording:
         stem = (stem or "").strip()
         if not stem or stem == self.stem:
             return
-        target = self.out_dir / f"{stem}.mp4"
-        if target.exists():
-            # Never silently overwrite an earlier recording with the same name.
+        suffixes = (".mp4", ".wav", ".txt")
+        # Any of the three colliding means the name is taken. Checking only the
+        # .mp4 would silently overwrite an earlier recording's wav or transcript.
+        if any((self.out_dir / f"{stem}{suffix}").exists() for suffix in suffixes):
             stem = f"{stem} ({self.stem})"
-        for suffix in (".mp4", ".wav", ".txt"):
+        done = []
+        for suffix in suffixes:
             source = self.out_dir / f"{self.stem}{suffix}"
-            if source.exists():
-                try:
-                    source.rename(self.out_dir / f"{stem}{suffix}")
-                except OSError as exc:
-                    self._record_error(exc)
-                    return
+            if not source.exists():
+                continue
+            target = self.out_dir / f"{stem}{suffix}"
+            try:
+                source.rename(target)
+            except OSError as exc:
+                # All three files or none. A half-rename splits one recording
+                # across two names and leaves video_path — derived from stem —
+                # pointing at a file that is not there.
+                self._record_error(exc)
+                for moved_target, moved_source in reversed(done):
+                    try:
+                        moved_target.rename(moved_source)
+                    except OSError:
+                        pass
+                return
+            done.append((target, source))
         self.stem = stem
 
     def _record_error(self, exc: Exception) -> None:
@@ -216,6 +229,22 @@ class ScreenRecording:
                         next_at = time.monotonic()
         except Exception as exc:
             self._record_error(exc)
+            if not self.frames_written:
+                # The container was opened but never took a frame, so stop()
+                # skips the mux and leaves an unplayable stub sitting in the
+                # user's Videos folder looking like a recording.
+                with self._encode_lock:
+                    container, self._container = self._container, None
+                    self._video_stream = self._audio_stream = None
+                try:
+                    if container is not None:
+                        container.close()
+                except Exception:
+                    pass
+                try:
+                    self.video_path.unlink()
+                except OSError:
+                    pass
 
     # -- audio ---------------------------------------------------------------
 

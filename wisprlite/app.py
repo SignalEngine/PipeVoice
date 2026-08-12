@@ -515,7 +515,14 @@ class App:
         finally:
             self._screenrec_selecting = False
 
-    def _finish_screen_recording(self) -> None:
+    def _finish_screen_recording(self, ask: bool = True) -> None:
+        """Mux, transcribe and send. `ask=False` skips the naming dialog.
+
+        Shutdown passes ask=False: a modal that waits for input is the one
+        thing quitting must not do. Nobody is looking at a window that is in
+        the middle of closing, so it would hang the quit until the dialog is
+        found and dismissed. The recording keeps its timestamp name.
+        """
         from . import screenrec
 
         recording, self._screenrec = self._screenrec, None
@@ -531,7 +538,7 @@ class App:
             # Named AFTER the fact: the moment you want to hit record is the
             # wrong moment to be filling in a form. The timestamp always leads
             # so an inbox full of these still sorts.
-            typed = screenrec.ask_name(recording.stem)
+            typed = screenrec.ask_name(recording.stem) if ask else ""
             if typed:
                 recording.rename(screenrec.stamped_stem(recording.stem, typed))
                 video = recording.video_path
@@ -994,7 +1001,7 @@ class App:
             # capture threads are daemons, so without this they die with no
             # mux step and leave no playable file at all.
             try:
-                self._finish_screen_recording()
+                self._finish_screen_recording(ask=False)
             except Exception:
                 pass
         finishing = self._screenrec_finishing

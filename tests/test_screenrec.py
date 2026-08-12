@@ -376,6 +376,48 @@ def test_renaming_moves_every_file_of_the_recording():
             assert (rec.out_dir / f"2026-08-12 10-33-25 login bug{suffix}").exists()
 
 
+def test_a_failed_rename_puts_every_file_back():
+    """All three files or none.
+
+    A half-rename splits one recording across two names, and video_path is
+    derived from stem, so it would point at a file that is not there.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        for suffix in (".mp4", ".wav", ".txt"):
+            (rec.out_dir / f"{rec.stem}{suffix}").write_bytes(b"x")
+        original = rec.stem
+        real_rename = pathlib.Path.rename
+
+        def fail_on_the_wav(self, target):
+            if self.suffix == ".wav":
+                raise OSError("locked by another process")
+            return real_rename(self, target)
+
+        with patch.object(pathlib.Path, "rename", fail_on_the_wav):
+            rec.rename("login bug")
+
+        assert rec.stem == original
+        for suffix in (".mp4", ".wav", ".txt"):
+            assert (rec.out_dir / f"{original}{suffix}").exists()
+            assert not (rec.out_dir / f"login bug{suffix}").exists()
+        assert rec.video_path.exists()
+
+
+def test_renaming_will_not_clobber_a_wav_whose_mp4_is_gone():
+    """The collision check has to cover every suffix, not just the video."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        (rec.out_dir / f"{rec.stem}.mp4").write_bytes(b"new")
+        (rec.out_dir / f"{rec.stem}.wav").write_bytes(b"new audio")
+        (rec.out_dir / "login bug.wav").write_bytes(b"older narration")
+
+        rec.rename("login bug")
+
+        assert (rec.out_dir / "login bug.wav").read_bytes() == b"older narration"
+        assert rec.video_path.exists()
+
+
 def test_renaming_never_overwrites_an_earlier_recording():
     with tempfile.TemporaryDirectory() as tmp:
         rec = _recording(tmp)
