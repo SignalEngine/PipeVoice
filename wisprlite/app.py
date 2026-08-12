@@ -61,7 +61,17 @@ class ScreenrecUI:
     def answer_name(self, typed: str) -> None:
         with self._lock:
             self._name = (typed or "").strip()
-            self._state.update(phase="working", status="Finishing up\u2026")
+            # Phase only. The status line belongs to whoever is doing the work,
+            # and setting one here flashed a string nobody owned for a frame.
+            self._state.update(phase="working")
+        self._name_event.set()
+
+    def abandon_name(self) -> None:
+        """Nobody answered. Drop the field so a very late Save cannot strand a
+        name that the finished recording will never see."""
+        with self._lock:
+            self._name = ""
+            self._state.update(phase="working")
         self._name_event.set()
 
     def take_name(self) -> str:
@@ -546,7 +556,7 @@ class App:
             return ""
         answered = self._screenrec_ui.expect_name(default)
         if not answered.wait(timeout=180.0):
-            self._screenrec_ui.update(phase="working", status="Finishing up\u2026")
+            self._screenrec_ui.abandon_name()
             return ""
         return self._screenrec_ui.take_name()
 
@@ -721,6 +731,14 @@ class App:
             # was one more box to dismiss. Whether a clip was delivered belongs
             # in the Recordings tab, next to the clip.
             self._finished_recording = video
+            # The path lands on the clipboard without being asked: it is what
+            # gets pasted to an agent, and it costs nothing. OPENING the tab is
+            # a button now, not something that steals focus from whatever you
+            # were doing.
+            try:
+                copy_clipboard(str(video))
+            except Exception as exc:
+                log.info("screenrec: could not copy the path: %s", exc)
             self._screenrec_ui.update(
                 phase="done",
                 title="Recording saved" + (" and sent" if destination else ""),
@@ -729,9 +747,15 @@ class App:
         except Exception as exc:
             self._fail(f"screen recording: {exc}")
         finally:
-            # Every early return above (no frames, send failed, exception) would
-            # otherwise leave an agent blocked until its own timeout with no
-            # idea why. Release it with the reason instead.
+            # The pill is driven by a phase, so every early return above (no
+            # frames, send failed, exception) would otherwise leave it showing a
+            # sweeping progress bar or a name field for ever. Anything that did
+            # not reach "done" ends as a dismissable error instead.
+            if self._screenrec_ui.snapshot().get("phase") != "done":
+                self._screenrec_ui.clear()
+                self.overlay.hide()
+            # Every early return would equally leave an agent blocked until its
+            # own timeout with no idea why. Release it with the reason instead.
             waiter, self._screenrec_agent = self._screenrec_agent, None
             if waiter is not None:
                 self._screenrec_agent_result = {

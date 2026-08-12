@@ -970,7 +970,6 @@ def test_the_finished_pill_never_announces_the_scp_destination():
     recording.audio_path = pathlib.Path("/out/2026-08-12 17-32-18.wav")
     app._screenrec = recording
     app._transcribe_recording = mock.Mock(return_value=None)
-    app._handoff_recording = mock.Mock()
 
     with mock.patch.object(App, "_ask_name_in_pill", return_value=""), \
          mock.patch.object(screenrec, "send", return_value=(True, "ok")):
@@ -983,3 +982,39 @@ def test_the_finished_pill_never_announces_the_scp_destination():
         f"the pill is naming a destination again: {blob}"
     assert "sent" in state["title"].lower(), \
         "it must still say the clip went somewhere, just not where"
+
+
+def test_a_failed_send_does_not_strand_the_pill_on_a_progress_bar():
+    """The pill is phase-driven, so any path that does not reach "done" must
+    put it away. Left as-is the user watches a sweeping bar for ever."""
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import screenrec
+
+    app = _agent_app()
+    app._screenrec_agent = None
+    recording = mock.Mock()
+    recording.errors = []
+    recording.stem = "2026-08-12 17-32-18"
+    recording.stop.return_value = pathlib.Path("/out/clip.mp4")
+    recording.audio_path = pathlib.Path("/out/clip.wav")
+    app._screenrec = recording
+    app._transcribe_recording = mock.Mock(return_value=None)
+
+    with mock.patch.object(App, "_ask_name_in_pill", return_value=""), \
+         mock.patch.object(screenrec, "send", return_value=(False, "connection refused")):
+        App._finish_screen_recording(app)
+
+    assert app._screenrec_ui.snapshot()["phase"] == "recording", \
+        "a failed send left the pill mid-flight"
+    assert app.overlay.hide.called, "the pill must be put away, not left up"
+    assert app._fail.called, "and the failure must still be reported"
+
+    # An exception anywhere in the flow must land the same way.
+    app2 = _agent_app()
+    app2._screenrec_agent = None
+    app2._screenrec = recording
+    app2._transcribe_recording = mock.Mock(side_effect=RuntimeError("boom"))
+    with mock.patch.object(App, "_ask_name_in_pill", return_value=""):
+        App._finish_screen_recording(app2)
+    assert app2._screenrec_ui.snapshot()["phase"] == "recording"
