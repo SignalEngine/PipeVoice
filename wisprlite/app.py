@@ -462,10 +462,14 @@ class App:
                 copy_clipboard(text)
             self.overlay.set_state("done", "Copied to clipboard" if text else "↵")
         else:
-            self.overlay.set_state("done", text or "↵")
             try:
                 type_text(text, out, press_enter=press_enter,
                           paste_speed=self.cfg.paste_speed)
+                # "done" only once it IS done. Set before the attempt, a failure
+                # showed the polished text as a success for a frame and then
+                # flipped to an error - two contradictory answers to "did that
+                # work?", in the order that reads as yes.
+                self.overlay.set_state("done", text or "↵")
             except Exception as exc:
                 # Never swallow the words. Put them somewhere usable and say
                 # so, rather than showing the polished text on the overlay

@@ -1057,3 +1057,6 @@ def test_a_failed_paste_still_leaves_the_words_in_history_and_on_the_clipboard()
     clip.assert_called_once_with("hello there")
     states = [c.args[0] for c in app.overlay.set_state.call_args_list]
     assert "error" in states, "a failed paste must say so, not look like success"
+    assert "done" not in states, \
+        "a failed paste must never flash 'done' first — two answers to 'did that " \
+        "work?', in the order that reads as yes"
