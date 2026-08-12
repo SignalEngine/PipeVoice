@@ -602,3 +602,66 @@ def test_the_recordings_list_notices_a_transcript_written_after_the_clip():
         assert signature(first) != signature(second), (
             "the poll signature must change when a transcript appears, or the "
             "tab never re-renders and 'no transcript' sticks")
+
+
+def test_pausing_drops_both_streams_so_they_stay_aligned():
+    """Pause must stop audio AND video, or the paused stretch exists in one
+    stream and not the other and everything after it is out of sync."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        block = np.full((800, 1), 0.25, dtype=np.float32)
+
+        rec._on_mic_block(block, 800, None, None)
+        assert rec._audio_queue.qsize() == 1
+        assert rec.first_audio_at is not None
+
+        rec.pause()
+        assert rec.paused
+        for _ in range(5):
+            rec._on_mic_block(block, 800, None, None)
+        assert rec._audio_queue.qsize() == 1, "audio kept flowing while paused"
+
+        rec.resume()
+        assert not rec.paused
+        rec._on_mic_block(block, 800, None, None)
+        assert rec._audio_queue.qsize() == 2, "audio did not resume"
+
+
+def test_elapsed_excludes_time_spent_paused():
+    """The pill's clock has to show recorded seconds, not wall clock, or it
+    disagrees with the length of the file it produces."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        assert rec.elapsed() == 0.0            # nothing captured yet
+
+        now = time.monotonic()
+        rec.first_audio_at = now - 10.0
+        assert rec.elapsed() == pytest.approx(10.0, abs=0.2)
+
+        rec.pause()
+        rec._paused_at = now - 4.0             # as if paused 4 seconds ago
+        assert rec.elapsed() == pytest.approx(6.0, abs=0.2), \
+            "a paused recording's clock must stop"
+
+        rec.resume()
+        assert rec.paused_seconds == pytest.approx(4.0, abs=0.2)
+        assert rec.elapsed() == pytest.approx(6.0, abs=0.2), \
+            "resuming must not give back the paused time"
+
+
+def test_the_pill_buttons_are_where_the_clicks_are_caught():
+    """One table drives both drawing and hit-testing, so this proves the
+    geometry a user aims at is the geometry that answers."""
+    from wisprlite.overlay import Overlay, WIN_H
+
+    overlay = Overlay(enabled=False)
+    cy = WIN_H // 2
+    for action, cx in Overlay.SCREENREC_BUTTONS:
+        assert overlay._screenrec_hit(cx, cy) == action
+        assert overlay._screenrec_hit(cx, cy - 4) == action
+    # The pill body is not a button - dragging it must stay possible.
+    assert overlay._screenrec_hit(30, cy) == ""
+    assert overlay._screenrec_hit(120, cy) == ""
+    # And the buttons must not overlap each other.
+    hits = [overlay._screenrec_hit(cx, cy) for _a, cx in Overlay.SCREENREC_BUTTONS]
+    assert len(set(hits)) == len(hits)
