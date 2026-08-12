@@ -76,6 +76,13 @@ class ScreenRecording:
         self.errors: list[str] = []
         self.dropped_audio_blocks = 0
         self.frames_written = 0
+        # The mic opens faster than mss + the x264 container, so audio starts
+        # first. Measured on a real 12s clip: 12.46s of audio against 11.42s of
+        # video, both starting at 0 — the narration ran a second ahead of the
+        # picture for the whole recording. Recording both instants lets the mux
+        # drop that leading second instead of guessing.
+        self.first_frame_at: float | None = None
+        self.first_audio_at: float | None = None
 
     # -- paths ---------------------------------------------------------------
 
@@ -215,6 +222,8 @@ class ScreenRecording:
                     with self._encode_lock:
                         if self._container is None:
                             self._open_container(frame.shape[1], frame.shape[0])
+                        if self.first_frame_at is None:
+                            self.first_frame_at = time.monotonic()
                         self._encode_frame(np.ascontiguousarray(frame))
                     self.frames_written += 1
                     next_at += interval
@@ -282,6 +291,8 @@ class ScreenRecording:
         try:
             import numpy as np
 
+            if self.first_audio_at is None:
+                self.first_audio_at = time.monotonic()
             self._audio_queue.put_nowait(
                 np.array(indata, dtype="float32", copy=True)
             )
@@ -346,7 +357,7 @@ class ScreenRecording:
                 for packet in video.encode():          # flush the encoder
                     container.mux(packet)
 
-                samples = self._read_wav()
+                samples = self._trim_lead(self._read_wav())
                 if audio is not None and samples is not None and samples.size:
                     frame = av.AudioFrame.from_ndarray(
                         samples.reshape(1, -1), format="s16", layout="mono"
@@ -362,6 +373,32 @@ class ScreenRecording:
         except Exception as exc:
             self._record_error(exc)
             return None
+
+    def lead_seconds(self) -> float:
+        """How long the microphone ran before the first frame was encoded."""
+        if self.first_frame_at is None or self.first_audio_at is None:
+            return 0.0
+        return max(0.0, self.first_frame_at - self.first_audio_at)
+
+    def _trim_lead(self, samples):
+        """Drop the audio captured before there was any picture.
+
+        Both streams are muxed starting at zero, so without this the whole
+        narration plays ahead of what it is describing — you hear "click this
+        button" a second before the cursor moves. Trimming the head is right
+        rather than padding the video: the missing picture never existed.
+
+        Only the startup gap is corrected. A capped, sane bound keeps a bad
+        clock reading from eating the start of what someone said.
+        """
+        lead = self.lead_seconds()
+        if samples is None or not lead:
+            return samples
+        drop = min(int(lead * AUDIO_RATE), max(0, samples.size - AUDIO_RATE))
+        if drop <= 0:
+            return samples
+        log.info("screenrec: trimmed %.2fs of audio that preceded the first frame", lead)
+        return samples[drop:]
 
     def _read_wav(self):
         try:
