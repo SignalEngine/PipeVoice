@@ -564,7 +564,11 @@ def test_shutdown_waits_longer_than_an_upload_can_take():
 
 
 def test_the_recordings_list_notices_a_transcript_written_after_the_clip():
-    """The signature must change when the .txt lands, not only when the mp4 does.
+    """The listing and its poll signature must change when the .txt lands.
+
+    Scope: this covers list_recordings() and the signature the poll compares,
+    not the Tk callback itself — the tab-level swap behaviour is covered in
+    tests/test_ui_smoke.py.
 
     James recorded a clip while the Recordings tab was open. The tab was a
     snapshot from when it opened, so it still read "0 recordings" — the proof
