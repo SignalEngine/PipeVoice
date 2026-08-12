@@ -490,12 +490,17 @@ class App:
     def _screenrec_action(self, action: str) -> None:
         """A button on the recording pill. Runs on the overlay's worker thread."""
         recording = self._screenrec
+        if recording is None:
+            # Stop clears _screenrec immediately and then muxes, transcribes and
+            # uploads on a thread — seconds during which the pill is still up.
+            # Without this guard a second press of Stop in that window falls
+            # through to toggle_screen_recording's "nothing is recording" branch
+            # and opens a region selector to start a NEW one.
+            return
         if action == "stop":
             # Same path as the hotkey, so there is exactly one way to finish a
             # recording and both routes get the naming, transcript and send.
             self.toggle_screen_recording()
-            return
-        if recording is None:
             return
         try:
             if action == "pause":

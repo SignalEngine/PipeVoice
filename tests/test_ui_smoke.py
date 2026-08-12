@@ -918,3 +918,29 @@ def test_pausing_pipevoice_also_stops_screen_recording():
 
     app.paused, app._screenrec = False, None
     assert App._screen_recording_paused(app) is False
+
+
+def test_pressing_stop_twice_does_not_start_a_new_recording():
+    """Stop clears _screenrec immediately, then muxes/uploads for seconds while
+    the pill is still up. A second press in that window must do nothing, not
+    fall through to "nothing is recording" and open a region selector."""
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app._screenrec = object()
+    app._fail = mock.Mock()
+    app.toggle_screen_recording = mock.Mock()
+
+    App._screenrec_action(app, "stop")
+    assert app.toggle_screen_recording.call_count == 1
+
+    app._screenrec = None                     # as the finish path leaves it
+    App._screenrec_action(app, "stop")
+    assert app.toggle_screen_recording.call_count == 1, \
+        "a second Stop started a brand-new recording"
+
+    # Pause and resume on a finished recording are equally no-ops.
+    App._screenrec_action(app, "pause")
+    App._screenrec_action(app, "resume")
+    assert not app._fail.called
