@@ -376,6 +376,43 @@ def test_renaming_moves_every_file_of_the_recording():
             assert (rec.out_dir / f"2026-08-12 10-33-25 login bug{suffix}").exists()
 
 
+def test_audio_recorded_before_the_first_frame_is_trimmed():
+    """Measured on James's first real clip: 12.46s of audio against 11.42s of
+    video, both muxed from zero, so the narration ran a second ahead of the
+    picture for the whole recording. The mic opens faster than mss plus x264.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        samples = np.arange(screenrec.AUDIO_RATE * 5, dtype="<i2")
+
+        rec.first_audio_at, rec.first_frame_at = 100.0, 101.5
+        assert rec.lead_seconds() == pytest.approx(1.5)
+        trimmed = rec._trim_lead(samples)
+        assert trimmed.size == samples.size - int(1.5 * screenrec.AUDIO_RATE)
+        assert trimmed[0] == samples[int(1.5 * screenrec.AUDIO_RATE)], \
+            "the wrong end was trimmed"
+
+        # Video first (or simultaneous) means nothing to correct.
+        rec.first_audio_at, rec.first_frame_at = 101.0, 100.0
+        assert rec.lead_seconds() == 0.0
+        assert rec._trim_lead(samples) is samples
+
+        # A clip with no frames at all must not be touched.
+        rec.first_frame_at = None
+        assert rec._trim_lead(samples) is samples
+
+
+def test_trimming_never_eats_the_whole_narration():
+    """A bad clock reading must not silently delete what somebody said."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        samples = np.arange(screenrec.AUDIO_RATE * 3, dtype="<i2")
+        rec.first_audio_at, rec.first_frame_at = 0.0, 600.0   # absurd
+        trimmed = rec._trim_lead(samples)
+        assert trimmed.size >= screenrec.AUDIO_RATE, \
+            "at least a second of audio must survive any lead correction"
+
+
 def test_a_failed_rename_puts_every_file_back():
     """All three files or none.
 
@@ -524,3 +561,40 @@ def test_shutdown_waits_longer_than_an_upload_can_take():
     source = pathlib.Path(app_module.__file__).read_text()
     assert "screenrec.UPLOAD_TIMEOUT + 60.0" in source
     assert screenrec.UPLOAD_TIMEOUT >= 300.0
+
+
+def test_the_recordings_list_notices_a_transcript_written_after_the_clip():
+    """The signature must change when the .txt lands, not only when the mp4 does.
+
+    James recorded a clip while the Recordings tab was open. The tab was a
+    snapshot from when it opened, so it still read "0 recordings" — the proof
+    he sent was a video OF that tab saying "Nothing recorded yet." The
+    transcript is written seconds after the mux, so a listing that keys only on
+    the video would show "no transcript" for ever.
+    """
+    from wisprlite import screenrec_tab
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        assert screenrec_tab.list_recordings(base) == []
+
+        clip = base / "2026-08-12 16-24-42.mp4"
+        clip.write_bytes(b"video")
+        first = screenrec_tab.list_recordings(base)
+        assert len(first) == 1
+        assert first[0]["transcript_path"] is None
+
+        (base / "2026-08-12 16-24-42.txt").write_text("okay doing a little test",
+                                                     encoding="utf-8")
+        second = screenrec_tab.list_recordings(base)
+        assert second[0]["transcript_path"] is not None, \
+            "a transcript written after the clip must be picked up"
+        assert screenrec_tab.read_transcript(second[0]) == "okay doing a little test"
+
+        def signature(items):
+            return tuple((i["stem"], i["size"], i["transcript_path"] is not None)
+                         for i in items)
+
+        assert signature(first) != signature(second), (
+            "the poll signature must change when a transcript appears, or the "
+            "tab never re-renders and 'no transcript' sticks")

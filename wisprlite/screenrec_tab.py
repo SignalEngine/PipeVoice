@@ -128,7 +128,8 @@ def build(container, root, wheel=None, with_settings=False):
     import tkinter as tk
     from tkinter import messagebox, ttk
 
-    state = {"items": [], "selected": None, "rows": []}
+    state = {"items": [], "selected": None, "rows": [], "signature": (),
+             "poll_after": None, "destroyed": False}
 
     head = tk.Frame(container, bg=BG, padx=18, pady=14)
     head.pack(fill="x")
@@ -356,4 +357,40 @@ def build(container, root, wheel=None, with_settings=False):
     refresh_btn.pack(side="right", padx=(0, 12))
 
     refresh()
+
+    # Poll, the way the Meetings tab does. Without this the tab is a snapshot
+    # from whenever it was opened: record with it on screen and it still says
+    # "0 recordings", and a clip listed in the gap between the mux finishing and
+    # the transcript being written is stuck reading "no transcript" for ever.
+    # James hit exactly that, and the recording he sent to prove it was a video
+    # of this tab saying "Nothing recorded yet."
+    def _signature():
+        return tuple((item["stem"], item["size"], item["transcript_path"] is not None)
+                     for item in list_recordings())
+
+    def poll():
+        if state.get("destroyed"):
+            return
+        try:
+            if _signature() != state.get("signature"):
+                state["signature"] = _signature()
+                refresh(state["selected"]["stem"] if state["selected"] else None)
+        except Exception:
+            pass                     # a polling loop must not kill the window
+        state["poll_after"] = root.after(2000, poll)
+
+    def stop_polling(event=None):
+        if event is not None and event.widget is not container:
+            return
+        state["destroyed"] = True
+        after_id = state.get("poll_after")
+        if after_id:
+            try:
+                root.after_cancel(after_id)
+            except Exception:
+                pass
+
+    state["signature"] = _signature()
+    container.bind("<Destroy>", stop_polling, add="+")
+    state["poll_after"] = root.after(2000, poll)
     return settings_panel
