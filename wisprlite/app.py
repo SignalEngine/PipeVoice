@@ -26,6 +26,50 @@ except Exception:
     winsound = None
 
 
+class ScreenrecUI:
+    """The pill's phase, shared between the finish thread and the Tk thread.
+
+    Kept out of App because both threads touch it every frame: one lock and one
+    dict beats sprinkling attributes that are read mid-write.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state = {"phase": "recording"}
+        self._name_event = threading.Event()
+        self._name = ""
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return dict(self._state)
+
+    def update(self, **fields) -> None:
+        with self._lock:
+            self._state.update(fields)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._state = {"phase": "recording"}
+
+    def expect_name(self, default: str) -> threading.Event:
+        with self._lock:
+            self._name = ""
+            self._name_event.clear()
+            self._state.update(phase="naming", name=default)
+        return self._name_event
+
+    def answer_name(self, typed: str) -> None:
+        with self._lock:
+            self._name = (typed or "").strip()
+            self._state.update(phase="working", status="Finishing up\u2026")
+        self._name_event.set()
+
+    def take_name(self) -> str:
+        with self._lock:
+            name, self._name = self._name, ""
+            return name
+
+
 class App:
     def __init__(self) -> None:
         self.cfg = config.Config.load()
@@ -94,6 +138,8 @@ class App:
         self._screenrec_finishing = None    # the thread muxing/sending, if any
         self._screenrec_agent = None        # Event an MCP caller is waiting on
         self._screenrec_agent_result = None
+        self._screenrec_ui = ScreenrecUI()   # the pill's phase
+        self._finished_recording = None      # what its Play/Copy act on
         self._armed_voice = None      # a Voice armed by the picker, consumed by the next utterance
         self._voice_mgrs = []         # dedicated voice HotkeyManagers
         self._picker_mgr = None       # the picker HotkeyManager
@@ -478,17 +524,40 @@ class App:
 
 
     def _screenrec_overlay_state(self) -> dict:
-        """What the pill draws. Read from the recorder, never from a copy."""
+        """What the pill draws. Live numbers from the recorder, phase from here."""
+        info = dict(self._screenrec_ui.snapshot())
         recording = self._screenrec
-        if recording is None:
-            return {"elapsed": 0.0, "paused": False}
-        try:
-            return {"elapsed": recording.elapsed(), "paused": recording.paused}
-        except Exception:
-            return {"elapsed": 0.0, "paused": False}
+        if recording is not None:
+            try:
+                info["elapsed"] = recording.elapsed()
+                info["paused"] = recording.paused
+            except Exception:
+                pass
+        return info
 
-    def _screenrec_action(self, action: str) -> None:
-        """A button on the recording pill. Runs on the overlay's worker thread."""
+    def _ask_name_in_pill(self, default: str) -> str:
+        """Show the name field IN the pill and wait for Save or Skip.
+
+        A separate dialog for one short field meant three windows for one
+        action. Bounded: if the pill is switched off, or nobody ever answers,
+        the recording keeps its timestamp rather than waiting for ever.
+        """
+        if not self.cfg.overlay:
+            return ""
+        answered = self._screenrec_ui.expect_name(default)
+        if not answered.wait(timeout=180.0):
+            self._screenrec_ui.update(phase="working", status="Finishing up\u2026")
+            return ""
+        return self._screenrec_ui.take_name()
+
+    def _screenrec_action(self, action: str, value: str = "") -> None:
+        """A control on the pill. Runs on the overlay's worker thread."""
+        if action in ("save", "skip"):
+            self._screenrec_ui.answer_name(value if action == "save" else "")
+            return
+        if action in ("play", "copy", "open"):
+            self._screenrec_done_action(action)
+            return
         recording = self._screenrec
         if recording is None:
             # Stop clears _screenrec immediately and then muxes, transcribes and
@@ -509,6 +578,27 @@ class App:
                 recording.resume()
         except Exception as exc:
             self._fail(f"screen recording: {exc}")
+
+    def _screenrec_done_action(self, action: str) -> None:
+        """Play / Copy path / Open, from the finished-clip pill."""
+        video = self._finished_recording
+        if video is None:
+            return
+        try:
+            if action == "play":
+                from .screenrec_tab import _play
+
+                _play(Path(video))
+            elif action == "copy":
+                copy_clipboard(str(video))
+            elif action == "open":
+                self.open_settings(tab="Recordings", select=Path(video).stem)
+        except Exception as exc:
+            log.info("screenrec: %s failed: %s", action, exc)
+        if action in ("play", "open"):
+            # The pill has done its job once you have gone somewhere else.
+            self._screenrec_ui.clear()
+            self.overlay.hide()
 
     def toggle_screen_recording(self) -> None:
         """Hotkey once: pick a region and record. Again: stop, transcribe, send."""
@@ -545,6 +635,8 @@ class App:
             )
             recording.start()
             self._screenrec = recording
+            self._screenrec_ui.clear()
+            self._finished_recording = None
             self.overlay.show_screenrec()
         except Exception as exc:
             self._screenrec = None
@@ -566,7 +658,7 @@ class App:
         if recording is None:
             return
         try:
-            self.overlay.show("thinking", "\u23f9 finishing the recording\u2026")
+            self._screenrec_ui.update(phase="working", status="Wrapping up the video\u2026")
             video = recording.stop()
             if video is None:
                 self._fail("screen recording: " + "; ".join(recording.errors[:2]))
@@ -578,11 +670,12 @@ class App:
             # An agent is blocked waiting on this, and the user recorded because
             # the agent asked — do not stop them for a filename.
             agent_call = self._screenrec_agent is not None
-            typed = screenrec.ask_name(recording.stem) if (ask and not agent_call) else ""
+            typed = self._ask_name_in_pill(recording.stem) if (ask and not agent_call) else ""
             if typed:
                 recording.rename(screenrec.stamped_stem(recording.stem, typed))
                 video = recording.video_path
             files = [video]
+            self._screenrec_ui.update(phase="working", status="Writing down what you said\u2026")
             transcript = self._transcribe_recording(recording)
             if transcript is not None:
                 files.append(transcript)
@@ -611,6 +704,7 @@ class App:
 
             destination = (self.cfg.screenrec_destination or "").strip()
             if destination:
+                self._screenrec_ui.update(phase="working", status="Sending it over\u2026")
                 ok, message = screenrec.send(files, destination)
                 if not ok:
                     # Never delete on failure, and never claim it arrived.
@@ -622,13 +716,16 @@ class App:
                             Path(path).unlink()
                         except OSError:
                             pass
-                self.overlay.show("done", f"\u2713 sent to {destination}{note}")
-            else:
-                self.overlay.show("done", f"\u2713 saved to {video.parent}{note}")
-            # Hand the clip straight over: the path on the clipboard is what
-            # gets pasted to an agent, and the tab opens on the new recording so
-            # you can play it back without going looking for it.
-            self._handoff_recording(video, recording.stem)
+            # Deliberately NOT announcing the scp destination. It is a string
+            # the user configured, it never changes, and leaving it on screen
+            # was one more box to dismiss. Whether a clip was delivered belongs
+            # in the Recordings tab, next to the clip.
+            self._finished_recording = video
+            self._screenrec_ui.update(
+                phase="done",
+                title="Recording saved" + (" and sent" if destination else ""),
+                subtitle=(recording.stem + note).strip(),
+            )
         except Exception as exc:
             self._fail(f"screen recording: {exc}")
         finally:

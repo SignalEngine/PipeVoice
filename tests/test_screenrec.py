@@ -650,18 +650,70 @@ def test_elapsed_excludes_time_spent_paused():
 
 
 def test_the_pill_buttons_are_where_the_clicks_are_caught():
-    """One table drives both drawing and hit-testing, so this proves the
-    geometry a user aims at is the geometry that answers."""
+    """One table drives both drawing and hit-testing, in every phase, so this
+    proves the geometry a user aims at is the geometry that answers."""
     from wisprlite.overlay import Overlay, WIN_H
 
     overlay = Overlay(enabled=False)
     cy = WIN_H // 2
+
     for action, cx in Overlay.SCREENREC_BUTTONS:
-        assert overlay._screenrec_hit(cx, cy) == action
-        assert overlay._screenrec_hit(cx, cy - 4) == action
+        assert overlay._screenrec_hit(cx, cy, "recording") == action
+        assert overlay._screenrec_hit(cx, cy - 4, "recording") == action
     # The pill body is not a button - dragging it must stay possible.
-    assert overlay._screenrec_hit(30, cy) == ""
-    assert overlay._screenrec_hit(120, cy) == ""
-    # And the buttons must not overlap each other.
-    hits = [overlay._screenrec_hit(cx, cy) for _a, cx in Overlay.SCREENREC_BUTTONS]
-    assert len(set(hits)) == len(hits)
+    assert overlay._screenrec_hit(30, cy, "recording") == ""
+    assert overlay._screenrec_hit(120, cy, "recording") == ""
+    hits = [overlay._screenrec_hit(cx, cy, "recording")
+            for _a, cx in Overlay.SCREENREC_BUTTONS]
+    assert len(set(hits)) == len(hits), "two buttons answer the same click"
+
+    # Naming reuses the last two slots, on the row the entry sits on (y=56).
+    save_cx, skip_cx = Overlay.SCREENREC_BUTTONS[1][1], Overlay.SCREENREC_BUTTONS[2][1]
+    assert overlay._screenrec_hit(save_cx, 56, "naming") == "save"
+    assert overlay._screenrec_hit(skip_cx, 56, "naming") == "skip"
+    assert overlay._screenrec_hit(Overlay.SCREENREC_BUTTONS[0][1], 56, "naming") == "", \
+        "the resume slot must be dead while naming"
+
+    # Nothing is clickable while it is finishing.
+    for _a, cx in Overlay.SCREENREC_BUTTONS:
+        assert overlay._screenrec_hit(cx, cy, "working") == ""
+
+    # The finished row: named buttons, and their boxes must not overlap.
+    boxes = [overlay._done_button_box(i) for i in range(len(Overlay.SCREENREC_DONE))]
+    for index, (action, _label) in enumerate(Overlay.SCREENREC_DONE):
+        x1, y1, x2, y2 = boxes[index]
+        assert overlay._screenrec_hit((x1 + x2) // 2, (y1 + y2) // 2, "done") == action
+        assert x1 >= 0 and x2 <= 380, "a button is off the edge of the pill"
+    for left, right in zip(boxes, boxes[1:]):
+        assert left[2] < right[0], "two finished-clip buttons overlap"
+    assert overlay._screenrec_hit(190, 20, "done") == "", "the title row is not a button"
+
+
+def test_the_pill_naming_hands_back_what_was_typed_and_never_blocks_for_ever():
+    """Naming moved into the pill, so the finish thread waits on an Event rather
+    than a modal. It must survive nobody ever answering."""
+    from uistub import install_platform_stubs
+
+    install_platform_stubs()          # app.py pulls in sounddevice via audio.py
+    from wisprlite.app import ScreenrecUI
+
+    ui = ScreenrecUI()
+    assert ui.snapshot()["phase"] == "recording"
+
+    event = ui.expect_name("2026-08-12 17-32-18")
+    state = ui.snapshot()
+    assert state["phase"] == "naming"
+    assert state["name"] == "2026-08-12 17-32-18"
+    assert not event.is_set()
+
+    ui.answer_name("  login bug  ")
+    assert event.is_set()
+    assert ui.take_name() == "login bug", "the typed name must survive, trimmed"
+    assert ui.take_name() == "", "the name is consumed once"
+    assert ui.snapshot()["phase"] == "working", "answering must move the pill on"
+
+    # Skip is an empty answer, not a missing one.
+    ui.expect_name("stamp")
+    ui.answer_name("")
+    assert ui.take_name() == ""
+    assert ui.snapshot()["phase"] == "working"

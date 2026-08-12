@@ -249,6 +249,13 @@ class Overlay:
             except Exception:
                 pass
 
+        def fire(action: str, value: str = "") -> None:
+            """Hand a pill action to the app, off the Tk thread."""
+            handler = self.on_screenrec_action
+            if not handler:
+                return
+            threading.Thread(target=handler, args=(action, value), daemon=True).start()
+
         def drain() -> bool:
             try:
                 while True:
@@ -265,11 +272,10 @@ class Overlay:
                             callback = self.on_meeting_click
                             threading.Thread(target=callback, daemon=True).start()
                         elif st["name"] == "screenrec" and self.on_screenrec_action:
-                            action = self._screenrec_hit(state, text)
+                            action = self._screenrec_hit(
+                                state, text, st.get("screenrec_phase", "recording"))
                             if action:
-                                handler = self.on_screenrec_action
-                                threading.Thread(target=handler, args=(action,),
-                                                 daemon=True).start()
+                                fire(action)
                     elif kind == "hover":
                         st["hover"] = bool(state)
                     if kind == "hide":
@@ -282,11 +288,24 @@ class Overlay:
                         st["hide_at"] = 0.0
                         resize(WIN_H)
                         reveal()
+                    elif kind == "screenrec_submit":
+                        # Save/Skip from the in-pill name field. The typed text
+                        # travels with the action, so the app never has to reach
+                        # into a widget owned by another thread.
+                        typed = ""
+                        entry = (st.get("items") or {}).get("entry")
+                        if entry is not None and state == "save":
+                            try:
+                                typed = entry.get()
+                            except Exception:
+                                typed = ""
+                        fire(state or "skip", typed)
                     elif kind == "screenrec":
                         st["name"] = "screenrec"
                         st["text"] = ""
                         st["hide_at"] = 0.0
                         st["scene"] = None
+                        st["screenrec_phase"] = "recording"
                         resize(WIN_H)
                         reveal()
                     elif kind == "meeting":
@@ -326,6 +345,16 @@ class Overlay:
                 return
             if st["hide_at"] and time.time() >= st["hide_at"]:
                 conceal()
+            if st["name"] == "screenrec":
+                # The finished-clip phase needs a second row for its buttons, and
+                # the phase is driven by the app rather than by a queue event, so
+                # the height has to follow it here.
+                try:
+                    phase = str((self.screenrec_provider() or {}).get("phase")
+                                or "recording")
+                except Exception:
+                    phase = "recording"
+                resize(self.SCREENREC_H.get(phase, WIN_H))
             if st["visible"]:
                 self._draw(canvas, st)
             root.after(FRAME_MS, tick)
@@ -560,87 +589,209 @@ class Overlay:
     # Button geometry for the recording pill, in canvas coordinates. One table,
     # used to DRAW and to HIT-TEST, so a button can never sit somewhere other
     # than where the click for it is caught.
+    # Button geometry, in canvas coordinates. One table drives DRAWING and
+    # HIT-TESTING, so a button can never sit somewhere other than where the
+    # click for it is caught.
     SCREENREC_BUTTONS = (
         ("resume", WIN_W - 122),
         ("pause", WIN_W - 84),
         ("stop", WIN_W - 46),
     )
     SCREENREC_BUTTON_R = 15
+    # The finished-recording row: three named actions, because glyphs alone do
+    # not say "open PipeVoice".
+    SCREENREC_DONE = (("play", "Play"), ("copy", "Copy path"), ("open", "Open"))
+    DONE_BTN_W, DONE_BTN_H, DONE_BTN_Y = 108, 30, 62
+    SCREENREC_H = {"recording": WIN_H, "naming": 88, "working": WIN_H, "done": 100}
 
-    def _screenrec_hit(self, x, y) -> str:
-        """Which button a click at (x, y) landed on, or "" for the pill body."""
-        cy = WIN_H // 2
-        for action, cx in self.SCREENREC_BUTTONS:
+    def _done_button_box(self, index: int):
+        gap = 8
+        total = len(self.SCREENREC_DONE) * self.DONE_BTN_W + (len(self.SCREENREC_DONE) - 1) * gap
+        x1 = (WIN_W - total) // 2 + index * (self.DONE_BTN_W + gap)
+        return x1, self.DONE_BTN_Y, x1 + self.DONE_BTN_W, self.DONE_BTN_Y + self.DONE_BTN_H
+
+    def _screenrec_hit(self, x, y, phase: str = "recording") -> str:
+        """Which control a click at (x, y) landed on, or "" for the pill body."""
+        if phase == "done":
+            for index, (action, _label) in enumerate(self.SCREENREC_DONE):
+                x1, y1, x2, y2 = self._done_button_box(index)
+                if x1 <= x <= x2 and y1 <= y <= y2:
+                    return action
+            return ""
+        if phase == "working":
+            return ""                 # nothing to press while it is finishing
+        cy = 56 if phase == "naming" else WIN_H // 2
+        live = ("save", "skip") if phase == "naming" else \
+               tuple(a for a, _cx in self.SCREENREC_BUTTONS)
+        slots = self.SCREENREC_BUTTONS[-len(live):] if phase == "naming" \
+            else self.SCREENREC_BUTTONS
+        for action, (_name, cx) in zip(live, slots):
             if (x - cx) ** 2 + (y - cy) ** 2 <= (self.SCREENREC_BUTTON_R + 3) ** 2:
                 return action
         return ""
 
     def _draw_screenrec(self, c, st, H: int, accent: str) -> None:
-        """The recording pill: a breathing REC dot, a clock, and real controls.
+        """One pill for the whole recording, from REC dot to finished clip.
 
         It used to be a grey box reading "recording - press the hotkey again to
-        stop", which told you the one thing you had just done and gave you
-        nothing to press.
+        stop", then a SEPARATE dialog to name the file, then the same box stuck
+        open announcing an scp destination nobody needed to read. Four windows
+        for one action. Now it is four phases of one pill.
         """
-        items = self._base_scene(c, st, "screenrec", H, accent)
-        cy = H // 2
         info = {}
         try:
             info = self.screenrec_provider() or {}
         except Exception:
             info = {}
-        paused = bool(info.get("paused"))
-        elapsed = self._elapsed_text(info.get("elapsed", 0.0))
+        phase = str(info.get("phase") or "recording")
+        st["screenrec_phase"] = phase
+        items = self._base_scene(c, st, f"screenrec:{phase}", H, accent)
+        cy = WIN_H // 2
 
+        if phase == "recording":
+            self._draw_screenrec_recording(c, st, items, info, cy)
+        elif phase == "naming":
+            self._draw_screenrec_naming(c, st, items, info, cy)
+        elif phase == "working":
+            self._draw_screenrec_working(c, st, items, info, cy)
+        else:
+            self._draw_screenrec_done(c, st, items, info, cy)
+
+    def _rec_dot(self, c, items, cy, *, breathing: bool, phase: float):
         if "dot" not in items:
             items["dot"] = c.create_oval(0, 0, 0, 0, outline="")
-            items["clock"] = c.create_text(
-                44, cy, anchor="w", fill=PALETTE["fg"],
-                font=("Segoe UI Semibold", 15),
-            )
-            items["label"] = c.create_text(
-                44, cy + 15, anchor="w", fill=PALETTE["muted"],
-                font=("Segoe UI", 8),
-            )
-            for action, cx in self.SCREENREC_BUTTONS:
-                r = self.SCREENREC_BUTTON_R
+        breath = (math.sin(phase) + 1.0) / 2.0 if breathing else 0.0
+        colour = self._blend(PALETTE["meeting"], PALETTE["meeting_hi"], breath) \
+            if breathing else PALETTE["muted"]
+        r = 6.0 + (2.0 * breath if breathing else 0.0)
+        c.coords(items["dot"], 24 - r, cy - r, 24 + r, cy + r)
+        c.itemconfigure(items["dot"], fill=colour)
+
+    def _circle_buttons(self, c, items, cy, spec):
+        """Draw the circular controls. `spec` maps slot -> (glyph, enabled)."""
+        for action, cx in self.SCREENREC_BUTTONS:
+            if action not in spec:
+                continue
+            glyph, live = spec[action]
+            r = self.SCREENREC_BUTTON_R
+            if f"{action}_bg" not in items:
                 items[f"{action}_bg"] = c.create_oval(
-                    cx - r, cy - r, cx + r, cy + r,
-                    fill=PALETTE["card"], outline="", width=1,
-                )
+                    cx - r, cy - r, cx + r, cy + r, fill=PALETTE["card"],
+                    outline="", width=1)
                 items[f"{action}_icon"] = c.create_text(
-                    cx, cy, text="", fill=PALETTE["fg"], font=("Segoe UI", 11),
-                )
-
-        # A paused recording must not keep breathing — a pulsing red dot is the
-        # universal "still rolling", and showing it while paused is a lie.
-        breath = 0.0 if paused else (math.sin(st["phase"]) + 1.0) / 2.0
-        dot_colour = PALETTE["muted"] if paused else self._blend(
-            PALETTE["meeting"], PALETTE["meeting_hi"], breath)
-        dot_r = 6.0 + (0.0 if paused else 2.0 * breath)
-        c.coords(items["dot"], 24 - dot_r, cy - dot_r, 24 + dot_r, cy + dot_r)
-        c.itemconfigure(items["dot"], fill=dot_colour)
-        c.itemconfigure(items["clock"], text=elapsed,
-                        fill=PALETTE["muted"] if paused else PALETTE["fg"])
-        c.itemconfigure(items["label"], text="Paused" if paused else "Recording")
-
-        # Grey out the control that cannot do anything right now, rather than
-        # hiding it: buttons that move around are worse than buttons that dim.
-        states = {
-            "resume": ("▶", paused),
-            "pause": ("⏸", not paused),
-            "stop": ("⏹", True),
-        }
-        for action, _cx in self.SCREENREC_BUTTONS:
-            glyph, live = states[action]
+                    cx, cy, text="", fill=PALETTE["fg"], font=("Segoe UI", 11))
             c.itemconfigure(items[f"{action}_icon"], text=glyph,
                             fill=PALETTE["fg"] if live else PALETTE["div"])
             # A disabled button keeps a faint ring. Filled flat with the pill's
-            # own background it disappeared, which reads as "a button is
-            # missing" rather than "that one cannot do anything right now".
+            # own background it disappeared, reading as "a button is missing".
             c.itemconfigure(items[f"{action}_bg"],
                             fill=PALETTE["card"] if live else PALETTE["bg"],
                             outline="" if live else PALETTE["div"])
+
+    def _draw_screenrec_recording(self, c, st, items, info, cy) -> None:
+        paused = bool(info.get("paused"))
+        if "clock" not in items:
+            items["clock"] = c.create_text(44, cy, anchor="w", fill=PALETTE["fg"],
+                                           font=("Segoe UI Semibold", 15))
+            items["label"] = c.create_text(44, cy + 15, anchor="w",
+                                           fill=PALETTE["muted"], font=("Segoe UI", 8))
+        # A paused recording must not keep breathing: a pulsing red dot is the
+        # universal "still rolling", and showing one while paused is a lie.
+        self._rec_dot(c, items, cy, breathing=not paused, phase=st["phase"])
+        c.itemconfigure(items["clock"], text=self._elapsed_text(info.get("elapsed", 0.0)),
+                        fill=PALETTE["muted"] if paused else PALETTE["fg"])
+        c.itemconfigure(items["label"], text="Paused" if paused else "Recording")
+        self._circle_buttons(c, items, cy, {
+            "resume": ("\u25b6", paused),
+            "pause": ("\u23f8", not paused),
+            "stop": ("\u23f9", True),
+        })
+
+    def _draw_screenrec_naming(self, c, st, items, info, cy) -> None:
+        """Name it here, in the pill. A second window for one short field was
+        one window too many."""
+        if "entry" not in items:
+            # A bare text box appearing the moment you stop recording does not
+            # say what it wants. One line of caption fixes that.
+            items["caption"] = c.create_text(
+                24, 22, anchor="w", fill=PALETTE["muted"], font=("Segoe UI", 9),
+                text="Name this recording \u2014 Enter to save, Esc to skip")
+            entry = self._name_entry(c)
+            items["entry"] = entry
+            items["entry_window"] = c.create_window(
+                22, 56, anchor="w", window=entry,
+                width=WIN_W - 22 - 96, height=30)
+            entry.delete(0, "end")
+            entry.insert(0, str(info.get("name") or ""))
+            entry.focus_set()
+            entry.icursor("end")
+        self._circle_buttons(c, items, 56, {
+            "pause": ("\u2713", True),      # save
+            "stop": ("\u2715", True),       # skip
+        })
+
+    def _draw_screenrec_working(self, c, st, items, info, cy) -> None:
+        """A moving bar and a line about what it is doing, because "it takes a
+        few seconds" with nothing moving reads as a hang."""
+        if "work_text" not in items:
+            items["work_text"] = c.create_text(
+                24, cy - 9, anchor="w", fill=PALETTE["fg"], font=("Segoe UI", 11))
+            items["work_track"] = self._round_rect(
+                c, 24, cy + 9, WIN_W - 24, cy + 15, 3,
+                fill=PALETTE["meter_track"], outline="")
+            items["work_bar"] = self._round_rect(
+                c, 24, cy + 9, 120, cy + 15, 3, fill=PALETTE["meeting"], outline="")
+        c.itemconfigure(items["work_text"],
+                        text=str(info.get("status") or "Finishing up\u2026"))
+        # Indeterminate: nothing here knows how long x264 or an upload will take,
+        # and a fake percentage that stalls at 90% is worse than an honest sweep.
+        span = WIN_W - 48
+        width = span * 0.32
+        travel = (span - width)
+        pos = (math.sin(st["phase"] * 0.6) + 1.0) / 2.0
+        x1 = 24 + travel * pos
+        c.coords(items["work_bar"], *self._round_rect_points(x1, cy + 9, x1 + width, cy + 15, 3))
+
+    def _draw_screenrec_done(self, c, st, items, info, cy) -> None:
+        if "done_title" not in items:
+            items["done_title"] = c.create_text(
+                24, 26, anchor="w", fill=PALETTE["fg"], font=("Segoe UI Semibold", 12))
+            items["done_sub"] = c.create_text(
+                24, 44, anchor="w", fill=PALETTE["muted"], font=("Segoe UI", 8))
+            for index, (action, label) in enumerate(self.SCREENREC_DONE):
+                x1, y1, x2, y2 = self._done_button_box(index)
+                items[f"done_{action}_bg"] = self._round_rect(
+                    c, x1, y1, x2, y2, 8, fill=PALETTE["card"], outline="")
+                items[f"done_{action}_text"] = c.create_text(
+                    (x1 + x2) // 2, (y1 + y2) // 2, text=label,
+                    fill=PALETTE["fg"], font=("Segoe UI", 9))
+        c.itemconfigure(items["done_title"], text=str(info.get("title") or "Saved"))
+        c.itemconfigure(items["done_sub"], text=str(info.get("subtitle") or ""))
+        # Play leads: after watching a recording finish, playing it back is what
+        # you do next nine times out of ten.
+        c.itemconfigure(items["done_play_bg"], fill=PALETTE["meeting"])
+        c.itemconfigure(items["done_play_text"], fill="#1a0c0d")
+
+    @staticmethod
+    def _round_rect_points(x1, y1, x2, y2, r):
+        return [
+            x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+            x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+            x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
+        ]
+
+    def _name_entry(self, c):
+        import tkinter as tk
+
+        entry = tk.Entry(
+            c, bg=PALETTE["card"], fg=PALETTE["fg"], relief="flat",
+            insertbackground=PALETTE["fg"], font=("Segoe UI", 11),
+            highlightthickness=1, highlightbackground=PALETTE["div"],
+            highlightcolor=PALETTE["meeting"],
+        )
+        entry.bind("<Return>", lambda _e: self._q.put(("screenrec_submit", "save", "")))
+        entry.bind("<Escape>", lambda _e: self._q.put(("screenrec_submit", "skip", "")))
+        return entry
 
     def _draw_status(self, c, st, H: int, accent: str) -> None:
         items = self._base_scene(c, st, "status", H, accent)
