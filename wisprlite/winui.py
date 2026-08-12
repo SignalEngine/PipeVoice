@@ -229,3 +229,47 @@ def fit_scroll_body(canvas, window_id, max_width: int = 1080) -> None:
         canvas.coords(window_id, max(0, (event.width - width) // 2), 0)
 
     canvas.bind("<Configure>", _fit, add="+")
+
+
+def collapsible_settings(container, link, hides, palette_bg, wheel=None):
+    """A settings panel a tab can swap in over its own content.
+
+    Returns the frame to fill. Clicking ``link`` hides every widget in ``hides``
+    and shows the panel instead; clicking again reverses it.
+
+    It SWAPS rather than pushes because a settings block is taller than the
+    window: packed above a browser it shoved the list off the bottom and then
+    ran off the bottom itself, so neither was usable. It scrolls for the same
+    reason — the Meetings settings alone are taller than the window.
+    """
+    import tkinter as tk
+    from tkinter import ttk
+
+    holder = tk.Frame(container, bg=palette_bg)
+    canvas = tk.Canvas(holder, bg=palette_bg, highlightthickness=0)
+    bar = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview,
+                        style="Vertical.TScrollbar")
+    canvas.configure(yscrollcommand=bar.set)
+    bar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+    panel = tk.Frame(canvas, bg=palette_bg)
+    window_id = canvas.create_window((0, 0), window=panel, anchor="nw")
+    panel.bind("<Configure>",
+               lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.bind("<Configure>",
+                lambda e: canvas.itemconfigure(window_id, width=e.width), add="+")
+    if callable(wheel):
+        wheel(canvas)
+
+    def toggle(_event=None):
+        if holder.winfo_ismapped():
+            holder.pack_forget()
+            for widget, kwargs in hides:
+                widget.pack(**kwargs)
+        else:
+            for widget, _kwargs in hides:
+                widget.pack_forget()
+            holder.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+
+    link.bind("<Button-1>", toggle)
+    return panel

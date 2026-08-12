@@ -48,7 +48,7 @@ from .summarise import (
 )
 from . import export
 from .polish import PolishFailed, ProviderNotReady, polish_segments
-from .winui import PALETTE, tooltip
+from .winui import PALETTE, collapsible_settings, tooltip
 
 BG = PALETTE["bg"]
 CARD = PALETTE["card"]
@@ -679,8 +679,15 @@ def _wheel_global(widget) -> None:
     widget.bind("<Leave>", lambda _event: widget.unbind_all("<MouseWheel>"))
 
 
-def build(container, root, wheel=None, on_replacements_changed=None, show_tab=None) -> None:
-    """Populate ``container`` with the reusable Meetings browser."""
+def build(container, root, wheel=None, on_replacements_changed=None, show_tab=None,
+          with_settings=False):
+    """Populate ``container`` with the reusable Meetings browser.
+
+    Returns the (empty, hidden) meeting-settings panel when ``with_settings`` is
+    set, so the caller can fill it once its own form helpers exist. Meeting
+    settings belong here rather than in a distant Settings tab: "where do my
+    recordings go" wants to sit next to "here are my recordings".
+    """
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
@@ -753,6 +760,15 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
 
     guide_link.bind("<Button-1>", _open_guide)
 
+    settings_panel = None
+    settings_link = None
+    if with_settings:
+        settings_link = tk.Label(head, text="Settings  ⚙", bg=BG, fg=ACCENT,
+                                 cursor="hand2", font=("Segoe UI", 9, "underline"))
+        settings_link.pack(side="right", padx=(0, 14))
+        tooltip(settings_link, "Meeting hotkey, bookmarks, PipeFocus, where recordings "
+                               "are kept and how many.")
+
     intro = tk.Label(
         container,
         text="Press your meeting hotkey to record a call \u2014 your microphone and the "
@@ -768,6 +784,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     # which kills the window before it draws.
     body = tk.Frame(container, bg=BG, padx=18)
     body.pack(fill="both", expand=True, pady=(0, 12))
+
+    if settings_link is not None:
+        settings_panel = collapsible_settings(
+            container, settings_link,
+            [(intro, {"fill": "x", "pady": (0, 10)}),
+             (body, {"fill": "both", "expand": True, "pady": (0, 12)})],
+            BG, wheel)
 
     left = tk.Frame(body, bg=CARD, width=400)
     left.pack(side="left", fill="y")
@@ -2614,6 +2637,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     refresh()
     container.bind("<Destroy>", stop_polling, add="+")
     state["poll_after"] = root.after(2000, poll_sessions)
+    return settings_panel
 
 
 def main() -> None:

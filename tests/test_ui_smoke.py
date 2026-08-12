@@ -582,6 +582,162 @@ def test_the_screen_recorder_settings_are_actually_on_screen():
         assert wanted in joined, f"{wanted!r} was never mounted"
 
 
+def test_settings_live_in_the_tab_they_belong_to():
+    """Screen-recording settings under Recordings, meeting settings under Meetings.
+
+    Walking for the text alone is not enough - every tab frame exists in the
+    tree whether or not it is the visible one, so "the widget is somewhere"
+    passes even when a card is packed into the wrong tab. This checks ANCESTRY:
+    the card must share a container with its own tab's intro text, and must not
+    share one with the Settings form.
+    """
+    _skip_if_headless()
+    install_platform_stubs()
+    import os
+    import tkinter as tk
+    from wisprlite import settings
+
+    os.environ["PV_TAB"] = "Settings"
+    seen: dict[str, object] = {}
+    real_mainloop = tk.Misc.mainloop
+
+    def walk(widget):
+        for child in widget.winfo_children():
+            try:
+                text = str(child.cget("text"))
+            except Exception:
+                text = ""
+            if text and text not in seen:
+                seen[text] = child
+            walk(child)
+
+    def stub_mainloop(self, _n=0):
+        try:
+            self.update_idletasks()
+            self.update()
+            walk(self)
+        finally:
+            try:
+                self.destroy()
+            except Exception:
+                pass
+
+    tk.Misc.mainloop = stub_mainloop
+    try:
+        settings.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+
+    def find(prefix):
+        for text, widget in seen.items():
+            if text.startswith(prefix):
+                return widget
+        raise AssertionError(f"no widget whose text starts with {prefix!r}")
+
+    def ancestors(widget):
+        chain, node = [], widget
+        while node is not None:
+            chain.append(node)
+            node = getattr(node, "master", None)
+        return chain
+
+    settings_form = set(ancestors(find("Min seconds")))          # still in Advanced
+    recordings_tab = set(ancestors(find("Press your screen recording hotkey")))
+    meetings_tab_frames = set(ancestors(find("Press your meeting hotkey")))
+
+    screenrec_card = set(ancestors(find("Screen recordings")))
+    assert screenrec_card & (recordings_tab - settings_form), \
+        "the screen-recording card is not inside the Recordings tab"
+    assert not (screenrec_card & (settings_form - recordings_tab)), \
+        "the screen-recording card is still in the Settings form"
+
+    meeting_card = set(ancestors(find("Meeting hotkey")))
+    assert meeting_card & (meetings_tab_frames - settings_form), \
+        "the meeting settings are not inside the Meetings tab"
+    assert not (meeting_card & (settings_form - meetings_tab_frames)), \
+        "the meeting settings are still in the Settings form"
+
+    assert "Recordings" in seen, "the Recordings tab button was never mounted"
+
+
+def test_the_settings_link_swaps_the_view_and_swaps_it_back():
+    """Opening settings must hide the browser, and closing must bring it back.
+
+    Packed ABOVE the list instead, the settings shoved it off the bottom and
+    then ran off the bottom themselves — neither usable. And a toggle that only
+    goes one way strands the user in a settings panel with no way out.
+    """
+    _skip_if_headless()
+    install_platform_stubs()
+    import os
+    import tkinter as tk
+    from wisprlite import settings
+
+    os.environ["PV_TAB"] = "Recordings"
+    outcome: dict[str, bool] = {}
+    real_mainloop = tk.Misc.mainloop
+
+    def find_visible_link(widget):
+        for child in widget.winfo_children():
+            try:
+                if str(child.cget("text")).startswith("Settings  ") and child.winfo_ismapped():
+                    return child
+            except Exception:
+                pass
+            found = find_visible_link(child)
+            if found is not None:
+                return found
+        return None
+
+    def find_by_text(widget, prefix):
+        for child in widget.winfo_children():
+            try:
+                if str(child.cget("text")).startswith(prefix):
+                    return child
+            except Exception:
+                pass
+            found = find_by_text(child, prefix)
+            if found is not None:
+                return found
+        return None
+
+    def stub_mainloop(self, _n=0):
+        try:
+            self.update_idletasks()
+            self.update()
+            intro = find_by_text(self, "Press your screen recording hotkey")
+            link = find_visible_link(self)
+            outcome["found_link"] = link is not None
+            outcome["browser_before"] = bool(intro and intro.winfo_ismapped())
+            link.event_generate("<Button-1>")
+            self.update_idletasks()
+            self.update()
+            outcome["browser_hidden"] = not intro.winfo_ismapped()
+            hotkey = find_by_text(self, "Screen recording hotkey")
+            outcome["settings_shown"] = bool(hotkey and hotkey.winfo_ismapped())
+            link.event_generate("<Button-1>")
+            self.update_idletasks()
+            self.update()
+            outcome["browser_back"] = intro.winfo_ismapped()
+        finally:
+            try:
+                self.destroy()
+            except Exception:
+                pass
+
+    tk.Misc.mainloop = stub_mainloop
+    try:
+        settings.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+
+    assert outcome.get("found_link"), "no visible Settings link on the Recordings tab"
+    assert outcome.get("browser_before"), "the browser should start visible"
+    assert outcome.get("browser_hidden"), "opening settings must hide the browser"
+    assert outcome.get("settings_shown"), "the settings never became visible"
+    assert outcome.get("browser_back"), "closing settings must restore the browser"
+
+
 def _agent_app(**over):
     """An App shaped just enough to run the agent screen-recording path."""
     import types

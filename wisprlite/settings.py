@@ -14,7 +14,8 @@ import json
 import threading
 import webbrowser
 
-from . import about, autostart, cleanup, config, history, meeting, meetings_tab, voices, vocab_mine, winui
+from . import (about, autostart, cleanup, config, history, meeting, meetings_tab,
+               screenrec_tab, voices, vocab_mine, winui)
 
 ENGINES = [("gemini", "Gemini — free, one key does it all"),
            ("groq", "Groq Whisper — fast & cheap, top accuracy"),
@@ -459,10 +460,12 @@ def main(first_run: bool = False) -> None:
     tab_voices = tk.Frame(body_wrap, bg=BG)
     tab_history = tk.Frame(body_wrap, bg=BG)
     tab_meetings = tk.Frame(body_wrap, bg=BG)
+    tab_recordings = tk.Frame(body_wrap, bg=BG)
     tab_guide = tk.Frame(body_wrap, bg=BG)
     tab_about = tk.Frame(body_wrap, bg=BG)
     _tabs = [("Settings", tab_settings), ("Voices", tab_voices), ("History", tab_history),
-             ("Meetings", tab_meetings), ("Guide", tab_guide), ("About", tab_about)]
+             ("Meetings", tab_meetings), ("Recordings", tab_recordings),
+             ("Guide", tab_guide), ("About", tab_about)]
     _tab_w = {}
 
     def _show_tab(name):
@@ -514,11 +517,17 @@ def main(first_run: bool = False) -> None:
     def sync_meeting_replacements(replacements):
         fixes_var.set(", ".join(f"{k}={v}" for k, v in replacements.items()))
 
-    meetings_tab.build(
+    # Both tabs hand back an empty settings panel. They are built here, but the
+    # form helpers (card/row/entry/check) do not exist until further down, so
+    # the panels are FILLED later — see _fill_tab_settings().
+    meeting_settings_panel = meetings_tab.build(
         tab_meetings, root, _wheel,
         on_replacements_changed=sync_meeting_replacements,
         show_tab=_show_tab,
+        with_settings=True,
     )
+    recordings_settings_panel = screenrec_tab.build(
+        tab_recordings, root, _wheel, with_settings=True)
     _build_guide(tab_guide, _wheel)
     about.build(tab_about, root, _wheel)
     _build_voices_tab(tab_voices, _show_tab, _wheel)
@@ -528,13 +537,25 @@ def main(first_run: bool = False) -> None:
     _show_tab(os.getenv("PV_TAB") or ("Guide" if first_run else "Settings"))
     DIV = "#272b37"
 
-    def card(title, subtitle=None):
-        wrap = tk.Frame(frm, bg=BG)
-        wrap.pack(fill="x", pady=(0, 18))
+    def card(title, subtitle=None, parent=None):
+        # `parent` lets a card land in the Meetings or Recordings tab instead of
+        # the Settings form. Same widgets, same StringVars, same Save — only the
+        # frame differs, so nothing about persistence changes.
+        wrap = tk.Frame(parent if parent is not None else frm, bg=BG)
+        wrap.pack(fill="x", pady=(0, 18), padx=18 if parent is not None else 0)
         tk.Label(wrap, text=title, bg=BG, fg=FG, font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=3)
         if subtitle:
-            tk.Label(wrap, text=subtitle, bg=BG, fg=MUTED, font=("Segoe UI", 9),
-                     justify="left").pack(anchor="w", padx=3, pady=(2, 0))
+            # anchor="w" and a wraplength both matter outside the Settings form:
+            # that form caps its own width, a tab panel does not, so an unwrapped
+            # subtitle grows past the window and a Label centres what it cannot
+            # fit — clipping the text at BOTH edges.
+            sub = tk.Label(wrap, text=subtitle, bg=BG, fg=MUTED, font=("Segoe UI", 9),
+                           justify="left", anchor="w", wraplength=640)
+            sub.pack(fill="x", anchor="w", padx=3, pady=(2, 0))
+            if parent is not None:
+                wrap.bind("<Configure>",
+                          lambda e, w=sub: w.config(wraplength=max(320, e.width - 12)),
+                          add="+")
         c = tk.Frame(wrap, bg=CARD)
         c.pack(fill="x", pady=(9, 0))
         c._first = True
@@ -755,6 +776,13 @@ def main(first_run: bool = False) -> None:
 
     clip_cap_btn.config(command=clip_capture)
 
+    # --- Meetings: rendered into the Meetings tab, not this form ---
+    c = card(
+        "Meetings",
+        "Recording a call captures your microphone and the computer's audio "
+        "separately, so nobody gets mixed up.",
+        parent=meeting_settings_panel,
+    )
     r = row(
         c,
         "Meeting hotkey",
@@ -767,17 +795,6 @@ def main(first_run: bool = False) -> None:
     meeting_cap_btn.config(
         command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
     )
-
-    r = row(
-        c,
-        "Screen recording hotkey",
-        "Tap once to drag a box over what you want to show, and again to stop. "
-        "Records that area plus your microphone.",
-    )
-    entry(r, screenrec_hotkey_var, width=14)
-    screenrec_cap_btn = ttk.Button(r, text="Capture", width=8)
-    screenrec_cap_btn.pack(side="left", padx=(8, 0))
-    screenrec_cap_btn.config(command=_mk_capture(screenrec_cap_btn, screenrec_hotkey_var))
 
     r = row(c, "Bookmark hotkey", "Tap while recording to mark the current moment.")
     entry(r, bookmark_hotkey_var, width=14)
@@ -981,13 +998,21 @@ def main(first_run: bool = False) -> None:
     _pcap.pack(side="left", padx=(8, 0))
     _pcap.config(command=_mk_capture(_pcap, picker_var))
 
-    # --- Audio ---
+    # --- Screen recordings: rendered into the Recordings tab, not this form ---
     c = card(
         "Screen recordings",
         "Show a bug instead of describing it. Recordings are sent with a text "
         "transcript of what you said, so a coding agent can read it without "
         "watching the video.",
+        parent=recordings_settings_panel,
     )
+    r = row(c, "Screen recording hotkey",
+            "Tap once to drag a box over what you want to show, and again to stop. "
+            "Records that area plus your microphone.")
+    entry(r, screenrec_hotkey_var, width=14)
+    screenrec_cap_btn = ttk.Button(r, text="Capture", width=8)
+    screenrec_cap_btn.pack(side="left", padx=(8, 0))
+    screenrec_cap_btn.config(command=_mk_capture(screenrec_cap_btn, screenrec_hotkey_var))
     entry(row(c, "Send to",
               "An scp destination, e.g. root@your-vps:/root/project/inbox/. Uses the "
               "SSH keys you already have — Pipevoice never stores one. Leave blank "
@@ -1191,6 +1216,13 @@ def main(first_run: bool = False) -> None:
     c = card("Advanced", "Most people never need these.")
     entry(row(c, "Min seconds", "Ignore taps shorter than this."), min_seconds_var, width=7)
     entry(row(c, "Deepgram wait", "Seconds to wait for final words."), dg_timeout_var, width=7)
+    combo(row(c, "Paste speed", "Slower is more reliable in some apps."),
+          paste_speed_var, [l for _, l in PASTE_SPEEDS], width=10)
+
+    # --- Meeting storage: rendered into the Meetings tab, beside the recordings
+    # it governs. These sat under "Advanced" three tabs away from the list they
+    # apply to, which is exactly the jumping-around this move removes.
+    c = card("Where meetings are kept", parent=meeting_settings_panel)
     entry(
         row(c, "Meeting max minutes", "Safety limit for an unattended recording."),
         meeting_max_minutes_var,
@@ -1217,9 +1249,6 @@ def main(first_run: bool = False) -> None:
 
     ttk.Button(_mr, text="Browse", width=8,
                command=_browse_meetings).pack(side="left", padx=(8, 0))
-
-    combo(row(c, "Paste speed", "Slower is more reliable in some apps."),
-          paste_speed_var, [l for _, l in PASTE_SPEEDS], width=10)
 
     # --- Save / Cancel (live in the fixed footer) ---
     def value_for(var, table):
