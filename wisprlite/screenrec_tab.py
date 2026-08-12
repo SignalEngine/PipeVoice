@@ -372,8 +372,13 @@ def build(container, root, wheel=None, with_settings=False):
         if state.get("destroyed"):
             return
         try:
-            if _signature() != state.get("signature"):
-                state["signature"] = _signature()
+            # Read the folder ONCE. Scanning twice stores a signature from a
+            # later read than the one that triggered the render, so a file that
+            # lands between the two reads is recorded as already-seen and never
+            # gets drawn.
+            current = _signature()
+            if current != state.get("signature"):
+                state["signature"] = current
                 refresh(state["selected"]["stem"] if state["selected"] else None)
         except Exception:
             pass                     # a polling loop must not kill the window
