@@ -471,6 +471,18 @@ def main(first_run: bool = False) -> None:
     def _show_tab(name):
         if name not in dict(_tabs):
             name = "Settings"
+        # A tab's settings panel is a detour INSIDE that tab, not a place of its
+        # own, so pressing the tab header is the way back out of it. Do this for
+        # every tab, not just the one being opened: leaving a tab with its
+        # settings still showing means returning to it lands you in a form you
+        # did not ask for.
+        for _n, _f in _tabs:
+            closer = getattr(_f, "pv_close_settings", None)
+            if callable(closer):
+                try:
+                    closer()
+                except Exception:
+                    pass
         for _n, _f in _tabs:
             _f.pack_forget()
         dict(_tabs)[name].pack(fill="both", expand=True)
