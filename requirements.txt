@@ -22,9 +22,11 @@ Pillow>=10.0          # renders the tray icon
 pyperclip>=1.8        # "Paste" output mode
 
 # tkinter (the overlay HUD) ships with the standard Windows Python installer.
-# Upper bound is load-bearing: `mcp>=1.2` unpinned has broken this build
-# TWICE from upstream drift alone — once at build time (2026-07-27, typer
-# in mcp.cli) and once at RUNTIME (v2.40.1, pydantic_settings missing from
-# the bundle). The CI smoke test is the real gate; this just stops a major
-# version arriving unannounced.
-mcp>=1.2,<3  # MCP SDK — only imported by the --mcp stdio shim
+# Upper bound is load-bearing, and <2 is a fact rather than caution: mcp 2.x
+# REMOVED mcp.server.fastmcp, the only thing the shim imports. Proven by CI,
+# which built against 2.x and failed with "No module named
+# 'mcp.server.fastmcp'". Unpinned, this has broken the build twice from
+# upstream drift alone - once at build time (typer in mcp.cli, 2026-07-27) and
+# once at RUNTIME (v2.40.1, pydantic_settings missing from the bundle). The CI
+# smoke test is the real gate; the pin just stops a rewrite arriving unnoticed.
+mcp>=1.2,<2  # MCP SDK — only imported by the --mcp stdio shim
