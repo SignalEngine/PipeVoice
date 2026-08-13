@@ -28,7 +28,22 @@ def _send(op: str, read_timeout: float = 130.0, **kw) -> dict:
 
 
 def main() -> None:
-    from mcp.server.fastmcp import FastMCP
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError as exc:
+        # A packaged build that missed one of FastMCP's module-level imports
+        # showed the user a raw Python traceback in a popup. Say what is wrong
+        # and where it goes, on stderr, where the MCP client will log it.
+        import sys
+
+        print(
+            f"PipeVoice MCP server cannot start: {exc}.\n"
+            "This build is missing a bundled dependency. Please report it at "
+            "https://github.com/SignalEngine/PipeVoice/issues — meanwhile the "
+            "hotkey, recordings and dictation all work as normal.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
     mcp = FastMCP("pipevoice")
 

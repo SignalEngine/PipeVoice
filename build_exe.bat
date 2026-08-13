@@ -18,6 +18,16 @@ pyinstaller --noconfirm --clean --noconsole --onedir --noupx --name Pipevoice ^
     --collect-all mcp ^
     --collect-all pydantic ^
     --collect-all anyio ^
+    REM FastMCP imports these at module load and PyInstaller cannot see
+    REM them statically. Missing pydantic_settings shipped a --mcp that
+    REM died on import in v2.40.1 - the build was green, the feature was
+    REM dead. The CI smoke test now runs the built exe to catch this.
+    --collect-all pydantic_settings ^
+    --collect-all jsonschema ^
+    --collect-all sse_starlette ^
+    --collect-all starlette ^
+    --collect-all uvicorn ^
+    --collect-all httpx ^
     launch.py
 echo.
 echo Done. See dist\Pipevoice\Pipevoice.exe
