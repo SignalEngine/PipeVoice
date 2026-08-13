@@ -46,10 +46,44 @@ jobs:
           --collect-all ctranslate2
           --collect-all pystray
           --collect-all PIL
+          --collect-all mss
           --collect-all mcp
           --collect-all pydantic
           --collect-all anyio
+          --collect-all pydantic_settings
+          --collect-all jsonschema
+          --collect-all sse_starlette
+          --collect-all starlette
+          --collect-all uvicorn
+          --collect-all httpx
           launch.py
+
+      # The build being green says nothing about the app running. v2.40.1
+      # shipped a --mcp that died on `import pydantic_settings` the moment an
+      # agent spawned it: PyInstaller cannot see FastMCP's module-level imports,
+      # so it left them out and nothing noticed. Drive the BUILT exe and make it
+      # answer, or the same class of miss ships again.
+      - name: Smoke-test the built exe's MCP server
+        shell: pwsh
+        run: |
+          $exe = "dist/Pipevoice/Pipevoice.exe"
+          $req = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
+          $req | Set-Content mcp_in.txt -Encoding ascii
+          $p = Start-Process $exe -ArgumentList '--mcp' -RedirectStandardInput mcp_in.txt `
+                 -RedirectStandardOutput mcp_out.txt -RedirectStandardError mcp_err.txt `
+                 -PassThru -WindowStyle Hidden
+          Start-Sleep 25
+          if (!$p.HasExited) { $p.Kill() }
+          $out = Get-Content mcp_out.txt -Raw -ErrorAction SilentlyContinue
+          $err = Get-Content mcp_err.txt -Raw -ErrorAction SilentlyContinue
+          if ($err) { Write-Host "stderr:`n$err" }
+          if ($out -match 'jsonrpc') {
+            Write-Host "MCP server answered."
+          } else {
+            Write-Host "MCP server produced no JSON-RPC reply."
+            Write-Host "stdout:`n$out"
+            exit 1
+          }
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
