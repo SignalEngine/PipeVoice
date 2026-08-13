@@ -30,7 +30,8 @@ jobs:
           # extra). requirements.txt pins `mcp>=1.2`, so CI drifted onto 1.28.1
           # and the build broke with no code change — first seen 2026-07-27,
           # last green build was v2.30.3 on 2026-06-25.
-          pip install -r requirements.txt pyinstaller "mcp[cli]"
+          # requirements.txt pins mcp<2; the [cli] extra must not override it.
+          pip install -r requirements.txt pyinstaller "mcp[cli]<2"
 
       - name: Generate icon
         run: python assets/make_icon.py
