@@ -261,15 +261,32 @@ def collapsible_settings(container, link, hides, palette_bg, wheel=None):
     if callable(wheel):
         wheel(canvas)
 
+    # The link said "Settings" whether the panel was open or shut, so it gave no
+    # feedback at all — you could not tell from the screen which state you were
+    # in. It now says what pressing it will DO.
+    shut_text = link.cget("text")
+    open_text = "\u2715  Close settings"
+
+    def close(_event=None):
+        if not holder.winfo_ismapped():
+            return False
+        holder.pack_forget()
+        for widget, kwargs in hides:
+            widget.pack(**kwargs)
+        link.config(text=shut_text, font=("Segoe UI", 9, "underline"))
+        return True
+
     def toggle(_event=None):
-        if holder.winfo_ismapped():
-            holder.pack_forget()
-            for widget, kwargs in hides:
-                widget.pack(**kwargs)
-        else:
-            for widget, _kwargs in hides:
-                widget.pack_forget()
-            holder.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        if close():
+            return
+        for widget, _kwargs in hides:
+            widget.pack_forget()
+        holder.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        link.config(text=open_text, font=("Segoe UI", 9, "bold"))
 
     link.bind("<Button-1>", toggle)
+    # Clicking the tab you are already on is "take me back to the list" — the
+    # settings are a detour inside the tab, not a place of their own, so the
+    # tab header has to be a way out of them.
+    container.pv_close_settings = close
     return panel

@@ -1060,3 +1060,65 @@ def test_a_failed_paste_still_leaves_the_words_in_history_and_on_the_clipboard()
     assert "done" not in states, \
         "a failed paste must never flash 'done' first — two answers to 'did that " \
         "work?', in the order that reads as yes"
+
+
+def test_the_settings_link_says_which_state_it_is_in():
+    """It read "Settings" whether the panel was open or shut, so the screen gave
+    no clue which state you were in. It must say what pressing it will DO."""
+    _skip_if_headless()
+    install_platform_stubs()
+    import os
+    import tkinter as tk
+    from wisprlite import settings
+
+    os.environ["PV_TAB"] = "Recordings"
+    seen = {}
+    real_mainloop = tk.Misc.mainloop
+
+    def find(widget, prefix):
+        for child in widget.winfo_children():
+            try:
+                if str(child.cget("text")).startswith(prefix) and child.winfo_ismapped():
+                    return child
+            except Exception:
+                pass
+            found = find(child, prefix)
+            if found is not None:
+                return found
+        return None
+
+    def stub_mainloop(self, _n=0):
+        try:
+            self.update_idletasks(); self.update()
+            # "Settings" alone also matches the TAB header, which is a
+            # different widget entirely. The gear is the link.
+            link = find(self, "Settings  \u2699")
+            seen["shut"] = str(link.cget("text"))
+            link.event_generate("<Button-1>")
+            self.update_idletasks(); self.update()
+            seen["open"] = str(link.cget("text"))
+            # Pressing the tab header must be a way out of the settings.
+            tab = find(self, "Recordings")
+            tab.event_generate("<Button-1>")
+            self.update_idletasks(); self.update()
+            seen["after_tab"] = str(link.cget("text"))
+            intro = find(self, "Press your screen recording hotkey")
+            seen["browser_back"] = bool(intro and intro.winfo_ismapped())
+        finally:
+            try:
+                self.destroy()
+            except Exception:
+                pass
+
+    tk.Misc.mainloop = stub_mainloop
+    try:
+        settings.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+
+    assert seen["shut"] != seen["open"], \
+        f"the link reads {seen['shut']!r} in both states — no indication at all"
+    assert "Close" in seen["open"], seen["open"]
+    assert seen["after_tab"] == seen["shut"], \
+        "clicking the tab header must close the settings and reset the link"
+    assert seen["browser_back"], "the tab header must bring the browser back"
