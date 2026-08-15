@@ -1231,6 +1231,53 @@ def main(first_run: bool = False) -> None:
     combo(row(c, "Paste speed", "Slower is more reliable in some apps."),
           paste_speed_var, [l for _, l in PASTE_SPEEDS], width=10)
 
+    # A part-finished model download makes local transcription slow and empty,
+    # and the only cure was deleting a folder by hand from a support reply.
+    from . import modelcache
+
+    _cache_row = row(c, "Local model cache",
+                     "Whisper's downloaded models. Clear this if local transcription "
+                     "is slow or returns nothing —\nit downloads again next time you "
+                     "use it.")
+    _cache_size = tk.StringVar(value="…")
+    ttk.Label(_cache_row, textvariable=_cache_size, width=9).pack(side="left", padx=(0, 8))
+    _clear_btn = ttk.Button(_cache_row, text="Clear", width=8)
+    _clear_btn.pack(side="left")
+
+    def _refresh_cache_size():
+        # Walking the cache touches the disk, so keep it off the UI thread —
+        # a big cache on a slow drive would otherwise freeze the window.
+        def work():
+            try:
+                text = modelcache.human_size(modelcache.size_bytes())
+            except Exception:
+                text = "unknown"
+            root.after(0, lambda: _cache_size.set(text))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _clear_cache():
+        from tkinter import messagebox
+
+        if not messagebox.askyesno(
+                "Clear model cache",
+                "Delete the downloaded Whisper models?\n\nThey download again "
+                "(about 150 MB for the default) the next time you use local "
+                "transcription. Nothing you have dictated or recorded is touched."):
+            return
+        _clear_btn.config(state="disabled", text="…")
+        def work():
+            ok, message = modelcache.clear()
+            def done():
+                _clear_btn.config(state="normal", text="Clear")
+                _refresh_cache_size()
+                (messagebox.showinfo if ok else messagebox.showwarning)(
+                    "Model cache", message)
+            root.after(0, done)
+        threading.Thread(target=work, daemon=True).start()
+
+    _clear_btn.config(command=_clear_cache)
+    _refresh_cache_size()
+
     # --- Meeting storage: rendered into the Meetings tab, beside the recordings
     # it governs. These sat under "Advanced" three tabs away from the list they
     # apply to, which is exactly the jumping-around this move removes.
