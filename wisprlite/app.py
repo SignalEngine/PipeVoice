@@ -490,10 +490,12 @@ class App:
             return ""
         try:
             self.overlay.set_state("transcribing", "Cloud failed — using local…")
-            from .engines.local_engine import LocalEngine
-
-            local = LocalEngine(model_size=self.cfg.local_model_size, language=(self.cfg.language or "").split("-")[0] or None,
-                                device=self.cfg.local_device, compute_type=self.cfg.local_compute_type)
+            # Through the CACHE, not a fresh LocalEngine. Building one loads the
+            # whole Whisper model, and this path built a new one for every failed
+            # utterance — so a spell of cloud trouble meant paying a full model
+            # load on every single thing you said. That is the "it got much
+            # slower" people report when their key or quota goes bad.
+            local = self._get_engine("local")
             return local.start_session(on_partial=self.overlay.set_text).finish(audio)
         except Exception as exc:
             self._fail(f"{err} (local fallback: {exc})")

@@ -1122,3 +1122,42 @@ def test_the_settings_link_says_which_state_it_is_in():
     assert seen["after_tab"] == seen["shut"], \
         "clicking the tab header must close the settings and reset the link"
     assert seen["browser_back"], "the tab header must bring the browser back"
+
+
+def test_the_local_fallback_loads_the_model_once_not_every_utterance():
+    """Reported as "cloud issues, reverting to local, taking a lot longer".
+
+    _fallback built a fresh LocalEngine per failure, and constructing one loads
+    the entire Whisper model. A bad key meant paying that load on every single
+    utterance. It must go through the engine cache like every other path.
+    """
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+
+    builds = []
+    app = App.__new__(App)
+    app.cfg = types.SimpleNamespace(
+        engine="gemini", local_model_size="base.en", local_device="auto",
+        local_compute_type="int8", language="en-US",
+    )
+    app._active = {}
+    app._engines = {}
+    app.overlay = mock.Mock()
+    app._fail = mock.Mock()
+
+    class FakeLocal:
+        def __init__(self):
+            builds.append(1)
+        def start_session(self, on_partial=None):
+            return types.SimpleNamespace(finish=lambda audio: "words")
+
+    app._build_engine = lambda name=None: (FakeLocal() if name == "local"
+                                           else pytest.fail("wrong engine: " + str(name)))
+
+    for _ in range(5):
+        assert App._fallback(app, object(), RuntimeError("cloud down")) == "words"
+
+    assert len(builds) == 1, \
+        f"the model was loaded {len(builds)} times for 5 utterances"
+    assert not app._fail.called
