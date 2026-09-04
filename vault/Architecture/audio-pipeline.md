@@ -102,3 +102,49 @@ Read from a real 2,453-line `pipevoice.log`, 20 Jun – 4 Sep 2026:
 **Not verified on the VPS:** there is no audio device and no Windows here. How a
 recording *sounds*, and how a real device list groups, can only be confirmed on
 James's machine.
+
+## Finishing a screen recording
+
+The order matters, and it was wrong until v2.42.0.
+
+`_finish_screen_recording` ran **mux → name → transcribe → send → show buttons**
+in sequence. Whisper over a two-minute clip sat in the middle, so the first
+button appeared minutes after the recording that produced it.
+
+Now: the pill reaches `done` as soon as the file is muxed and named, and
+`_hand_over_then_transcribe` does the rest on a worker — video sent first and
+alone, then transcribe, then the transcript. **An agent still waits**, because
+it is blocked on the text it asked for; only the human path is async.
+
+Three rules that came out of getting this wrong:
+- **Delete last.** The Play and Open buttons point at the local file, so
+  `screenrec_keep_local=False` must not remove it until everything that was
+  going to be sent has been.
+- **Gate the cleanup on the SEND, not on the note.** It was gated on `not note`,
+  and "no transcript" sets a note — so a clip with no narration was never
+  tidied up, however the setting was configured.
+- **A `finally` that writes the closing message must know whether the message
+  was already written.** It overwrote a send failure with "Recording saved and
+  sent": a failed upload reported as a success.
+
+`Path(None).unlink()` raises `TypeError`, which `except OSError` does not catch,
+so a `None` transcript path aborted the delete loop partway.
+
+## Updating
+
+The installer relaunches with `/RESTARTAPPLICATIONS`, which restores the app
+exactly as it was — a tray icon, nothing open. So an update the user asked for
+used to finish with no visible sign at all.
+
+`updater.mark_pending()` writes a marker **before** the installer is spawned
+(after would never run: the installer force-closes this process), and
+`take_pending()` consumes it on the next start, which opens Settings on About.
+
+- Gated on the marker, never on the version alone — a hand reinstall or a
+  restored backup also changes the version, and a tray app that starts at boot
+  must not open windows uninvited.
+- The marker is always consumed, including when the install failed. A marker
+  that cannot be deleted is emptied; if neither works, stay silent. Returning
+  "yes we updated" on a marker you cannot clear turns a one-shot window into a
+  boot pop-up nobody can switch off.
+- Markers older than 24h are ignored rather than ambushing someone days later.
