@@ -1083,6 +1083,53 @@ def main(first_run: bool = False) -> None:
                  font=("Segoe UI", 11, "bold")).pack(padx=18, pady=(16, 6))
         result = tk.Label(dialog, text="", bg=BG, fg=MUTED, wraplength=320, justify="left")
         result.pack(padx=18, pady=(0, 12))
+        remedy_row = tk.Frame(dialog, bg=BG)
+        remedy_row.pack()
+
+        def _aim_for(m):
+            """Turn the numbers into the one instruction they imply.
+
+            "Too quiet" on its own is a diagnosis with no treatment - it tells
+            you something is wrong and leaves you holding it. Say how far off
+            it is and in which direction."""
+            rms = m["rms_dbfs"]
+            if rms == float("-inf"):
+                return "Aim for -20 dBFS. Nothing is reaching this device at all."
+            if rms < -30:
+                return f"Aim for -20 dBFS — about {abs(-20 - rms):.0f} dB louder than this."
+            if m["clipping_pct"] > 0.1:
+                return "Aim for -20 dBFS — turn the level down until clipping is 0%."
+            return "Aim for -20 dBFS. This is in range."
+
+        def _open_sound_settings():
+            # Recording tab of the classic Sound panel: the level slider lives
+            # in Properties > Levels, which is the thing that actually fixes it.
+            import subprocess
+            for command in (
+                ["rundll32.exe", "shell32.dll,Control_RunDLL", "mmsys.cpl,,1"],
+                ["cmd", "/c", "start", "", "ms-settings:sound"],
+            ):
+                try:
+                    subprocess.Popen(command)
+                    return
+                except Exception:
+                    continue
+            _show("Could not open Windows sound settings — open Sound > "
+                  "Recording > your mic > Properties > Levels.", WARN)
+
+        def _offer_remedy(verdict_text):
+            def apply():
+                for child in remedy_row.winfo_children():
+                    child.destroy()
+                if verdict_text.startswith("Good"):
+                    return
+                ttk.Button(remedy_row, text="Open Windows sound settings",
+                           command=_open_sound_settings).pack(pady=(0, 8))
+            try:
+                if remedy_row.winfo_exists():
+                    remedy_row.after(0, apply)
+            except Exception:
+                pass
 
         def _selected_device():
             value = dict((lbl, val) for lbl, val in devices).get(device_var.get(), "")
@@ -1134,9 +1181,11 @@ def main(first_run: bool = False) -> None:
                 fg = GOOD if v == "Good" else (ACCENT if "loud" in v or "Nothing" in v else WARN)
                 _show(
                     f"{v}\npeak {m['peak_dbfs']:.1f} dBFS · rms {m['rms_dbfs']:.1f} dBFS · "
-                    f"snr {m['snr_db']:.1f} dB · clipping {m['clipping_pct']:.2f}%",
+                    f"snr {m['snr_db']:.1f} dB · clipping {m['clipping_pct']:.2f}%\n"
+                    f"{_aim_for(m)}",
                     fg,
                 )
+                _offer_remedy(v)
             except Exception as exc:
                 _show(f"Microphone unavailable: {exc}", ACCENT)
 
@@ -1145,17 +1194,31 @@ def main(first_run: bool = False) -> None:
             try:
                 grouped = mics.group_inputs(mics.list_inputs())
                 scored = []
+                skipped = []
                 heard_any = False
                 for g in grouped:
-                    samples, rate = _record_seconds(g["index"], 1.5)
+                    # PER DEVICE. Windows always enumerates endpoints that will
+                    # not open - in use by another app, disconnected, or simply
+                    # refusing mono float32. One try around the whole loop meant
+                    # the first such device killed the run with "Test failed"
+                    # and every mic after it went untested.
+                    try:
+                        samples, rate = _record_seconds(g["index"], 1.5)
+                    except Exception as exc:
+                        skipped.append(f"{g['name']} ({exc.__class__.__name__})")
+                        continue
                     m = mics.measure(samples, rate)
                     if m["rms_dbfs"] >= -40:
                         heard_any = True
                     in_band = -30 <= m["rms_dbfs"] <= -6
                     scored.append((g, m, in_band))
+                note = f"\nSkipped {len(skipped)}: {', '.join(skipped)}" if skipped else ""
+                if not scored:
+                    _show("No microphone could be opened." + note, ACCENT)
+                    return
                 if not heard_any:
                     _show("Nothing heard on any device — inconclusive, "
-                          "keep talking and try again.", WARN)
+                          "keep talking and try again." + note, WARN)
                     return
                 best_g, best_m, _ = max(scored, key=lambda t: (t[2], t[1]["snr_db"]))
                 best_label = next(
@@ -1163,7 +1226,8 @@ def main(first_run: bool = False) -> None:
                 )
                 if best_label:
                     device_var.set(best_label)
-                _show(f"Picked {best_g['name']} — {mics.verdict(best_m)}", GOOD)
+                _show(f"Picked {best_g['name']} — {mics.verdict(best_m)}" + note, GOOD)
+                _offer_remedy(mics.verdict(best_m))
             except Exception as exc:
                 _show(f"Test failed: {exc}", ACCENT)
 
