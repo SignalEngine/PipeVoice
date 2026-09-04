@@ -102,18 +102,30 @@ jobs:
           # waiting, leaving $LASTEXITCODE EMPTY. The first two runs of this
           # gate failed for that reason and were misread as a WinRT failure.
           $env:PV_SELFTEST_OUT = "$PWD\winrt-selftest.txt"
+          # -PassThru + Wait-Process -Timeout, never a bare -Wait. A GUI exe
+          # that never exits hangs -Wait for ever: this step sat in_progress for
+          # 30+ minutes on its first run and had to be cancelled by hand. A gate
+          # that can block the build indefinitely is worse than no gate.
           $p = Start-Process $exe -ArgumentList '--winrt-selftest' `
                  -RedirectStandardOutput winrt_out.txt `
                  -RedirectStandardError winrt_err.txt `
-                 -Wait -PassThru -WindowStyle Hidden
+                 -PassThru -WindowStyle Hidden
+          $timedOut = $false
+          try {
+            Wait-Process -Id $p.Id -Timeout 90 -ErrorAction Stop
+          } catch {
+            $timedOut = $true
+            try { $p.Kill() } catch { }
+          }
           $verdict = Get-Content $env:PV_SELFTEST_OUT -Raw -ErrorAction SilentlyContinue
           $out = Get-Content winrt_out.txt -Raw -ErrorAction SilentlyContinue
           $err = Get-Content winrt_err.txt -Raw -ErrorAction SilentlyContinue
-          Write-Host "winrt self-test exit: $($p.ExitCode)"
+          if ($timedOut) { Write-Host "winrt self-test: TIMED OUT after 90s" }
+          else { Write-Host "winrt self-test exit: $($p.ExitCode)" }
           if ($verdict) { Write-Host "verdict: $verdict" }
           if ($out) { Write-Host "stdout:`n$out" }
           if ($err) { Write-Host "stderr:`n$err" }
-          if ($p.ExitCode -ne 0) {
+          if ($timedOut -or $p.ExitCode -ne 0) {
             Write-Host "Read Aloud would silently do nothing in this build."
             exit 1
           }
