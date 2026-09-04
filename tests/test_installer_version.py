@@ -53,3 +53,36 @@ def test_the_iss_still_defines_a_fallback_so_a_local_build_works():
     text = ISS.read_text(encoding="utf-8")
     assert "#ifndef AppVersion" in text and "#define AppVersion" in text, \
         "a local build with no /D would fail to compile"
+
+
+def test_the_winget_manifest_hash_and_url_name_the_same_release():
+    """The first real submission carried v2.43.0's SHA against v2.44.1's URL -
+    the version strings were sed-updated and the hash was not. Microsoft's CI
+    downloads the asset and would have rejected it. This catches the shape
+    (mismatched versions between files) without needing the network."""
+    import re
+
+    winget = ROOT / "packaging" / "winget"
+    if not winget.exists():
+        return
+
+    versions = {}
+    for path in sorted(winget.glob("*.yaml")):
+        text = path.read_text(encoding="utf-8")
+        m = re.search(r"^PackageVersion:\s*(\S+)", text, re.M)
+        assert m, f"{path.name} has no PackageVersion"
+        versions[path.name] = m.group(1)
+
+    assert len(set(versions.values())) == 1, \
+        f"the manifests disagree on the version: {versions}"
+
+    installer = (winget / "Powleads.PipeVoice.installer.yaml").read_text(encoding="utf-8")
+    version = next(iter(versions.values()))
+    url = re.search(r"InstallerUrl:\s*(\S+)", installer).group(1)
+    assert f"/v{version}/" in url, \
+        f"InstallerUrl points at a different release than PackageVersion {version}: {url}"
+
+    sha = re.search(r"InstallerSha256:\s*([0-9A-Fa-f]{64})", installer)
+    assert sha, "InstallerSha256 is missing or not a 64-char hex digest"
+    assert sha.group(1).isupper() or not sha.group(1).isalpha(), \
+        "winget expects the SHA-256 uppercase"
