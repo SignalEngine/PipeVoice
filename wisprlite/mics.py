@@ -97,9 +97,11 @@ def recommend(grouped: list[dict]) -> dict | None:
         return None
     return min(
         candidates,
+        # Deliberately NOT ranked by channel count. A stereo endpoint is not a
+        # better microphone than a mono one - webcams and headsets report both -
+        # so the count carries no signal and ordering by it just picks wrong.
         key=lambda g: (
             0 if g.get("is_default") else 1,
-            -g.get("channels", 0),
             -g.get("default_samplerate", 0.0),
             g.get("index", 0),
         ),
@@ -136,7 +138,12 @@ def measure(samples: np.ndarray, rate: int) -> dict:
 
     rms_db = to_dbfs(rms)
     noise_floor_db = to_dbfs(noise_floor)
-    snr_db = (rms_db - noise_floor_db) if noise_floor_db != float("-inf") else float("inf")
+    if rms_db == float("-inf"):
+        snr_db = 0.0          # digital silence: 0/0, not infinite signal
+    elif noise_floor_db == float("-inf"):
+        snr_db = float("inf")  # real signal, immeasurably quiet floor
+    else:
+        snr_db = rms_db - noise_floor_db
 
     return {
         "peak_dbfs": to_dbfs(peak),

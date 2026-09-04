@@ -150,3 +150,24 @@ def test_measure_on_silence_does_not_raise():
 def test_measure_on_empty_array_does_not_raise():
     m = mics.measure(np.array([], dtype=np.float32), 16_000)
     assert m["clipping_pct"] == 0.0
+
+
+def test_silence_reports_no_signal_to_noise_not_infinite():
+    """rms and noise floor are both -inf for digital silence: 0/0, undefined.
+    Reporting inf made a dead mic look like it had immaculate SNR."""
+    m = mics.measure(np.zeros(16_000, dtype=np.float32), 16_000)
+    assert m["snr_db"] == 0.0
+    assert mics.verdict(m) == "Nothing heard — is this the right mic?"
+
+
+def test_a_stereo_endpoint_does_not_outrank_a_mono_one():
+    """Channel count says nothing about microphone quality — webcams and
+    headsets report both — so it must not decide the recommendation."""
+    grouped = [
+        {"index": 3, "name": "Yeti Mono", "hostapi": "Windows WASAPI", "channels": 1,
+         "default_samplerate": 48000.0, "is_default": False, "is_virtual": False},
+        {"index": 7, "name": "Webcam Stereo", "hostapi": "Windows WASAPI", "channels": 2,
+         "default_samplerate": 48000.0, "is_default": False, "is_virtual": False},
+    ]
+    assert mics.recommend(grouped)["index"] == 3, \
+        "the stereo endpoint won purely on channel count"

@@ -8,9 +8,12 @@ suppression — see the plan this implements for why.
 
 from __future__ import annotations
 
+import logging
 import wave
 
 import numpy as np
+
+log = logging.getLogger("wisprlite")
 
 TARGET_DBFS = -1.0
 THRESHOLD_DBFS = -3.0
@@ -53,7 +56,9 @@ def normalize_peak(
     if gain <= 1.0:
         return samples
     boosted = np.clip(samples.astype(np.float64) * gain, -32768, 32767)
-    return boosted.astype(samples.dtype if samples.dtype.kind == "i" else "<i2")
+    # Same dtype in, same dtype out. The old branch silently handed a float
+    # caller int16 back, which is a conversion wearing a normaliser's name.
+    return boosted.astype(samples.dtype)
 
 
 def normalize_wav_file(path) -> None:
@@ -76,4 +81,7 @@ def normalize_wav_file(path) -> None:
             handle.setparams(params)
             handle.writeframes(normalized.tobytes())
     except Exception:
-        pass
+        # Best-effort by design - the recording is already safely on disk and
+        # must not be lost to a normalisation problem. But swallowing silently
+        # would hide a real regression in the maths, so say so.
+        log.warning("could not normalise %s", path, exc_info=True)
