@@ -142,6 +142,17 @@ class App:
             on_stop=lambda: None,
             is_paused=lambda: not self._meeting_active,
         )
+        # Read Aloud: one press captures + OCRs + speaks. Which modifiers were
+        # ALSO held at that moment (checked inside the trigger, not encoded as a
+        # separate hotkey) picks the mode — see readaloud.capture_mode_for.
+        self.read_aloud_hotkeys = HotkeyManager(
+            get_hotkey=lambda: self.cfg.read_aloud_hotkey,
+            get_mode=lambda: "ptt",
+            on_start=self._read_aloud_trigger,
+            on_stop=lambda: None,
+            is_paused=lambda: self.paused or self._meeting_active,
+        )
+        self._read_aloud_speaker = None   # the live readaloud.Speaker, None when idle
 
         self._screenrec = None        # the live ScreenRecording, None when idle
         self._screenrec_selecting = False   # the region selector is open
@@ -319,6 +330,101 @@ class App:
             threading.Timer(12.0, _disarm).start()
         else:
             self.overlay.hide()
+
+    # ---- read aloud ---------------------------------------------------------
+    def _read_aloud_trigger(self) -> None:
+        speaker = self._read_aloud_speaker
+        if speaker is not None:
+            # Pressed again mid-read: the hotkey itself is also a stop.
+            speaker.stop()
+            return
+        threading.Thread(target=self._read_aloud_run, daemon=True).start()
+
+    def _read_aloud_run(self) -> None:
+        from . import readaloud
+
+        try:
+            import keyboard
+            shift, ctrl = keyboard.is_pressed("shift"), keyboard.is_pressed("ctrl")
+        except Exception:
+            shift = ctrl = False
+        mode = readaloud.capture_mode_for(shift=shift, ctrl=ctrl)
+
+        region = None
+        if mode == "window":
+            region = readaloud.focused_window_rect()
+        elif mode == "region":
+            from . import screenrec
+            region = screenrec.select_region()
+            if region is None:
+                return  # cancelled
+        # mode == "screen" keeps region=None -> the whole virtual desktop
+
+        self.overlay.show("transcribing", "Reading…")
+        try:
+            png = readaloud.grab_png(region)
+            text = readaloud.ocr_png(png, language=self.cfg.read_aloud_ocr_language)
+        except readaloud.ReadAloudError as exc:
+            self.overlay.set_state("error", str(exc)[:80])
+            return
+        except Exception as exc:
+            self.overlay.set_state("error", f"Read Aloud failed: {exc}"[:80])
+            return
+
+        if not text:
+            self.overlay.set_state("done", "No text found")
+            return
+
+        copied = bool(self.cfg.read_aloud_clipboard)
+        if copied:
+            copy_clipboard(text)
+        preview = text if len(text) <= 160 else text[:157] + "…"
+        self.overlay.set_state("reading", preview + (" (copied)" if copied else ""))
+
+        if not readaloud.should_speak(quiet_with_screenreader=self.cfg.read_aloud_quiet_with_screenreader):
+            self.overlay.set_state("done", "Copied — staying quiet (screen reader running)")
+            return
+
+        speaker = readaloud.Speaker(voice=self.cfg.read_aloud_voice, rate=self.cfg.read_aloud_rate)
+        self._read_aloud_speaker = speaker
+        threading.Thread(target=self._read_aloud_watch_interrupt, args=(speaker,), daemon=True).start()
+        try:
+            speaker.speak(text)
+        except readaloud.ReadAloudError as exc:
+            self.overlay.set_state("error", str(exc)[:80])
+        finally:
+            self._read_aloud_speaker = None
+            self.overlay.set_state("done", "")
+
+    def _read_aloud_watch_interrupt(self, speaker) -> None:
+        """Esc stops, Space pauses/resumes, the hotkey again stops. Polled at
+        ~50Hz so an interrupt lands well inside the ~200ms budget — stopping
+        itself (readaloud.Speaker.stop) pauses playback synchronously rather
+        than waiting for the current sentence, which is what actually keeps
+        the latency down regardless of poll rate."""
+        import keyboard
+
+        from .hotkey import _all_pressed
+
+        prev_space = False
+        prev_hotkey = True   # already down to have triggered this; arm on release
+        while self._read_aloud_speaker is speaker:
+            try:
+                if keyboard.is_pressed("esc"):
+                    speaker.stop()
+                    return
+                space = keyboard.is_pressed("space")
+                if space and not prev_space:
+                    (speaker.resume if speaker.paused else speaker.pause)()
+                prev_space = space
+                hotkey_down = _all_pressed(self.cfg.read_aloud_hotkey)
+                if hotkey_down and not prev_hotkey:
+                    speaker.stop()
+                    return
+                prev_hotkey = hotkey_down
+            except Exception:
+                pass
+            time.sleep(0.02)
 
     # ---- hotkey callbacks (run on the hotkey thread) ----------------------
     def _on_start(self, clipboard: bool = False, voice: str | None = None) -> None:
@@ -1655,6 +1761,7 @@ class App:
         self.meeting_hotkeys.start()
         self.screenrec_hotkeys.start()
         self.bookmark_hotkeys.start()
+        self.read_aloud_hotkeys.start()
         self._start_voice_hotkeys()
         if self.cfg.mcp_enabled:
             self.start_mcp_bridge()

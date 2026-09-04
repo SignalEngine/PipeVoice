@@ -200,6 +200,14 @@ class Config:
     screenrec_keep_local: bool = True # keep the files after a successful send
     screenrec_dir: str = ""           # blank = %USERPROFILE%\\Videos\\PipeVoice
     screenrec_fps: int = 12           # pure-python capture; 10-15 is realistic at 1080p
+    # Read Aloud — OCR + speech via WinRT. "" = off, like meeting/screenrec hotkeys.
+    # Base = focused window, +Shift = whole screen, +Ctrl = drag a region.
+    read_aloud_hotkey: str = ""
+    read_aloud_voice: str = ""        # "" = the system default WinRT voice
+    read_aloud_rate: float = 1.0      # 0.5-2.0, passed straight to SpeechSynthesisStream
+    read_aloud_ocr_language: str = "" # "" = user's profile languages
+    read_aloud_clipboard: bool = True # also copy the recognized text; never silent about it
+    read_aloud_quiet_with_screenreader: bool = False  # default OFF: speak even with NVDA/JAWS running
 
     @property
     def meetings_keep(self) -> int:

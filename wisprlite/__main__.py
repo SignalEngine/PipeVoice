@@ -18,6 +18,8 @@ elif "--mcp" in sys.argv:
     from .mcp_shim import main
 elif "--feedback" in sys.argv:
     from .feedback import main
+elif "--winrt-selftest" in sys.argv:
+    from .readaloud import main
 else:
     from .app import main
 

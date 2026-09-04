@@ -726,6 +726,12 @@ def main(first_run: bool = False) -> None:
     bookmark_acoustic_var = tk.BooleanVar(value=cfg.bookmark_acoustic)
     bookmark_sensitivity_var = tk.DoubleVar(value=cfg.bookmark_sensitivity)
     bookmark_phrases_var = tk.StringVar(value=cfg.bookmark_phrases)
+    read_aloud_hotkey_var = tk.StringVar(value=cfg.read_aloud_hotkey)
+    read_aloud_voice_var = tk.StringVar(value=cfg.read_aloud_voice)
+    read_aloud_rate_var = tk.StringVar(value=str(cfg.read_aloud_rate))
+    read_aloud_lang_var = tk.StringVar(value=cfg.read_aloud_ocr_language)
+    read_aloud_clipboard_var = tk.BooleanVar(value=cfg.read_aloud_clipboard)
+    read_aloud_quiet_var = tk.BooleanVar(value=cfg.read_aloud_quiet_with_screenreader)
     lang_var = tk.StringVar(value=dict(LANGUAGES).get(cfg.language, LANGUAGES[0][1]))
     show_all_devices_var = tk.BooleanVar(value=False)
     devices = _input_devices()
@@ -1125,6 +1131,32 @@ def main(first_run: bool = False) -> None:
               "10-15 is realistic at 1080p. Higher costs CPU on the machine you are "
               "recording, which is the same one running what you are showing."),
           screenrec_fps_var, width=6)
+
+    # --- Read Aloud: press the hotkey, have the screen read to you ---
+    c = card(
+        "Read Aloud",
+        "For text a screen reader can't reach — an image, a canvas, a scanned "
+        "PDF. Tap = the focused window, +Shift = the whole screen, +Ctrl = drag "
+        "a region. Speaks even with a screen reader running, unless you turn "
+        "that off below.",
+    )
+    r = row(c, "Read Aloud hotkey", "Blank turns the feature off.")
+    entry(r, read_aloud_hotkey_var, width=14)
+    ra_cap_btn = ttk.Button(r, text="Capture", width=8)
+    ra_cap_btn.pack(side="left", padx=(8, 0))
+    ra_cap_btn.config(command=_mk_capture(ra_cap_btn, read_aloud_hotkey_var))
+    entry(row(c, "Voice", "Blank uses the system default voice."),
+          read_aloud_voice_var, width=28)
+    entry(row(c, "Speed", "0.5 (slow) to 2.0 (fast). 1.0 is normal."),
+          read_aloud_rate_var, width=6)
+    entry(row(c, "OCR language",
+              "e.g. en-US. Blank uses your Windows display language."),
+          read_aloud_lang_var, width=10)
+    check(c, "Also copy the recognized text to the clipboard", read_aloud_clipboard_var,
+          "On by default. The overlay always says when it copied.")
+    check(c, "Stay quiet while a screen reader is running", read_aloud_quiet_var,
+          "Off by default — the hotkey is usually pressed because the screen "
+          "reader can't read that spot, so silence there defeats the feature.")
 
     c = card("Audio")
     mic_row = row(c, "Microphone")
@@ -1690,6 +1722,15 @@ def main(first_run: bool = False) -> None:
             cfg.screenrec_fps = max(1, min(60, int(screenrec_fps_var.get().strip() or 12)))
         except ValueError:
             cfg.screenrec_fps = 12
+        cfg.read_aloud_hotkey = read_aloud_hotkey_var.get().strip()
+        cfg.read_aloud_voice = read_aloud_voice_var.get().strip()
+        try:
+            cfg.read_aloud_rate = max(0.5, min(2.0, float(read_aloud_rate_var.get().strip() or 1.0)))
+        except ValueError:
+            cfg.read_aloud_rate = 1.0
+        cfg.read_aloud_ocr_language = read_aloud_lang_var.get().strip()
+        cfg.read_aloud_clipboard = bool(read_aloud_clipboard_var.get())
+        cfg.read_aloud_quiet_with_screenreader = bool(read_aloud_quiet_var.get())
         cfg.bookmark_hotkey = bookmark_hotkey_var.get().strip()
         cfg.bookmark_acoustic = bool(bookmark_acoustic_var.get())
         cfg.bookmark_phrases = bookmark_phrases_var.get().strip()
