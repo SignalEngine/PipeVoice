@@ -971,9 +971,16 @@ def test_the_finished_pill_never_announces_the_scp_destination():
     app._screenrec = recording
     app._transcribe_recording = mock.Mock(return_value=None)
 
+    recording.transcript_path = pathlib.Path("/out/2026-08-12 17-32-18.txt")
+    app.cfg.screenrec_keep_local = True
+
     with mock.patch.object(App, "_ask_name_in_pill", return_value=""), \
+         mock.patch("wisprlite.app.copy_clipboard"), \
          mock.patch.object(screenrec, "send", return_value=(True, "ok")):
         App._finish_screen_recording(app)
+        # Sending happens behind the pill now, so the closing message is
+        # written by that thread rather than before this call returns.
+        _join_screenrec_threads()
 
     state = app._screenrec_ui.snapshot()
     assert state["phase"] == "done"
@@ -1428,3 +1435,138 @@ def test_one_thread_s_failure_does_not_overwrite_another_s():
     t.join()
 
     assert last_error() == "the dictation's reason"
+
+
+def test_the_send_button_ships_the_real_transcript_not_a_guessed_path():
+    """It derived the transcript as video.with_suffix(".txt"), which is only
+    right while the transcript sits beside the clip under the same stem. Get it
+    wrong and the video ships alone while the pill says the transcript went."""
+    import threading
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import screenrec
+
+    app = _agent_app()
+    app.cfg.screenrec_destination = "user@host:/inbox"
+    app._sending_recording = False
+    app._finished_recording = pathlib.Path("/out/clip.mp4")
+    app._finished_transcript = pathlib.Path("/notes/spoken-2026-09-04.txt")
+
+    sent = {}
+    with mock.patch.object(pathlib.Path, "exists", return_value=True), \
+         mock.patch.object(screenrec, "send",
+                           side_effect=lambda files, dest: (sent.update(files=list(files)), (True, ""))[1]):
+        App._send_finished_recording(app)
+        for t in threading.enumerate():
+            if t.name == "screenrec-send":
+                t.join(5)
+
+    assert pathlib.Path("/notes/spoken-2026-09-04.txt") in sent["files"], \
+        f"the real transcript was not sent: {sent.get('files')}"
+
+
+def test_a_second_send_click_does_not_start_a_second_upload():
+    """Two rapid clicks started two threads racing to write the same status."""
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = _agent_app()
+    app.cfg.screenrec_destination = "user@host:/inbox"
+    app._finished_recording = pathlib.Path("/out/clip.mp4")
+    app._finished_transcript = None
+    app._sending_recording = True          # one is already in flight
+
+    # exists() must be True: otherwise the early "nothing to send" return makes
+    # this pass whether the guard is there or not, which is exactly how the
+    # first version of this test survived having the guard deleted.
+    with mock.patch.object(pathlib.Path, "exists", return_value=True), \
+         mock.patch("wisprlite.app.threading.Thread") as thread:
+        App._send_finished_recording(app)
+    thread.assert_not_called()
+
+    # Positive control: with nothing in flight it MUST send, or the test above
+    # would pass for a function that never sends at all.
+    app._sending_recording = False
+    with mock.patch.object(pathlib.Path, "exists", return_value=True), \
+         mock.patch("wisprlite.app.threading.Thread") as thread:
+        App._send_finished_recording(app)
+    thread.assert_called_once()
+
+
+def test_a_recording_with_no_transcript_still_deletes_the_rest(tmp_path):
+    """Path(None) raises TypeError, which `except OSError` does not catch — so
+    a missing transcript aborted the delete loop partway and left the audio
+    file behind. Uses REAL files: mocking unlink cannot show what survived."""
+    import threading
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import screenrec
+
+    video = tmp_path / "clip.mp4"
+    audio = tmp_path / "clip.wav"
+    video.write_bytes(b"mp4")
+    audio.write_bytes(b"wav")
+
+    app = _agent_app()
+    app._screenrec_agent = None
+    app.cfg.screenrec_destination = "user@host:/inbox"
+    app.cfg.screenrec_keep_local = False
+    recording = mock.Mock()
+    recording.stem = "clip"
+    recording.transcript_path = None       # never produced one
+    recording.audio_path = audio
+    app._transcribe_recording = mock.Mock(return_value=None)
+
+    with mock.patch.object(screenrec, "send", return_value=(True, "")), \
+         mock.patch("wisprlite.app.copy_clipboard"):
+        App._hand_over_then_transcribe(app, recording, video)
+        for t in threading.enumerate():
+            if t.name == "screenrec-deliver":
+                t.join(5)
+
+    assert not video.exists(), "the video was not cleaned up"
+    assert not audio.exists(), \
+        "the delete loop aborted on the missing transcript and left the audio"
+    snap = app._screenrec_ui.snapshot()
+    assert "failed" not in (snap.get("subtitle") or "").lower(), \
+        f"a missing transcript was reported as a failure: {snap}"
+
+
+def test_a_transcript_that_failed_to_upload_is_not_called_sent():
+    """The video went, the transcript did not. Saying "Recording saved and
+    sent" beside "transcript not sent" is two answers to one question, and the
+    reassuring one is on top."""
+    import threading
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import screenrec
+
+    app = _agent_app()
+    app._screenrec_agent = None
+    app.cfg.screenrec_destination = "user@host:/inbox"
+    app.cfg.screenrec_keep_local = True
+    recording = mock.Mock()
+    recording.stem = "clip"
+    recording.transcript_path = pathlib.Path("/out/clip.txt")
+    recording.audio_path = pathlib.Path("/out/clip.wav")
+    app._transcribe_recording = mock.Mock(return_value=pathlib.Path("/out/clip.txt"))
+
+    calls = {"n": 0}
+
+    def send(files, dest):
+        calls["n"] += 1
+        return (True, "") if calls["n"] == 1 else (False, "disk full")
+
+    with mock.patch.object(screenrec, "send", side_effect=send), \
+         mock.patch("wisprlite.app.copy_clipboard"), \
+         mock.patch.object(pathlib.Path, "exists", return_value=True):
+        App._hand_over_then_transcribe(app, recording, pathlib.Path("/out/clip.mp4"))
+        for t in threading.enumerate():
+            if t.name == "screenrec-deliver":
+                t.join(5)
+
+    snap = app._screenrec_ui.snapshot()
+    assert "sent" not in (snap.get("title") or "").lower(), \
+        f"the title claims it was sent while the transcript failed: {snap}"
+    assert "disk full" in (snap.get("subtitle") or ""), \
+        f"the reason must survive to the pill: {snap}"

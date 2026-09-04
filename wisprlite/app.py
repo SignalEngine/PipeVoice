@@ -160,6 +160,8 @@ class App:
         self._session = None
         self._clipboard_only = False
         self._polish_error: str | None = None
+        self._finished_transcript = None
+        self._sending_recording = False
         self._active = {}             # per-utterance profile overrides (never mutates cfg)
         self._fg_ctx = {}             # foreground window captured at hotkey-press time
         self._started_at = 0.0
@@ -832,6 +834,11 @@ class App:
         it: the file is already muxed and on disk by the time this runs.
         """
         self._finished_recording = video
+        # The REAL path, not video.with_suffix(".txt"). Guessing it happens to
+        # work only while the transcript sits beside the clip under the same
+        # stem, and the Send button would otherwise ship the video alone while
+        # saying the transcript went with it.
+        self._finished_transcript = None
         try:
             copy_clipboard(str(video))
         except Exception as exc:
@@ -848,6 +855,11 @@ class App:
             from . import screenrec
 
             note = ""
+            # Whether everything that was going to be sent actually went. A
+            # MISSING transcript is not a send failure - the video still
+            # arrived, and the title must say so - but a transcript that failed
+            # to upload is, and then "and sent" would be a lie.
+            sent_all = bool(destination)
             # The finally below writes the closing message. Without this it also
             # overwrote the send-failure one with "Recording saved and sent" -
             # a failed upload reported as a success, which is the single worst
@@ -869,32 +881,57 @@ class App:
 
                 transcript = self._transcribe_recording(recording)
                 note = "" if transcript is not None else " · no transcript (check the mic)"
+                if transcript is not None and not Path(transcript).exists():
+                    # Returned a path to a file that is not there. Say the
+                    # friendly thing rather than letting scp fail on it.
+                    transcript, note = None, " · no transcript (check the mic)"
+                self._finished_transcript = transcript
                 if transcript is not None and destination:
                     ok, message = screenrec.send([transcript], destination)
                     if not ok:
+                        sent_all = False
                         note = f" · transcript not sent: {message}"
 
                 # Deleting is LAST, and only once everything that was going to
                 # be sent has been. The Play and Open buttons on the pill point
                 # at this file, so removing it earlier would leave the user
                 # pressing buttons that open nothing.
-                if destination and not self.cfg.screenrec_keep_local and not note:
+                # Gated on the SEND, not on the note. "no transcript" is a
+                # note but not a delivery failure - the video did arrive - and
+                # keying the cleanup off any note at all meant a clip with no
+                # narration was never tidied up, however keep_local was set.
+                if sent_all and not self.cfg.screenrec_keep_local:
                     for path in [video, recording.transcript_path, recording.audio_path]:
+                        if path is None:
+                            continue     # a recording that produced no transcript
                         try:
                             Path(path).unlink()
-                        except OSError:
-                            pass
+                        except (OSError, TypeError, ValueError):
+                            pass         # TypeError is not an OSError, and it
+                                         # used to abort the whole loop
                     self._finished_recording = None
+                    self._finished_transcript = None
             except Exception:
                 log.exception("screenrec: background finish failed")
                 note = " · finishing failed, the clip is safe on disk"
             finally:
-                if not reported and self._screenrec_ui.snapshot().get("phase") == "done":
-                    self._screenrec_ui.update(
-                        phase="done",
-                        title="Recording saved" + (" and sent" if destination else ""),
-                        subtitle=(recording.stem + note).strip()[:120],
-                    )
+                try:
+                    if not reported and self._screenrec_ui.snapshot().get("phase") == "done":
+                        # "and sent" only when everything that was going to be
+                        # sent actually was. Saying it beside "finishing failed"
+                        # is two answers to one question.
+                        self._screenrec_ui.update(
+                            phase="done",
+                            title="Recording saved" + (" and sent" if sent_all else ""),
+                            subtitle=" · ".join(
+                                part for part in (recording.stem, note.lstrip(" ·").strip())
+                                if part
+                            )[:120],
+                        )
+                except Exception:
+                    # The window can be gone by now (quit mid-transcribe). This
+                    # is a daemon thread, so an escape here dies unseen.
+                    log.exception("screenrec: could not write the closing message")
 
         threading.Thread(target=work, name="screenrec-deliver", daemon=True).start()
 
@@ -906,6 +943,9 @@ class App:
 
         video = self._finished_recording
         destination = (self.cfg.screenrec_destination or "").strip()
+        if self._sending_recording:
+            return                    # a second click is impatience, not a
+                                      # request for a second parallel upload
         if video is None or not Path(video).exists():
             self._screenrec_ui.update(phase="done", title="Nothing to send",
                                       subtitle="the clip is no longer on disk")
@@ -917,17 +957,25 @@ class App:
             return
 
         def work():
-            files = [Path(video)]
-            transcript = Path(video).with_suffix(".txt")
-            if transcript.exists():
-                files.append(transcript)
-            ok, message = screenrec.send(files, destination)
-            self._screenrec_ui.update(
-                phase="done",
-                title="Sent" if ok else "Send failed",
-                subtitle=(Path(video).stem if ok else message)[:120],
-            )
+            try:
+                files = [Path(video)]
+                transcript = self._finished_transcript
+                if transcript is not None and Path(transcript).exists():
+                    files.append(Path(transcript))
+                ok, message = screenrec.send(files, destination)
+                self._screenrec_ui.update(
+                    phase="done",
+                    title="Sent" if ok else "Send failed",
+                    subtitle=(Path(video).stem if ok else message)[:120],
+                )
+            except Exception as exc:
+                log.exception("screenrec: send failed")
+                self._screenrec_ui.update(phase="done", title="Send failed",
+                                          subtitle=str(exc)[:120])
+            finally:
+                self._sending_recording = False
 
+        self._sending_recording = True
         self._screenrec_ui.update(phase="done", title="Sending\u2026",
                                   subtitle=Path(video).stem)
         threading.Thread(target=work, name="screenrec-send", daemon=True).start()

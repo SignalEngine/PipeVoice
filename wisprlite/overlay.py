@@ -606,15 +606,14 @@ class Overlay:
     DONE_GAP, DONE_EDGE = 8, 8
     SCREENREC_H = {"recording": WIN_H, "naming": 88, "working": WIN_H, "done": 100}
 
-    @classmethod
-    def _done_button_w(cls):
+    def _done_button_w(self):
         # Derived from the count, never a constant. A fourth button at the old
         # fixed 108px measured 456px inside a 380px pill, so two of them would
         # have been drawn off the edge - and the hit test would still have
         # claimed they were there.
-        count = len(cls.SCREENREC_DONE)
-        gaps = (count - 1) * cls.DONE_GAP
-        return max(48, (WIN_W - 2 * cls.DONE_EDGE - gaps) // count)
+        count = len(self.SCREENREC_DONE)
+        gaps = (count - 1) * self.DONE_GAP
+        return max(48, (WIN_W - 2 * self.DONE_EDGE - gaps) // count)
 
     def _done_button_box(self, index: int):
         width = self._done_button_w()
