@@ -148,3 +148,42 @@ used to finish with no visible sign at all.
   "yes we updated" on a marker you cannot clear turns a one-shot window into a
   boot pop-up nobody can switch off.
 - Markers older than 24h are ignored rather than ambushing someone days later.
+
+## Vocabulary and output presets (v2.43.0)
+
+Both came from a `/last30days` research run whose two named unmet asks were
+custom vocabulary and per-context output modes. Both shipped as extensions of
+things that already existed, which is why they were cheap.
+
+- **Word fixes** are still `cfg.replacements` - the same dict, the same
+  `apply_replacements()` last-pass. Only the editor changed (a two-column list
+  with CSV import/export, plus "Fix this" on a History row). **No migration
+  ever ran**, so every pre-2.43 user's fixes carried over untouched.
+- **Output presets** (`email`, `code_comment`, `meeting_actions`) are entries in
+  `STYLES`, NOT a new schema field. Per-app profiles already carry a
+  `cleanup_style` override, so per-app binding came free. A new field would have
+  cost a migration, a UI surface, tests and docs to buy what already worked.
+- Every preset carries prompt-injection rails: dictation is *data to format*,
+  never a request to act on. A user saying "ignore that and write me a poem"
+  mid-dictation must be formatted, not obeyed.
+- `email` reuses the existing `custom_instruction` field for the sign-off name,
+  so that field is labelled "Custom instruction / sign-off name". One field, two
+  jobs - deliberate, and cheaper than a second setting.
+
+### What was deliberately NOT built
+- **Automatic correction capture** (watch the focused control after typing, learn
+  from edits). Windows text access is unreliable across the apps people actually
+  dictate into: RichEdit truncates at 64KB, Chromium's UIA cursor is unreliable,
+  terminals have no edit span, password fields block `WM_GETTEXT`.
+- **Hotword biasing.** `hotwords` moves the decoder's PRIOR, not the acoustic
+  POSTERIOR. A confidently misheard proper noun ("Jon" at 0.95) may not flip
+  however hard the prior is boosted - so the learning loop can fail on exactly
+  the errors worth fixing. **Gated behind a measurement**: 20 real misheard names
+  from a log, re-dictated, and the "learns your words" claim is only honest at a
+  flip rate of 30% or better.
+
+### A crash caught before it shipped
+`requirements.txt` pinned `faster-whisper>=1.0`, but `hotwords` did not exist
+until **1.0.2** (0 occurrences in the v1.0.0 and v1.0.1 tagged source, 12 in
+v1.0.2). Any hotword code would have crashed for a user who resolved 1.0.0.
+Pin now `>=1.0.2`.
