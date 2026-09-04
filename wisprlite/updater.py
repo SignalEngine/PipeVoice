@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 import urllib.request
 
 from . import __version__, config
@@ -244,6 +245,13 @@ def download_and_run(info: dict) -> bool:
             except Exception:
                 pass
             return False
+    # Say that WE are doing this, before handing over. The installer relaunches
+    # us with /RESTARTAPPLICATIONS, which brings the app back exactly as it was
+    # - a tray icon and nothing else - so without this the update finishes with
+    # no visible sign that anything happened.
+    from . import __version__ as _current
+    mark_pending(_current)
+
     # Let the installer (not us) close + replace + relaunch the running exe.
     # FORCECLOSEAPPLICATIONS is essential: the tray app and any open settings
     # window don't answer Windows' Restart Manager (Tk/pystray ignore the close
@@ -260,6 +268,80 @@ def download_and_run(info: dict) -> bool:
         return True
     except Exception as exc:
         log.warning("could not launch installer: %s", exc)
+        return False
+
+
+PENDING = "pending-update.json"
+# A marker older than this is from an update that never completed. Landing on
+# About days later, out of nowhere, would be worse than saying nothing.
+PENDING_MAX_AGE = 24 * 3600
+
+
+def _pending_path():
+    return config.config_dir() / "update" / PENDING
+
+
+def mark_pending(from_version: str) -> None:
+    """Record that WE are installing an update, so the next start can say so.
+
+    A bare version comparison cannot: it also fires when someone reinstalls by
+    hand or restores a backup, and opening a window uninvited on a tray app
+    that starts at boot is the wrong answer to "did anything change?".
+    """
+    try:
+        path = _pending_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"from": from_version, "at": time.time()}),
+                        encoding="utf-8")
+    except Exception:
+        log.warning("could not record the pending update", exc_info=True)
+
+
+def take_pending(current_version: str) -> bool:
+    """True exactly once, on the first start after an update we performed.
+
+    Always clears the marker, including when the install failed and the version
+    did not move — a marker that survives its own failure would open About on
+    every start from then on.
+    """
+    path = _pending_path()
+    try:
+        if not path.exists():
+            return False
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    if not _consume(path):
+        # We could not clear the marker - antivirus holding the file, a
+        # read-only folder. Saying "yes, we updated" now would re-fire on every
+        # single start from here on, turning a one-shot window into a boot
+        # pop-up nobody can switch off. Stay quiet instead.
+        log.warning("could not clear the pending-update marker; skipping the About window")
+        return False
+    try:
+        if time.time() - float(data.get("at") or 0) > PENDING_MAX_AGE:
+            return False
+    except Exception:
+        return False
+    previous = data.get("from")
+    # Must be a version STRING. A truthy non-string compares unequal to every
+    # version and would fire About on a marker that means nothing.
+    return isinstance(previous, str) and bool(previous) and previous != current_version
+
+
+def _consume(path) -> bool:
+    """Delete the marker, or failing that neuter it. True if it is gone for good."""
+    try:
+        path.unlink()
+        return True
+    except Exception:
+        pass
+    try:
+        # Could not remove it, so empty it: an unreadable marker is treated as
+        # no marker, and this needs only write permission, not delete.
+        path.write_text("", encoding="utf-8")
+        return True
+    except Exception:
         return False
 
 

@@ -160,6 +160,8 @@ class App:
         self._session = None
         self._clipboard_only = False
         self._polish_error: str | None = None
+        self._finished_transcript = None
+        self._sending_recording = False
         self._active = {}             # per-utterance profile overrides (never mutates cfg)
         self._fg_ctx = {}             # foreground window captured at hotkey-press time
         self._started_at = 0.0
@@ -614,6 +616,9 @@ class App:
         if action in ("save", "skip"):
             self._screenrec_ui.answer_name(value if action == "save" else "")
             return
+        if action == "send":
+            self._send_finished_recording()
+            return
         if action in ("play", "copy", "open"):
             self._screenrec_done_action(action)
             return
@@ -733,6 +738,15 @@ class App:
             if typed:
                 recording.rename(screenrec.stamped_stem(recording.stem, typed))
                 video = recording.video_path
+            # An agent is BLOCKED on the transcript, so that one path still
+            # waits for it. A person is not: they recorded a clip and want to
+            # watch or send it, and Whisper over a two-minute video kept them
+            # staring at "Writing down what you said..." before a single button
+            # appeared. For them the buttons come first and the text follows.
+            if self._screenrec_agent is None:
+                self._hand_over_then_transcribe(recording, video)
+                return
+
             files = [video]
             self._screenrec_ui.update(phase="working", status="Writing down what you said\u2026")
             transcript = self._transcribe_recording(recording)
@@ -812,6 +826,159 @@ class App:
                     "error": "; ".join(recording.errors[:2]) or "the recording produced no file",
                 }
                 waiter.set()
+
+    def _hand_over_then_transcribe(self, recording, video) -> None:
+        """Show the finished clip NOW; transcribe and deliver behind it.
+
+        Everything here is best-effort and must never take the clip down with
+        it: the file is already muxed and on disk by the time this runs.
+        """
+        self._finished_recording = video
+        # The REAL path, not video.with_suffix(".txt"). Guessing it happens to
+        # work only while the transcript sits beside the clip under the same
+        # stem, and the Send button would otherwise ship the video alone while
+        # saying the transcript went with it.
+        self._finished_transcript = None
+        try:
+            copy_clipboard(str(video))
+        except Exception as exc:
+            log.info("screenrec: could not copy the path: %s", exc)
+
+        destination = (self.cfg.screenrec_destination or "").strip()
+        self._screenrec_ui.update(
+            phase="done",
+            title="Recording saved",
+            subtitle=(recording.stem + " · transcribing…").strip(),
+        )
+
+        def work():
+            from . import screenrec
+
+            note = ""
+            # Whether everything that was going to be sent actually went. A
+            # MISSING transcript is not a send failure - the video still
+            # arrived, and the title must say so - but a transcript that failed
+            # to upload is, and then "and sent" would be a lie.
+            sent_all = bool(destination)
+            # The finally below writes the closing message. Without this it also
+            # overwrote the send-failure one with "Recording saved and sent" -
+            # a failed upload reported as a success, which is the single worst
+            # thing this flow can say.
+            reported = False
+            try:
+                # The video goes FIRST and on its own. Waiting for Whisper before
+                # sending anything is what made the whole finish feel slow, and
+                # the clip is the part that is actually wanted at the far end.
+                if destination:
+                    ok, message = screenrec.send([video], destination)
+                    if not ok:
+                        # Never delete on failure, and never claim it arrived.
+                        reported = True
+                        self._screenrec_ui.update(
+                            phase="done", title="Recording saved (not sent)",
+                            subtitle=f"{recording.stem} · send failed: {message}"[:120])
+                        return
+
+                transcript = self._transcribe_recording(recording)
+                note = "" if transcript is not None else " · no transcript (check the mic)"
+                if transcript is not None and not Path(transcript).exists():
+                    # Returned a path to a file that is not there. Say the
+                    # friendly thing rather than letting scp fail on it.
+                    transcript, note = None, " · no transcript (check the mic)"
+                self._finished_transcript = transcript
+                if transcript is not None and destination:
+                    ok, message = screenrec.send([transcript], destination)
+                    if not ok:
+                        sent_all = False
+                        note = f" · transcript not sent: {message}"
+
+                # Deleting is LAST, and only once everything that was going to
+                # be sent has been. The Play and Open buttons on the pill point
+                # at this file, so removing it earlier would leave the user
+                # pressing buttons that open nothing.
+                # Gated on the SEND, not on the note. "no transcript" is a
+                # note but not a delivery failure - the video did arrive - and
+                # keying the cleanup off any note at all meant a clip with no
+                # narration was never tidied up, however keep_local was set.
+                if sent_all and not self.cfg.screenrec_keep_local:
+                    for path in [video, recording.transcript_path, recording.audio_path]:
+                        if path is None:
+                            continue     # a recording that produced no transcript
+                        try:
+                            Path(path).unlink()
+                        except (OSError, TypeError, ValueError):
+                            pass         # TypeError is not an OSError, and it
+                                         # used to abort the whole loop
+                    self._finished_recording = None
+                    self._finished_transcript = None
+            except Exception:
+                log.exception("screenrec: background finish failed")
+                note = " · finishing failed, the clip is safe on disk"
+            finally:
+                try:
+                    if not reported and self._screenrec_ui.snapshot().get("phase") == "done":
+                        # "and sent" only when everything that was going to be
+                        # sent actually was. Saying it beside "finishing failed"
+                        # is two answers to one question.
+                        self._screenrec_ui.update(
+                            phase="done",
+                            title="Recording saved" + (" and sent" if sent_all else ""),
+                            subtitle=" · ".join(
+                                part for part in (recording.stem, note.lstrip(" ·").strip())
+                                if part
+                            )[:120],
+                        )
+                except Exception:
+                    # The window can be gone by now (quit mid-transcribe). This
+                    # is a daemon thread, so an escape here dies unseen.
+                    log.exception("screenrec: could not write the closing message")
+
+        threading.Thread(target=work, name="screenrec-deliver", daemon=True).start()
+
+    def _send_finished_recording(self) -> None:
+        """The Send button. Re-sends on demand, and is the only route when no
+        destination is configured — in which case say that, rather than
+        silently doing nothing."""
+        from . import screenrec
+
+        video = self._finished_recording
+        destination = (self.cfg.screenrec_destination or "").strip()
+        if self._sending_recording:
+            return                    # a second click is impatience, not a
+                                      # request for a second parallel upload
+        if video is None or not Path(video).exists():
+            self._screenrec_ui.update(phase="done", title="Nothing to send",
+                                      subtitle="the clip is no longer on disk")
+            return
+        if not destination:
+            self._screenrec_ui.update(
+                phase="done", title="No destination set",
+                subtitle="Settings › Recordings › where to send clips")
+            return
+
+        def work():
+            try:
+                files = [Path(video)]
+                transcript = self._finished_transcript
+                if transcript is not None and Path(transcript).exists():
+                    files.append(Path(transcript))
+                ok, message = screenrec.send(files, destination)
+                self._screenrec_ui.update(
+                    phase="done",
+                    title="Sent" if ok else "Send failed",
+                    subtitle=(Path(video).stem if ok else message)[:120],
+                )
+            except Exception as exc:
+                log.exception("screenrec: send failed")
+                self._screenrec_ui.update(phase="done", title="Send failed",
+                                          subtitle=str(exc)[:120])
+            finally:
+                self._sending_recording = False
+
+        self._sending_recording = True
+        self._screenrec_ui.update(phase="done", title="Sending\u2026",
+                                  subtitle=Path(video).stem)
+        threading.Thread(target=work, name="screenrec-send", daemon=True).start()
 
     def _handoff_recording(self, video, stem: str) -> None:
         """Clipboard, then the Recordings tab open on this clip.
@@ -1500,8 +1667,23 @@ class App:
             pass
         # If the version changed since last run, we were just updated -> tell the user.
         from . import __version__ as _ver
-        if self.cfg.last_version and self.cfg.last_version != _ver:
-            self._notify(f"Updated to Pipevoice {_ver}. Tray menu, About, to see what's new.")
+        # Did WE just install this? The installer relaunches with
+        # /RESTARTAPPLICATIONS, which brings the app back the way it was - a
+        # tray icon, nothing open - so an update the user asked for finished
+        # with no window and no way to see what changed. Land on About instead.
+        # Gated on the marker, not on the version alone: a hand reinstall or a
+        # restored backup also changes the version, and a tray app that starts
+        # at boot must not open a window uninvited.
+        try:
+            from . import updater as _upd
+            if _upd.take_pending(_ver):
+                self.open_settings(tab="About")
+            elif self.cfg.last_version and self.cfg.last_version != _ver:
+                self._notify(f"Updated to Pipevoice {_ver}. Tray menu, About, to see what's new.")
+        except Exception:
+            log.exception("post-update About failed")
+            if self.cfg.last_version and self.cfg.last_version != _ver:
+                self._notify(f"Updated to Pipevoice {_ver}. Tray menu, About, to see what's new.")
         if self.cfg.last_version != _ver:
             self.cfg.last_version = _ver
             try:
