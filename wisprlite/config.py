@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 import sys
 from dataclasses import asdict, dataclass, field
@@ -267,7 +268,12 @@ class Config:
             self.starter_vocab_seeded = True
             return True
         except Exception:
-            return False    # a bad starter list must never stop the app loading
+            # Never stop the app loading over a word list. But log it: a broken
+            # starter_vocab retries on EVERY launch, and swallowed silently that
+            # is a permanent no-op nobody can diagnose.
+            logging.getLogger("wisprlite").warning(
+                "starter vocabulary could not be applied", exc_info=True)
+            return False
 
     def save(self) -> None:
         try:

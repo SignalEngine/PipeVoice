@@ -78,6 +78,10 @@ def merge_into(vocabulary: str, replacements: dict) -> tuple[str, dict]:
     replacing is what makes this safe to apply to an existing install.
     """
     existing = [t.strip() for t in (vocabulary or "").split(",") if t.strip()]
+    # Case-INSENSITIVE, so a user who typed "github" keeps their own casing and
+    # does not also get "GitHub" from TERMS. Deliberate: two spellings of one word
+    # in the bias prompt is worse than one imperfect spelling, and the user's
+    # choice wins everywhere else in this function too.
     lowered = {t.lower() for t in existing}
     merged = existing + [t for t in TERMS if t.lower() not in lowered]
 
