@@ -4,7 +4,14 @@
 ; Produces installer\Output\Pipevoice-Setup.exe — a per-user install (no admin).
 
 #define AppName "Pipevoice"
-#define AppVersion "2.25.0"
+; Overridden by CI: ISCC /DAppVersion=<version read from wisprlite/__init__.py>.
+; The literal below is only a local-build fallback. It was the ONLY value for a
+; long time, so every installer from 2.25.0 onward reported 2.25.0 in Add/Remove
+; Programs no matter what version it actually contained - which also means winget
+; could never tell an upgrade was needed.
+#ifndef AppVersion
+  #define AppVersion "0.0.0-dev"
+#endif
 #define AppExe "Pipevoice.exe"
 
 [Setup]

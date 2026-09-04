@@ -90,7 +90,16 @@ jobs:
         run: choco install innosetup --no-progress -y
 
       - name: Build installer
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\Pipevoice.iss'
+        shell: pwsh
+        run: |
+          # Version comes from the SOURCE, not from a literal in the .iss. That
+          # literal was last updated at 2.25.0, so every installer since then
+          # reported 2.25.0 in Add/Remove Programs whatever it actually was.
+          $v = (Select-String -Path wisprlite/__init__.py -Pattern '__version__\s*=\s*[\"''](.+?)[\"'']').Matches[0].Groups[1].Value
+          if (-not $v) { Write-Error "could not read __version__ from wisprlite/__init__.py"; exit 1 }
+          Write-Host "Building installer for version $v"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" installer\Pipevoice.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Compute SHA-256
         shell: pwsh
