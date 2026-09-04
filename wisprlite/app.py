@@ -1500,8 +1500,23 @@ class App:
             pass
         # If the version changed since last run, we were just updated -> tell the user.
         from . import __version__ as _ver
-        if self.cfg.last_version and self.cfg.last_version != _ver:
-            self._notify(f"Updated to Pipevoice {_ver}. Tray menu, About, to see what's new.")
+        # Did WE just install this? The installer relaunches with
+        # /RESTARTAPPLICATIONS, which brings the app back the way it was - a
+        # tray icon, nothing open - so an update the user asked for finished
+        # with no window and no way to see what changed. Land on About instead.
+        # Gated on the marker, not on the version alone: a hand reinstall or a
+        # restored backup also changes the version, and a tray app that starts
+        # at boot must not open a window uninvited.
+        try:
+            from . import updater as _upd
+            if _upd.take_pending(_ver):
+                self.open_settings(tab="About")
+            elif self.cfg.last_version and self.cfg.last_version != _ver:
+                self._notify(f"Updated to Pipevoice {_ver}. Tray menu, About, to see what's new.")
+        except Exception:
+            log.exception("post-update About failed")
+            if self.cfg.last_version and self.cfg.last_version != _ver:
+                self._notify(f"Updated to Pipevoice {_ver}. Tray menu, About, to see what's new.")
         if self.cfg.last_version != _ver:
             self.cfg.last_version = _ver
             try:
