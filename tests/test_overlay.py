@@ -310,3 +310,28 @@ def test_the_pill_actually_uses_the_drag_binding():
         "a raw <Button-1> binding on the pill toggles the meeting on the press "
         "that starts a drag"
     )
+
+
+def test_a_fourth_done_button_still_fits_inside_the_pill():
+    """The width was a fixed 108px. A fourth button measured 456px inside a
+    380px pill, so two would have been drawn off the edge — and the hit test
+    would still have claimed they were there."""
+    from wisprlite.overlay import Overlay, WIN_W
+
+    ov = Overlay.__new__(Overlay)   # geometry reads class attributes only
+    boxes = [ov._done_button_box(i) for i in range(len(Overlay.SCREENREC_DONE))]
+    assert boxes[0][0] >= 0, f"the first button starts off the left edge: {boxes[0]}"
+    assert boxes[-1][2] <= WIN_W, f"the last button runs off the right edge: {boxes[-1]}"
+    for left, right in zip(boxes, boxes[1:]):
+        assert left[2] <= right[0], "the buttons overlap"
+
+
+def test_every_done_button_is_reachable_by_a_click():
+    """A button drawn but not hit-testable is worse than no button."""
+    from wisprlite.overlay import Overlay
+
+    ov = Overlay.__new__(Overlay)
+    for index, (action, _label) in enumerate(Overlay.SCREENREC_DONE):
+        x1, y1, x2, y2 = ov._done_button_box(index)
+        hit = ov._screenrec_hit((x1 + x2) // 2, (y1 + y2) // 2, "done")
+        assert hit == action, f"clicking the {action!r} button returned {hit!r}"

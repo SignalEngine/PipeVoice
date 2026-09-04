@@ -614,6 +614,9 @@ class App:
         if action in ("save", "skip"):
             self._screenrec_ui.answer_name(value if action == "save" else "")
             return
+        if action == "send":
+            self._send_finished_recording()
+            return
         if action in ("play", "copy", "open"):
             self._screenrec_done_action(action)
             return
@@ -733,6 +736,15 @@ class App:
             if typed:
                 recording.rename(screenrec.stamped_stem(recording.stem, typed))
                 video = recording.video_path
+            # An agent is BLOCKED on the transcript, so that one path still
+            # waits for it. A person is not: they recorded a clip and want to
+            # watch or send it, and Whisper over a two-minute video kept them
+            # staring at "Writing down what you said..." before a single button
+            # appeared. For them the buttons come first and the text follows.
+            if self._screenrec_agent is None:
+                self._hand_over_then_transcribe(recording, video)
+                return
+
             files = [video]
             self._screenrec_ui.update(phase="working", status="Writing down what you said\u2026")
             transcript = self._transcribe_recording(recording)
@@ -812,6 +824,113 @@ class App:
                     "error": "; ".join(recording.errors[:2]) or "the recording produced no file",
                 }
                 waiter.set()
+
+    def _hand_over_then_transcribe(self, recording, video) -> None:
+        """Show the finished clip NOW; transcribe and deliver behind it.
+
+        Everything here is best-effort and must never take the clip down with
+        it: the file is already muxed and on disk by the time this runs.
+        """
+        self._finished_recording = video
+        try:
+            copy_clipboard(str(video))
+        except Exception as exc:
+            log.info("screenrec: could not copy the path: %s", exc)
+
+        destination = (self.cfg.screenrec_destination or "").strip()
+        self._screenrec_ui.update(
+            phase="done",
+            title="Recording saved",
+            subtitle=(recording.stem + " · transcribing…").strip(),
+        )
+
+        def work():
+            from . import screenrec
+
+            note = ""
+            # The finally below writes the closing message. Without this it also
+            # overwrote the send-failure one with "Recording saved and sent" -
+            # a failed upload reported as a success, which is the single worst
+            # thing this flow can say.
+            reported = False
+            try:
+                # The video goes FIRST and on its own. Waiting for Whisper before
+                # sending anything is what made the whole finish feel slow, and
+                # the clip is the part that is actually wanted at the far end.
+                if destination:
+                    ok, message = screenrec.send([video], destination)
+                    if not ok:
+                        # Never delete on failure, and never claim it arrived.
+                        reported = True
+                        self._screenrec_ui.update(
+                            phase="done", title="Recording saved (not sent)",
+                            subtitle=f"{recording.stem} · send failed: {message}"[:120])
+                        return
+
+                transcript = self._transcribe_recording(recording)
+                note = "" if transcript is not None else " · no transcript (check the mic)"
+                if transcript is not None and destination:
+                    ok, message = screenrec.send([transcript], destination)
+                    if not ok:
+                        note = f" · transcript not sent: {message}"
+
+                # Deleting is LAST, and only once everything that was going to
+                # be sent has been. The Play and Open buttons on the pill point
+                # at this file, so removing it earlier would leave the user
+                # pressing buttons that open nothing.
+                if destination and not self.cfg.screenrec_keep_local and not note:
+                    for path in [video, recording.transcript_path, recording.audio_path]:
+                        try:
+                            Path(path).unlink()
+                        except OSError:
+                            pass
+                    self._finished_recording = None
+            except Exception:
+                log.exception("screenrec: background finish failed")
+                note = " · finishing failed, the clip is safe on disk"
+            finally:
+                if not reported and self._screenrec_ui.snapshot().get("phase") == "done":
+                    self._screenrec_ui.update(
+                        phase="done",
+                        title="Recording saved" + (" and sent" if destination else ""),
+                        subtitle=(recording.stem + note).strip()[:120],
+                    )
+
+        threading.Thread(target=work, name="screenrec-deliver", daemon=True).start()
+
+    def _send_finished_recording(self) -> None:
+        """The Send button. Re-sends on demand, and is the only route when no
+        destination is configured — in which case say that, rather than
+        silently doing nothing."""
+        from . import screenrec
+
+        video = self._finished_recording
+        destination = (self.cfg.screenrec_destination or "").strip()
+        if video is None or not Path(video).exists():
+            self._screenrec_ui.update(phase="done", title="Nothing to send",
+                                      subtitle="the clip is no longer on disk")
+            return
+        if not destination:
+            self._screenrec_ui.update(
+                phase="done", title="No destination set",
+                subtitle="Settings › Recordings › where to send clips")
+            return
+
+        def work():
+            files = [Path(video)]
+            transcript = Path(video).with_suffix(".txt")
+            if transcript.exists():
+                files.append(transcript)
+            ok, message = screenrec.send(files, destination)
+            self._screenrec_ui.update(
+                phase="done",
+                title="Sent" if ok else "Send failed",
+                subtitle=(Path(video).stem if ok else message)[:120],
+            )
+
+        self._screenrec_ui.update(phase="done", title="Sending\u2026",
+                                  subtitle=Path(video).stem)
+        threading.Thread(target=work, name="screenrec-send", daemon=True).start()
 
     def _handoff_recording(self, video, stem: str) -> None:
         """Clipboard, then the Recordings tab open on this clip.

@@ -600,15 +600,28 @@ class Overlay:
     SCREENREC_BUTTON_R = 15
     # The finished-recording row: three named actions, because glyphs alone do
     # not say "open PipeVoice".
-    SCREENREC_DONE = (("play", "Play"), ("copy", "Copy path"), ("open", "Open"))
-    DONE_BTN_W, DONE_BTN_H, DONE_BTN_Y = 108, 30, 62
+    SCREENREC_DONE = (("play", "Play"), ("send", "Send"),
+                      ("copy", "Copy path"), ("open", "Open"))
+    DONE_BTN_H, DONE_BTN_Y = 30, 62
+    DONE_GAP, DONE_EDGE = 8, 8
     SCREENREC_H = {"recording": WIN_H, "naming": 88, "working": WIN_H, "done": 100}
 
+    @classmethod
+    def _done_button_w(cls):
+        # Derived from the count, never a constant. A fourth button at the old
+        # fixed 108px measured 456px inside a 380px pill, so two of them would
+        # have been drawn off the edge - and the hit test would still have
+        # claimed they were there.
+        count = len(cls.SCREENREC_DONE)
+        gaps = (count - 1) * cls.DONE_GAP
+        return max(48, (WIN_W - 2 * cls.DONE_EDGE - gaps) // count)
+
     def _done_button_box(self, index: int):
-        gap = 8
-        total = len(self.SCREENREC_DONE) * self.DONE_BTN_W + (len(self.SCREENREC_DONE) - 1) * gap
-        x1 = (WIN_W - total) // 2 + index * (self.DONE_BTN_W + gap)
-        return x1, self.DONE_BTN_Y, x1 + self.DONE_BTN_W, self.DONE_BTN_Y + self.DONE_BTN_H
+        width = self._done_button_w()
+        count = len(self.SCREENREC_DONE)
+        total = count * width + (count - 1) * self.DONE_GAP
+        x1 = (WIN_W - total) // 2 + index * (width + self.DONE_GAP)
+        return x1, self.DONE_BTN_Y, x1 + width, self.DONE_BTN_Y + self.DONE_BTN_H
 
     def _screenrec_hit(self, x, y, phase: str = "recording") -> str:
         """Which control a click at (x, y) landed on, or "" for the pill body."""

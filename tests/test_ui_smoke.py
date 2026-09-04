@@ -1001,23 +1001,119 @@ def test_a_failed_send_does_not_strand_the_pill_on_a_progress_bar():
     app._screenrec = recording
     app._transcribe_recording = mock.Mock(return_value=None)
 
+    recording.transcript_path = pathlib.Path("/out/clip.txt")
+    app.cfg.screenrec_destination = "user@host:/inbox"
+    app.cfg.screenrec_keep_local = True
+
     with mock.patch.object(App, "_ask_name_in_pill", return_value=""), \
-         mock.patch.object(screenrec, "send", return_value=(False, "connection refused")):
+         mock.patch.object(screenrec, "send", return_value=(False, "connection refused")), \
+         mock.patch("wisprlite.app.copy_clipboard"):
         App._finish_screen_recording(app)
+        _join_screenrec_threads()
 
-    assert app._screenrec_ui.snapshot()["phase"] == "recording", \
-        "a failed send left the pill mid-flight"
-    assert app.overlay.hide.called, "the pill must be put away, not left up"
-    assert app._fail.called, "and the failure must still be reported"
+    # The clip is muxed and on disk BEFORE the send is attempted, so a failed
+    # send must not take the buttons away with it - the user still wants to
+    # play it, open it, and press Send again. What must never happen is the
+    # pill left on a sweeping progress bar, which is what this test is for.
+    snap = app._screenrec_ui.snapshot()
+    assert snap["phase"] == "done", "a failed send left the pill mid-flight"
+    assert "connection refused" in (snap.get("subtitle") or ""), \
+        "a failed send must say so, not look like success"
+    assert "not sent" in (snap.get("title") or "").lower(), \
+        f"the title must not claim it was sent: {snap.get('title')!r}"
 
-    # An exception anywhere in the flow must land the same way.
+    # An exception anywhere in the background half must land the same way, and
+    # must never leave the pill on the progress bar either.
     app2 = _agent_app()
     app2._screenrec_agent = None
     app2._screenrec = recording
+    app2.cfg.screenrec_destination = ""
     app2._transcribe_recording = mock.Mock(side_effect=RuntimeError("boom"))
-    with mock.patch.object(App, "_ask_name_in_pill", return_value=""):
+    with mock.patch.object(App, "_ask_name_in_pill", return_value=""), \
+         mock.patch("wisprlite.app.copy_clipboard"):
         App._finish_screen_recording(app2)
-    assert app2._screenrec_ui.snapshot()["phase"] == "recording"
+        _join_screenrec_threads()
+    assert app2._screenrec_ui.snapshot()["phase"] == "done"
+    assert "failed" in (app2._screenrec_ui.snapshot().get("subtitle") or "").lower()
+
+
+def _join_screenrec_threads(timeout=5.0):
+    """The delivery half runs on its own thread now, so a test that asserts on
+    the outcome has to wait for it rather than racing it."""
+    import threading
+    for t in threading.enumerate():
+        if t.name in ("screenrec-deliver", "screenrec-send"):
+            t.join(timeout)
+
+
+def test_the_buttons_appear_before_the_transcription_not_after():
+    """James, 2026-09-04: "it's stuck on transcribing what I just said. Then I
+    have to wait for ages." Whisper over a two-minute clip ran BEFORE the pill
+    ever reached "done", so no button existed until it finished."""
+    import threading
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import screenrec
+
+    app = _agent_app()
+    app._screenrec_agent = None
+    app.cfg.screenrec_destination = ""
+    recording = mock.Mock()
+    recording.errors = []
+    recording.stem = "2026-09-04 19-02-11"
+    recording.stop.return_value = pathlib.Path("/out/clip.mp4")
+    recording.audio_path = pathlib.Path("/out/clip.wav")
+    recording.transcript_path = pathlib.Path("/out/clip.txt")
+    app._screenrec = recording
+
+    phase_when_transcription_started = {}
+    started = threading.Event()
+
+    def slow_transcribe(_rec):
+        phase_when_transcription_started["phase"] = app._screenrec_ui.snapshot()["phase"]
+        started.set()
+        return None
+
+    app._transcribe_recording = slow_transcribe
+    with mock.patch.object(App, "_ask_name_in_pill", return_value=""), \
+         mock.patch("wisprlite.app.copy_clipboard"):
+        App._finish_screen_recording(app)
+        assert started.wait(5), "the transcription never ran"
+        _join_screenrec_threads()
+
+    assert phase_when_transcription_started["phase"] == "done", (
+        "the pill was still on the progress bar when transcription began — "
+        "the buttons must be up first"
+    )
+
+
+def test_an_agent_still_waits_for_the_transcript():
+    import threading
+    """An agent is BLOCKED on the text; handing it a clip with an empty
+    transcript because we went async would break the thing it asked for."""
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = _agent_app()
+    waiter = threading.Event()
+    app._screenrec_agent = waiter
+    app.cfg.screenrec_destination = ""
+    recording = mock.Mock()
+    recording.errors = []
+    recording.stem = "2026-09-04 19-02-11"
+    recording.stop.return_value = pathlib.Path("/out/clip.mp4")
+    recording.audio_path = pathlib.Path("/out/clip.wav")
+    recording.transcript_path = pathlib.Path("/out/clip.txt")
+    app._screenrec = recording
+    app._transcribe_recording = mock.Mock(return_value=pathlib.Path("/out/clip.txt"))
+    app._read_text = mock.Mock(return_value="what I said")
+
+    with mock.patch("wisprlite.app.copy_clipboard"):
+        App._finish_screen_recording(app)
+
+    assert waiter.is_set(), "the agent was never released"
+    assert app._screenrec_agent_result["transcript"] == "what I said", \
+        "the agent must still get the transcript, not an empty one"
 
 
 def test_a_failed_paste_still_leaves_the_words_in_history_and_on_the_clipboard():
