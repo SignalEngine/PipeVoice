@@ -86,3 +86,20 @@ def test_the_winget_manifest_hash_and_url_name_the_same_release():
     assert sha, "InstallerSha256 is missing or not a 64-char hex digest"
     assert sha.group(1).isupper() or not sha.group(1).isalpha(), \
         "winget expects the SHA-256 uppercase"
+
+
+def test_the_winrt_gate_waits_for_the_gui_exe():
+    """`& $exe` does not wait for a --noconsole binary, so $LASTEXITCODE is
+    EMPTY and the gate fails for a PowerShell reason rather than a WinRT one.
+    The MCP smoke test in the same file already used Start-Process -PassThru;
+    this one has to as well."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    step = text[text.index("Self-test WinRT"):]
+    step = step[:step.index("- name:", 10)] if "- name:" in step[10:] else step
+    # Comments explain WHY $LASTEXITCODE is wrong here, so assert on the code.
+    code = "\n".join(l for l in step.splitlines() if not l.strip().startswith("#"))
+
+    assert "Start-Process" in code and "-Wait" in code and "-PassThru" in code, \
+        "the WinRT gate does not wait for the exe, so its exit code is meaningless"
+    assert "$LASTEXITCODE" not in code, \
+        "$LASTEXITCODE is empty for a GUI-subsystem exe launched with &"

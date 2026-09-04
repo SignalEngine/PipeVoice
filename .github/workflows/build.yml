@@ -96,18 +96,24 @@ jobs:
         shell: pwsh
         run: |
           $exe = "dist/Pipevoice/Pipevoice.exe"
-          # The exe is built --noconsole, so its stdout does not reach this log.
-          # Have it write the verdict to a file and print that, or a failure here
-          # is a red build with no reason attached.
+          # Start-Process -Wait -PassThru, exactly like the MCP smoke test above.
+          # `& $exe` does NOT work here: the exe is a GUI-subsystem binary
+          # (--noconsole), so PowerShell launches it and moves on without
+          # waiting, leaving $LASTEXITCODE EMPTY. The first two runs of this
+          # gate failed for that reason and were misread as a WinRT failure.
           $env:PV_SELFTEST_OUT = "$PWD\winrt-selftest.txt"
-          & $exe --winrt-selftest
-          $code = $LASTEXITCODE
-          if (Test-Path $env:PV_SELFTEST_OUT) {
-            Write-Host "winrt self-test: $(Get-Content $env:PV_SELFTEST_OUT -Raw)"
-          } else {
-            Write-Host "winrt self-test wrote no result file (exit $code)"
-          }
-          if ($code -ne 0) {
+          $p = Start-Process $exe -ArgumentList '--winrt-selftest' `
+                 -RedirectStandardOutput winrt_out.txt `
+                 -RedirectStandardError winrt_err.txt `
+                 -Wait -PassThru -WindowStyle Hidden
+          $verdict = Get-Content $env:PV_SELFTEST_OUT -Raw -ErrorAction SilentlyContinue
+          $out = Get-Content winrt_out.txt -Raw -ErrorAction SilentlyContinue
+          $err = Get-Content winrt_err.txt -Raw -ErrorAction SilentlyContinue
+          Write-Host "winrt self-test exit: $($p.ExitCode)"
+          if ($verdict) { Write-Host "verdict: $verdict" }
+          if ($out) { Write-Host "stdout:`n$out" }
+          if ($err) { Write-Host "stderr:`n$err" }
+          if ($p.ExitCode -ne 0) {
             Write-Host "Read Aloud would silently do nothing in this build."
             exit 1
           }
