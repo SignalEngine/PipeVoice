@@ -18,6 +18,9 @@ ACCENT = "#e06c75"
 
 STYLES = [("tidy", "Tidy — clean up"),
           ("prompt", "Prompt — reshuffle into coherent text"),
+          ("email", "Email — greeting, body, sign-off"),
+          ("code_comment", "Code comment — wrapped in comment syntax"),
+          ("meeting_actions", "Meeting actions — bullet the action items"),
           ("custom", "Custom…")]
 ENGINES = [("", "(leave as-is)"), ("gemini", "Gemini"), ("groq", "Groq"),
            ("deepgram", "Deepgram"), ("local", "Local")]

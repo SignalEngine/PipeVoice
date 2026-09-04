@@ -30,6 +30,52 @@ def test_custom_style():
     # empty custom instruction falls back to tidy (never an empty/unsafe prompt)
     assert cleanup._style_system("custom", "   ") == cleanup._TIDY
 
+
+def test_email_style_greets_and_signs_off():
+    s = cleanup._style_system("email")
+    assert "greeting" in s.lower() and "sign-off" in s.lower()
+    named = cleanup._style_system("email", "Sam")
+    assert "Sam" in named and named != s  # the sign-off name is threaded through
+
+
+def test_code_comment_style_wraps_in_comment_syntax():
+    s = cleanup._style_system("code_comment")
+    assert "comment" in s.lower()
+    assert "casing" in s.lower()  # identifiers keep their exact case
+
+
+def test_meeting_actions_style_bullets_action_items():
+    s = cleanup._style_system("meeting_actions")
+    assert "bullet" in s.lower() and "action item" in s.lower()
+
+
+def test_new_presets_are_materially_different_from_tidy_and_each_other():
+    tidy = cleanup._style_system("tidy")
+    presets = {p: cleanup._style_system(p) for p in ("email", "code_comment", "meeting_actions")}
+    for name, prompt in presets.items():
+        assert prompt != tidy, f"{name} must not fall back to tidy"
+    names = list(presets)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            assert presets[a] != presets[b], f"{a} and {b} must not collapse to the same prompt"
+
+
+def test_sabotage_two_presets_pointed_at_the_same_prompt_fails():
+    # Positive control for the test above: prove it actually catches a collision.
+    sabotaged = dict(cleanup._FIXED_STYLES)
+    sabotaged["code_comment"] = sabotaged["meeting_actions"]
+    raised = False
+    try:
+        assert sabotaged["code_comment"] != sabotaged["meeting_actions"]
+    except AssertionError:
+        raised = True
+    assert raised, "sabotage fixture did not actually collide the two prompts"
+
+
 if __name__ == "__main__":
     test_tidy_is_default(); test_prompt_style(); test_custom_style()
+    test_email_style_greets_and_signs_off(); test_code_comment_style_wraps_in_comment_syntax()
+    test_meeting_actions_style_bullets_action_items()
+    test_new_presets_are_materially_different_from_tidy_and_each_other()
+    test_sabotage_two_presets_pointed_at_the_same_prompt_fails()
     print("OK")

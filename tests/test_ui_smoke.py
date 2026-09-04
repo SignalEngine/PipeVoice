@@ -191,6 +191,74 @@ def test_meetings_tab_opens_with_an_untranscribed_recording():
             meetings_tab.meetings_dir = original
 
 
+def test_fix_this_from_history_prefills_the_word_fixes_editor():
+    # Building the History tab is not exercising it: "Fix this" must actually
+    # switch to Settings and hand the misheard text to the word-fixes editor,
+    # not just render a button that does nothing when clicked.
+    _skip_if_headless()
+    import os
+    import tkinter as tk
+
+    from wisprlite import history, settings
+
+    real_load = history.load
+    history.load = lambda limit=50: [{"ts": 0, "text": "I saw Dave today", "kind": "typed"}]
+    real_pv_tab = os.environ.get("PV_TAB")
+    os.environ["PV_TAB"] = "History"
+    captured = {}
+    real_mainloop = tk.Misc.mainloop
+
+    def drive(self, _n=0):
+        self.update_idletasks()
+        self.update()
+        fix_buttons = []
+
+        def walk(widget):
+            for child in widget.winfo_children():
+                try:
+                    text = str(child.cget("text"))
+                except (tk.TclError, AttributeError):
+                    text = ""
+                if child.winfo_class() == "TButton" and text == "Fix this":
+                    fix_buttons.append(child)
+                walk(child)
+
+        walk(self)
+        captured["found"] = bool(fix_buttons)
+        if fix_buttons:
+            fix_buttons[0].invoke()
+            self.update_idletasks()
+            self.update()
+
+            entries = []
+
+            def walk2(widget):
+                for child in widget.winfo_children():
+                    if child.winfo_class() == "TEntry":
+                        entries.append(child)
+                    walk2(child)
+
+            walk2(self)
+            captured["values"] = [e.get() for e in entries]
+        self.destroy()
+
+    tk.Misc.mainloop = drive
+    try:
+        settings.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+        history.load = real_load
+        if real_pv_tab is None:
+            os.environ.pop("PV_TAB", None)
+        else:
+            os.environ["PV_TAB"] = real_pv_tab
+
+    assert captured.get("found"), "the Fix this button was not rendered on a history row"
+    assert "I saw Dave today" in captured.get("values", []), (
+        "clicking Fix this must prefill the word-fixes wrong-side entry"
+    )
+
+
 def test_first_run_opens_the_guide_maximised():
     # A new install landed on the Settings form, because first_run only changed
     # the window TITLE. Someone who has just installed this needs "how do I use

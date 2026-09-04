@@ -110,10 +110,13 @@ def _wheel_global(canvas):
     canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
 
-def build(container, root, wheel=None) -> None:
+def build(container, root, wheel=None, on_fix_word=None) -> None:
     """Populate `container` with the dictation-history list + Clear control. Used
     both as the standalone --history window and as the History tab in Settings.
-    `root` is the toplevel (for thread-safe .after); `wheel` scopes the mousewheel."""
+    `root` is the toplevel (for thread-safe .after); `wheel` scopes the mousewheel.
+    `on_fix_word(text)`, when given, adds a "Fix this" button per row that hands
+    the misheard text to the caller (Settings wires it to the Word fixes editor).
+    """
     import tkinter as tk
     from tkinter import ttk
 
@@ -168,6 +171,9 @@ def build(container, root, wheel=None) -> None:
         btn = ttk.Button(top, text="Copy")
         btn.pack(side="right")
         btn.config(command=lambda t=e.get("text", ""), b=btn: copy_row(t, b))
+        if on_fix_word is not None:
+            ttk.Button(top, text="Fix this",
+                       command=lambda t=e.get("text", ""): on_fix_word(t)).pack(side="right", padx=(0, 6))
         tk.Label(card, text=e.get("text", ""), bg=CARD, fg=FG, font=("Segoe UI", 10),
                  anchor="w", justify="left", wraplength=460).pack(fill="x", pady=(6, 0))
 
