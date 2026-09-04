@@ -1,6 +1,12 @@
 """Entry point for `python launch.py` and for PyInstaller builds.
 
 Pass --settings to open the settings window instead of the app.
+
+THIS is what PyInstaller freezes - not wisprlite/__main__.py, which exists for
+`python -m wisprlite`. The two dispatch tables must list the same flags: a flag
+added only to __main__.py works when run from source and silently falls through
+to the tray app in the shipped exe, which then never exits. That cost five red
+builds misread as a WinRT failure. tests/test_entrypoints.py pins them together.
 """
 
 import sys
@@ -23,6 +29,8 @@ elif "--mcp" in sys.argv:
     from wisprlite.mcp_shim import main
 elif "--feedback" in sys.argv:
     from wisprlite.feedback import main
+elif "--winrt-selftest" in sys.argv:
+    from wisprlite.readaloud import main
 else:
     from wisprlite.app import main
 
