@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: Powleads.PipeVoice
+PackageVersion: 2.43.1
+InstallerType: inno
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+# Matches AppId in installer/Pipevoice.iss. This is what winget uses to detect an
+# existing install; the _is1 suffix is Inno Setup's own uninstall-key convention.
+ProductCode: '{41C3C77C-2125-40AF-AE40-5AAC67809491}_is1'
+ReleaseDate: 2026-09-04
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/SignalEngine/PipeVoice/releases/download/v2.43.1/Pipevoice-Setup.exe
+    InstallerSha256: 0F60C2844803A7B5503269BE0F6ACE3B7AEF29B4C93E3BD8B82770A47A874F0E
+ManifestType: installer
+ManifestVersion: 1.6.0
