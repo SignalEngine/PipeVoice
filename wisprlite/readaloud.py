@@ -98,20 +98,42 @@ def winrt_available() -> bool:
         return False
 
 
-def winrt_selftest() -> tuple[bool, str]:
+def winrt_selftest(progress: Optional[Callable[[str], None]] = None) -> tuple[bool, str]:
     """Activate both WinRT namespaces used here from a FROZEN build and report
     PASS/FAIL. This is spike 1, made permanent as a CI gate (`--winrt-selftest`):
-    a broken PyInstaller bundle then fails the build instead of shipping."""
+    a broken PyInstaller bundle then fails the build instead of shipping.
+
+    `progress` is called with a marker before EACH step. The first real run of
+    this gate did not crash - it HUNG, with no stdout, no stderr and no verdict,
+    so there was no way to tell whether the import, the OCR activation or the
+    voice enumeration was the thing that blocked. A hang has to leave a trail or
+    it is unfalsifiable.
+    """
+    def step(name: str) -> None:
+        if progress is not None:
+            try:
+                progress(name)
+            except Exception:
+                pass    # instrumentation must never change the verdict
+
+    step("start")
     try:
+        step("import-ocr")
         from winrt.windows.media.ocr import OcrEngine
+        step("import-speech")
         from winrt.windows.media.speechsynthesis import SpeechSynthesizer
     except Exception as exc:
         return False, f"FAIL: winrt import: {type(exc).__name__}: {exc}"
+
     try:
+        step("create-ocr-engine")
         engine = OcrEngine.try_create_from_user_profile_languages()
+        step("list-voices")
         voices = list(SpeechSynthesizer.all_voices)
+        step("done")
     except Exception as exc:
         return False, f"FAIL: winrt activation: {type(exc).__name__}: {exc}"
+
     if engine is None:
         return False, "FAIL: no OCR engine for this profile's languages"
     if not voices:
@@ -357,13 +379,29 @@ def main() -> None:
     import os
     import sys
 
-    ok, message = winrt_selftest()
-    print(message)
     out = os.environ.get("PV_SELFTEST_OUT")
+    handle = None
     if out:
         try:
-            with open(out, "w", encoding="utf-8") as f:
-                f.write(message + "\n")
+            handle = open(out, "w", encoding="utf-8", buffering=1)
+        except Exception as exc:
+            print(f"(could not open {out}: {exc})")
+
+    def progress(marker: str) -> None:
+        # Flushed per line: on a HANG the file is the only evidence there is,
+        # and a buffered write would be lost when the process is killed.
+        if handle is not None:
+            handle.write(f"step: {marker}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    ok, message = winrt_selftest(progress=progress)
+    print(message)
+    if handle is not None:
+        try:
+            handle.write(message + "\n")
+            handle.flush()
+            handle.close()
         except Exception as exc:      # never let reporting change the verdict
             print(f"(could not write {out}: {exc})")
     sys.exit(0 if ok else 1)

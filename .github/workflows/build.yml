@@ -120,7 +120,13 @@ jobs:
           $verdict = Get-Content $env:PV_SELFTEST_OUT -Raw -ErrorAction SilentlyContinue
           $out = Get-Content winrt_out.txt -Raw -ErrorAction SilentlyContinue
           $err = Get-Content winrt_err.txt -Raw -ErrorAction SilentlyContinue
-          if ($timedOut) { Write-Host "winrt self-test: TIMED OUT after 90s" }
+          if ($timedOut) {
+            Write-Host "winrt self-test: TIMED OUT after 90s"
+            # The progress markers are the ONLY evidence a hang leaves. The last
+            # one written names the step that blocked.
+            if ($verdict) { Write-Host "last step reached:`n$verdict" }
+            else { Write-Host "no progress markers - it hung before the first step" }
+          }
           else { Write-Host "winrt self-test exit: $($p.ExitCode)" }
           if ($verdict) { Write-Host "verdict: $verdict" }
           if ($out) { Write-Host "stdout:`n$out" }

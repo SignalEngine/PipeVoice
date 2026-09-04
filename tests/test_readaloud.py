@@ -413,3 +413,51 @@ def test_a_failure_to_write_the_verdict_does_not_change_it():
         with pytest.raises(SystemExit) as exit_info:
             readaloud.main()
     assert exit_info.value.code == 0, "a write failure flipped the verdict"
+
+
+def test_the_selftest_reports_progress_before_each_step():
+    """The first real run of this gate HUNG - no stdout, no stderr, no verdict -
+    so there was no way to tell whether the import, the OCR activation or the
+    voice enumeration blocked. A hang has to leave a trail or it cannot be
+    diagnosed."""
+    from unittest import mock
+    from wisprlite import readaloud
+
+    seen = []
+    with mock.patch.dict(sys.modules, {
+        "winrt": mock.Mock(),
+        "winrt.windows": mock.Mock(),
+        "winrt.windows.media": mock.Mock(),
+        "winrt.windows.media.ocr": mock.Mock(OcrEngine=mock.Mock(
+            try_create_from_user_profile_languages=mock.Mock(return_value=object()))),
+        "winrt.windows.media.speechsynthesis": mock.Mock(SpeechSynthesizer=mock.Mock(
+            all_voices=[object()])),
+    }):
+        ok, _msg = readaloud.winrt_selftest(progress=seen.append)
+
+    assert ok is True
+    assert seen[0] == "start", f"no marker before the first import: {seen}"
+    for expected in ("import-ocr", "import-speech", "create-ocr-engine", "list-voices"):
+        assert expected in seen, f"no marker for {expected}: {seen}"
+
+
+def test_instrumentation_cannot_change_the_verdict():
+    """A progress callback that raises must not turn a PASS into a FAIL."""
+    from unittest import mock
+    from wisprlite import readaloud
+
+    def boom(_marker):
+        raise RuntimeError("logging blew up")
+
+    with mock.patch.dict(sys.modules, {
+        "winrt": mock.Mock(),
+        "winrt.windows": mock.Mock(),
+        "winrt.windows.media": mock.Mock(),
+        "winrt.windows.media.ocr": mock.Mock(OcrEngine=mock.Mock(
+            try_create_from_user_profile_languages=mock.Mock(return_value=object()))),
+        "winrt.windows.media.speechsynthesis": mock.Mock(SpeechSynthesizer=mock.Mock(
+            all_voices=[object()])),
+    }):
+        ok, _ = readaloud.winrt_selftest(progress=boom)
+
+    assert ok is True, "a failing progress callback flipped the verdict"
