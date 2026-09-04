@@ -24,11 +24,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-SAMPLE_RATE = 16_000
+SAMPLE_RATE = 48_000
 CHANNELS = 1
 SAMPLE_WIDTH = 2
-MIC_BLOCKSIZE = 800
-DESKTOP_BLOCKSIZE = 1_600
+MIC_BLOCKSIZE = 2400  # 50ms of frames at SAMPLE_RATE, unchanged from 16kHz
+DESKTOP_BLOCKSIZE = 4_800  # 100ms of frames at SAMPLE_RATE, unchanged from 16kHz
 CAPTURE_JOIN_TIMEOUT = 3.0
 HEADER_PATCH_INTERVAL = 5.0
 # ~30s of audio in hand before we start dropping. Dropping is a last resort,
@@ -969,6 +969,10 @@ class MeetingRecorder:
         self._finish_writer()
 
         self._close_waves()
+        if self.session_dir is not None:
+            from . import loudness
+            loudness.normalize_wav_file(self.session_dir / "mic.wav")
+            loudness.normalize_wav_file(self.session_dir / "desktop.wav")
         stopped_at = datetime.now(timezone.utc)
         duration = max(0.0, time.monotonic() - started) if started is not None else 0.0
         self._write_meta(stopped_at.isoformat(), duration)

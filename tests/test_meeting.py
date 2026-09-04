@@ -17,7 +17,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from wisprlite import config
 from wisprlite import meeting
-from wisprlite.meeting import MeetingRecorder
+from wisprlite.meeting import SAMPLE_RATE, MeetingRecorder
 
 
 class FixedDateTime(RealDateTime):
@@ -135,7 +135,7 @@ def test_meta_round_trip_and_elapsed():
 
         meta = json.loads((session / "meta.json").read_text(encoding="utf-8"))
         assert json.loads(json.dumps(meta)) == meta
-        assert meta["sample_rate"] == 16_000
+        assert meta["sample_rate"] == SAMPLE_RATE
         assert meta["channels"] == 1
         assert meta["mic"]["first_block_monotonic"] is not None
         assert meta["desktop"]["first_block_monotonic"] is not None
@@ -146,10 +146,14 @@ def test_meta_round_trip_and_elapsed():
 
         for filename in ("mic.wav", "desktop.wav"):
             with wave.open(str(session / filename), "rb") as audio:
-                assert audio.getframerate() == 16_000
+                assert audio.getframerate() == SAMPLE_RATE
                 assert audio.getnchannels() == 1
                 assert audio.getsampwidth() == 2
                 assert audio.getnframes() > 0
+
+
+def test_meeting_records_at_48khz_not_the_16khz_speech_rate():
+    assert SAMPLE_RATE == 48_000
 
 
 def test_mid_recording_checkpoint_patches_wave_header():

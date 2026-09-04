@@ -184,6 +184,35 @@ def test_the_focus_stream_is_not_billed_per_channel():
     )
 
 
+def test_focus_stream_takes_the_meetings_own_sample_rate():
+    # meeting.py now records at 48kHz. If focus_stream keeps a second hardcoded
+    # 16_000 literal, every PipeFocus transcript decodes as noise: the server
+    # is told the wrong rate for the PCM it is actually being fed.
+    import inspect
+
+    from wisprlite.engines import deepgram_engine
+
+    sig = inspect.signature(deepgram_engine.focus_stream)
+    assert sig.parameters["sample_rate"].default == 16_000, (
+        "keep the old default so no other caller changes"
+    )
+    source = inspect.getsource(deepgram_engine.focus_stream)
+    assert "sample_rate=sample_rate" in source, (
+        "focus_stream must forward its own sample_rate, not a literal, into LiveOptions"
+    )
+
+
+def test_pipefocus_connects_at_the_meetings_sample_rate():
+    import inspect
+
+    from wisprlite import app
+
+    source = inspect.getsource(app.App._start_pipefocus)
+    assert "sample_rate=meeting.SAMPLE_RATE" in source, (
+        "PipeFocus must stream at the rate meeting.py actually records, not a stale literal"
+    )
+
+
 class _FakeConn:
     """A live connection that can be told to die, like the real one does."""
 

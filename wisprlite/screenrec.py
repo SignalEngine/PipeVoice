@@ -27,7 +27,7 @@ from pathlib import Path
 
 log = logging.getLogger("wisprlite")
 
-AUDIO_RATE = 16_000
+AUDIO_RATE = 48_000
 AUDIO_CHANNELS = 1
 AUDIO_WIDTH = 2
 DEFAULT_FPS = 12
@@ -195,6 +195,9 @@ class ScreenRecording:
         # audio track is always declared, even if it ends up empty.
         audio = self._container.add_stream("aac", rate=AUDIO_RATE)
         audio.layout = "mono"
+        # PyAV's default bitrate for a 48kHz mono AAC stream isn't guaranteed
+        # to be high enough to keep the point of recording at 48kHz.
+        audio.bit_rate = 128_000
         self._audio_stream = audio
 
     def _encode_frame(self, frame) -> None:
@@ -279,7 +282,9 @@ class ScreenRecording:
                 samplerate=AUDIO_RATE,
                 channels=AUDIO_CHANNELS,
                 dtype="float32",
-                blocksize=800,
+                # 50ms of frames at AUDIO_RATE — keeps the callback rate and
+                # queue pressure the same as it was at 16kHz.
+                blocksize=2400,
                 callback=self._on_mic_block,
                 device=self.device,
             )
@@ -372,8 +377,11 @@ class ScreenRecording:
                 for packet in video.encode():          # flush the encoder
                     container.mux(packet)
 
+                from . import loudness
+
                 samples = self._trim_lead(self._read_wav())
                 if audio is not None and samples is not None and samples.size:
+                    samples = loudness.normalize_peak(samples)
                     frame = av.AudioFrame.from_ndarray(
                         samples.reshape(1, -1), format="s16", layout="mono"
                     )

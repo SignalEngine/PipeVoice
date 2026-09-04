@@ -944,7 +944,7 @@ class App:
         if not getattr(cfg, "pipefocus", False) or cfg.engine != "deepgram":
             return
         try:
-            from . import cleanup, focus
+            from . import cleanup, focus, meeting
             from .engines.deepgram_engine import focus_stream
 
             def completion(messages):
@@ -953,7 +953,9 @@ class App:
                 )
 
             session = focus.FocusSession(
-                connect=lambda on_text: focus_stream(cfg, on_text),
+                connect=lambda on_text: focus_stream(
+                    cfg, on_text, sample_rate=meeting.SAMPLE_RATE
+                ),
                 completion=completion,
                 on_tip=self._show_focus_tip,
             )

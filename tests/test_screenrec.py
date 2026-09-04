@@ -77,6 +77,20 @@ def test_it_produces_an_mp4_that_decodes_back_to_the_frames_put_in():
         assert decoded == 20, f"put in 20 frames, got {decoded} back"
 
 
+def test_the_recording_rate_is_48khz_not_the_16khz_speech_rate():
+    """16kHz is a speech-recognition rate; a file people LISTEN to needs treble."""
+    assert screenrec.AUDIO_RATE == 48_000
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp, fps=10)
+        _feed(rec, _frames(10))
+        _write_wav(rec.audio_path, seconds=1.0)
+
+        out = rec._mux()
+
+        with av.open(str(out)) as container:
+            assert container.streams.audio[0].codec_context.sample_rate == 48_000
+
+
 def test_the_narration_survives_into_the_mp4():
     with tempfile.TemporaryDirectory() as tmp:
         rec = _recording(tmp, fps=10)

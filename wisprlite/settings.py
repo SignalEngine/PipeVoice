@@ -51,18 +51,47 @@ MUTED = "#94a3b8"
 ACCENT = "#e06c75"
 
 
-def _input_devices():
-    """Return [(label, value)] for the device picker; never raises."""
+def _input_devices(show_all: bool = False):
+    """Return [(label, value)] for the device picker; never raises.
+
+    Grouped by default — one entry per physical mic, best host-API endpoint,
+    the recommended one labelled. `show_all` returns every raw PortAudio
+    endpoint instead, for anyone who needs a specific host API.
+    """
     items = [("System default", "")]
     try:
-        import sounddevice as sd
+        from . import mics
 
-        for i, d in enumerate(sd.query_devices()):
-            if d.get("max_input_channels", 0) > 0:
-                items.append((f"[{i}] {d['name']}", str(i)))
+        raw = mics.list_inputs()
+        if show_all:
+            for d in raw:
+                items.append((f"[{d['index']}] {d['name']} ({d['hostapi']})", str(d["index"])))
+        else:
+            grouped = mics.group_inputs(raw)
+            best = mics.recommend(grouped)
+            best_index = best["index"] if best else None
+            for g in sorted(grouped, key=lambda g: g["index"]):
+                label = f"[{g['index']}] {g['name']}"
+                if g["index"] == best_index:
+                    label += " (recommended)"
+                items.append((label, str(g["index"])))
     except Exception:
         pass
     return items
+
+
+def _record_seconds(device, seconds: float, rate: int | None = None):
+    """Record `seconds` of float32 mono audio from `device`. Blocks."""
+    import sounddevice as sd
+
+    if rate is None:
+        try:
+            rate = int(sd.query_devices(device, "input")["default_samplerate"]) or 16_000
+        except Exception:
+            rate = 16_000
+    data = sd.rec(int(seconds * rate), samplerate=rate, channels=1, dtype="float32", device=device)
+    sd.wait()
+    return data.reshape(-1), rate
 
 
 GOOD = "#98c379"
@@ -640,6 +669,7 @@ def main(first_run: bool = False) -> None:
     bookmark_sensitivity_var = tk.DoubleVar(value=cfg.bookmark_sensitivity)
     bookmark_phrases_var = tk.StringVar(value=cfg.bookmark_phrases)
     lang_var = tk.StringVar(value=dict(LANGUAGES).get(cfg.language, LANGUAGES[0][1]))
+    show_all_devices_var = tk.BooleanVar(value=False)
     devices = _input_devices()
     dev_label = next((lbl for lbl, val in devices if val == cfg.device), devices[0][0])
     device_var = tk.StringVar(value=dev_label)
@@ -1040,7 +1070,91 @@ def main(first_run: bool = False) -> None:
           screenrec_fps_var, width=6)
 
     c = card("Audio")
-    combo(row(c, "Microphone"), device_var, [lbl for lbl, _ in devices], width=30)
+    mic_row = row(c, "Microphone")
+    device_combo = combo(mic_row, device_var, [lbl for lbl, _ in devices], width=30)
+
+    def test_mic():
+        from . import mics
+
+        dialog = tk.Toplevel(root)
+        dialog.title("Test my mic")
+        dialog.configure(bg=BG)
+        tk.Label(dialog, text="Keep talking while this runs…", bg=BG, fg=FG,
+                 font=("Segoe UI", 11, "bold")).pack(padx=18, pady=(16, 6))
+        result = tk.Label(dialog, text="", bg=BG, fg=MUTED, wraplength=320, justify="left")
+        result.pack(padx=18, pady=(0, 12))
+
+        def _selected_device():
+            value = dict((lbl, val) for lbl, val in devices).get(device_var.get(), "")
+            return int(value) if value else None
+
+        def run_single():
+            result.config(text="Recording 3s…", fg=MUTED)
+            dialog.update()
+            try:
+                samples, rate = _record_seconds(_selected_device(), 3.0)
+                m = mics.measure(samples, rate)
+                v = mics.verdict(m)
+                fg = GOOD if v == "Good" else (ACCENT if "loud" in v or "Nothing" in v else WARN)
+                result.config(
+                    text=f"{v}\npeak {m['peak_dbfs']:.1f} dBFS · rms {m['rms_dbfs']:.1f} dBFS · "
+                         f"snr {m['snr_db']:.1f} dB · clipping {m['clipping_pct']:.2f}%",
+                    fg=fg,
+                )
+            except Exception as exc:
+                result.config(text=f"Microphone unavailable: {exc}", fg=ACCENT)
+
+        def run_all():
+            result.config(text="Testing every microphone— keep talking…", fg=MUTED)
+            dialog.update()
+            try:
+                grouped = mics.group_inputs(mics.list_inputs())
+                scored = []
+                heard_any = False
+                for g in grouped:
+                    samples, rate = _record_seconds(g["index"], 1.5)
+                    m = mics.measure(samples, rate)
+                    if m["rms_dbfs"] >= -40:
+                        heard_any = True
+                    in_band = -30 <= m["rms_dbfs"] <= -6
+                    scored.append((g, m, in_band))
+                if not heard_any:
+                    result.config(
+                        text="Nothing heard on any device — inconclusive, "
+                             "keep talking and try again.",
+                        fg=WARN,
+                    )
+                    return
+                best_g, best_m, _ = max(scored, key=lambda t: (t[2], t[1]["snr_db"]))
+                best_label = next(
+                    (lbl for lbl, val in devices if val == str(best_g["index"])), None
+                )
+                if best_label:
+                    device_var.set(best_label)
+                result.config(text=f"Picked {best_g['name']} — {mics.verdict(best_m)}", fg=GOOD)
+            except Exception as exc:
+                result.config(text=f"Test failed: {exc}", fg=ACCENT)
+
+        btns = tk.Frame(dialog, bg=BG)
+        btns.pack(pady=(0, 8))
+        ttk.Button(btns, text="Test mic (3s)", command=run_single).pack(side="left", padx=4)
+        ttk.Button(btns, text="Test all and pick the best", command=run_all).pack(side="left", padx=4)
+        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=(0, 16))
+
+    ttk.Button(mic_row, text="Test my mic", command=test_mic).pack(side="left", padx=(8, 0))
+
+    def _on_show_all(*_):
+        nonlocal devices
+        current_value = dict((lbl, val) for lbl, val in devices).get(device_var.get(), "")
+        devices = _input_devices(show_all_devices_var.get())
+        device_combo.configure(values=[lbl for lbl, _ in devices])
+        new_label = next((lbl for lbl, val in devices if val == current_value), devices[0][0])
+        device_var.set(new_label)
+
+    show_all_devices_var.trace_add("write", _on_show_all)
+    check(c, "Show all endpoints", show_all_devices_var,
+          "Every raw device PortAudio reports, including duplicates across host "
+          "APIs (MME/DirectSound/WASAPI/WDM-KS) and virtual/loopback inputs.")
     combo(row(c, "Accent / language", "Pick yours for better accuracy, including non-native accents."),
           lang_var, [l for _, l in LANGUAGES])
 
