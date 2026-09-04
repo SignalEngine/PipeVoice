@@ -1299,3 +1299,36 @@ def test_the_reason_is_pulled_out_of_the_provider_json_blob():
         "models/gemini-2.5-flash is no longer available.', 'status': 'NOT_FOUND'}}]"
     )
     assert _short_reason(exc) == "This model models/gemini-2.5-flash is no longer available"
+
+
+def test_an_apostrophe_in_the_reason_does_not_cut_it_to_one_word():
+    """`[^']+` stopped at the first apostrophe inside the value, so a message
+    like "It's no longer available" reached the overlay as "It"."""
+    from wisprlite.cleanup import _short_reason
+
+    exc = Exception(
+        "Error code: 404 - [{'error': {'code': 404, 'message': \"It's no longer "
+        "available, use a newer model\", 'status': 'NOT_FOUND'}}]"
+    )
+    assert _short_reason(exc) == "It's no longer available, use a newer model"
+
+
+def test_one_thread_s_failure_does_not_overwrite_another_s():
+    """A meeting summary polishing in the background shares cleanup.py with a
+    live dictation. A module-global reason let the later call win."""
+    import threading
+    from wisprlite.cleanup import _set_last_error, last_error
+
+    _set_last_error("the dictation's reason")
+    done = threading.Event()
+
+    def other():
+        _set_last_error("the meeting summary's reason")
+        done.set()
+
+    t = threading.Thread(target=other)
+    t.start()
+    done.wait(2)
+    t.join()
+
+    assert last_error() == "the dictation's reason"
