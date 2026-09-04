@@ -109,3 +109,25 @@ def test_the_winrt_gate_waits_for_the_gui_exe():
         "the gate can hang the build for ever - it needs a bounded wait"
     assert "-Wait " not in code and not code.rstrip().endswith("-Wait"), \
         "a bare -Wait on a GUI exe is an unbounded hang"
+
+
+def test_every_winrt_namespace_the_code_touches_is_declared():
+    """A WinRT namespace that is used but not declared installs fine from a
+    transitive dependency in development and is MISSING from the frozen exe.
+    SpeechSynthesizer.all_voices returns an IVectorView from the Collections
+    namespace; declaring Foundation does not bring it in, and the failure only
+    appeared when enumerating voices - after imports and OCR both succeeded."""
+    reqs = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
+    for namespace in (
+        "winrt-runtime",
+        "winrt-windows.media.ocr",
+        "winrt-windows.media.speechsynthesis",
+        "winrt-windows.media.playback",
+        "winrt-windows.media.core",
+        "winrt-windows.graphics.imaging",
+        "winrt-windows.storage.streams",
+        "winrt-windows.globalization",
+        "winrt-windows.foundation",
+        "winrt-windows.foundation.collections",
+    ):
+        assert namespace in reqs, f"{namespace} is used but not declared"

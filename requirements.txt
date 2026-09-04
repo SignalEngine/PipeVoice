@@ -28,6 +28,11 @@ winrt-Windows.Media.Core>=3.2.1; sys_platform == "win32"
 winrt-Windows.Graphics.Imaging>=3.2.1; sys_platform == "win32"
 winrt-Windows.Storage.Streams>=3.2.1; sys_platform == "win32"
 winrt-Windows.Foundation>=3.2.1; sys_platform == "win32"
+# SpeechSynthesizer.all_voices returns an IVectorView, which lives in the
+# Collections namespace. Declaring Foundation does NOT bring it in, and the
+# frozen exe failed with ModuleNotFoundError only at the point of enumerating
+# voices - imports and OCR activation both succeeded first.
+winrt-Windows.Foundation.Collections>=3.2.1; sys_platform == "win32"
 winrt-Windows.Globalization>=3.2.1; sys_platform == "win32"
 
 # --- UI niceties ---
