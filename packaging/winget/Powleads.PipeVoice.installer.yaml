@@ -15,6 +15,6 @@ ReleaseDate: 2026-09-04
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/SignalEngine/PipeVoice/releases/download/v2.44.1/Pipevoice-Setup.exe
-    InstallerSha256: 0F60C2844803A7B5503269BE0F6ACE3B7AEF29B4C93E3BD8B82770A47A874F0E
+    InstallerSha256: 65DBBB7D359244BF924A643FD33F442B9FB593061FB9DF840893F17D7F2E2E15
 ManifestType: installer
 ManifestVersion: 1.6.0

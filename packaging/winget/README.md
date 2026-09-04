@@ -36,3 +36,18 @@ Fork `microsoft/winget-pkgs`, copy these three files to
 automation validates the manifest, downloads the installer, and runs it in a
 sandbox. An unsigned installer is accepted but may be flagged for a human
 review pass, which is slower than the automated path.
+
+## The mistake this README already warned about
+
+On the first real submission the manifest carried v2.43.0's SHA-256 against
+v2.44.1's URL: the version strings had been `sed`-updated and the hash had not.
+Microsoft's CI would have rejected it after downloading the asset.
+
+**Recompute the hash from the release you are actually pointing at.** Bumping the
+version is two edits, not one:
+
+```bash
+V=2.44.1
+curl -sL "https://github.com/SignalEngine/PipeVoice/releases/download/v$V/Pipevoice-Setup.exe.sha256" \
+  | tr -d '[:space:]' | tr 'a-f' 'A-F'
+```
