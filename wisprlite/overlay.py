@@ -45,6 +45,7 @@ ACCENT = {
     "picker": PALETTE["picker"],
     "meeting": PALETTE["meeting"],
     "screenrec": PALETTE["meeting"],
+    "reading": PALETTE["done"],
 }
 
 

@@ -48,6 +48,7 @@ jobs:
           --collect-all pystray
           --collect-all PIL
           --collect-all mss
+          --collect-all winrt
           --collect-all mcp
           --collect-all pydantic
           --collect-all anyio
@@ -83,6 +84,21 @@ jobs:
           } else {
             Write-Host "MCP server produced no JSON-RPC reply."
             Write-Host "stdout:`n$out"
+            exit 1
+          }
+
+      # Spike 1, made permanent: verifying winrt-* on PyPI is a VERSION check.
+      # This is the BUNDLING check — the same half-verification shipped a
+      # broken exe this week (--collect-all missed FastMCP's module-level
+      # imports). A frozen exe that cannot activate WinRT must never reach
+      # beta as a silent "nothing happens" — it must be a red CI build.
+      - name: Self-test WinRT (OCR + speech) in the built exe
+        shell: pwsh
+        run: |
+          $exe = "dist/Pipevoice/Pipevoice.exe"
+          & $exe --winrt-selftest
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "winrt self-test failed — Read Aloud would silently do nothing."
             exit 1
           }
 

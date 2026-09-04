@@ -16,6 +16,20 @@ mss>=9.0              # grabs a screen region; ~0.1 MB
 # H.264 encoding uses PyAV, which faster-whisper already pulls in (av>=11) and
 # whose wheels ship libx264 — so the encoder costs nothing extra in the build.
 
+# --- Read Aloud (OCR + speech) ---
+# winrt-*, NOT winsdk (that's 1.0.0b10, a beta). The project split into
+# maintained per-namespace packages at 3.2.1. Windows-only: sys_platform
+# marker so the Linux test suite (mocks winrt in sys.modules) can still install.
+winrt-runtime>=3.2.1; sys_platform == "win32"
+winrt-Windows.Media.Ocr>=3.2.1; sys_platform == "win32"
+winrt-Windows.Media.SpeechSynthesis>=3.2.1; sys_platform == "win32"
+winrt-Windows.Media.Playback>=3.2.1; sys_platform == "win32"
+winrt-Windows.Media.Core>=3.2.1; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging>=3.2.1; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=3.2.1; sys_platform == "win32"
+winrt-Windows.Foundation>=3.2.1; sys_platform == "win32"
+winrt-Windows.Globalization>=3.2.1; sys_platform == "win32"
+
 # --- UI niceties ---
 pystray>=0.19         # system tray icon + menu
 Pillow>=10.0          # renders the tray icon
