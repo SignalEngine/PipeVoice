@@ -99,7 +99,13 @@ def test_the_winrt_gate_waits_for_the_gui_exe():
     # Comments explain WHY $LASTEXITCODE is wrong here, so assert on the code.
     code = "\n".join(l for l in step.splitlines() if not l.strip().startswith("#"))
 
-    assert "Start-Process" in code and "-Wait" in code and "-PassThru" in code, \
-        "the WinRT gate does not wait for the exe, so its exit code is meaningless"
+    assert "Start-Process" in code and "-PassThru" in code, \
+        "the WinRT gate does not capture the process, so its exit code is meaningless"
     assert "$LASTEXITCODE" not in code, \
         "$LASTEXITCODE is empty for a GUI-subsystem exe launched with &"
+    # A bare -Wait hangs for ever on a GUI exe that never exits; the first run
+    # of this gate sat in_progress for 30+ minutes and had to be cancelled.
+    assert "Wait-Process" in code and "-Timeout" in code, \
+        "the gate can hang the build for ever - it needs a bounded wait"
+    assert "-Wait " not in code and not code.rstrip().endswith("-Wait"), \
+        "a bare -Wait on a GUI exe is an unbounded hang"
