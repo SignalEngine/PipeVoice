@@ -311,16 +311,38 @@ def take_pending(current_version: str) -> bool:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         data = {}
-    try:
-        path.unlink()
-    except Exception:
-        pass
+    if not _consume(path):
+        # We could not clear the marker - antivirus holding the file, a
+        # read-only folder. Saying "yes, we updated" now would re-fire on every
+        # single start from here on, turning a one-shot window into a boot
+        # pop-up nobody can switch off. Stay quiet instead.
+        log.warning("could not clear the pending-update marker; skipping the About window")
+        return False
     try:
         if time.time() - float(data.get("at") or 0) > PENDING_MAX_AGE:
             return False
     except Exception:
         return False
-    return bool(data.get("from")) and data["from"] != current_version
+    previous = data.get("from")
+    # Must be a version STRING. A truthy non-string compares unequal to every
+    # version and would fire About on a marker that means nothing.
+    return isinstance(previous, str) and bool(previous) and previous != current_version
+
+
+def _consume(path) -> bool:
+    """Delete the marker, or failing that neuter it. True if it is gone for good."""
+    try:
+        path.unlink()
+        return True
+    except Exception:
+        pass
+    try:
+        # Could not remove it, so empty it: an unreadable marker is treated as
+        # no marker, and this needs only write permission, not delete.
+        path.write_text("", encoding="utf-8")
+        return True
+    except Exception:
+        return False
 
 
 def cleanup_old() -> None:

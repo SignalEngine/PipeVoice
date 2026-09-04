@@ -88,3 +88,39 @@ def test_download_and_run_marks_the_update_before_handing_over():
 
     assert order == ["mark", "spawn"], \
         f"the marker must be written before the installer is spawned, got {order}"
+
+
+def test_a_marker_that_cannot_be_deleted_is_emptied_not_trusted(tmp_path):
+    """If unlink fails and the marker survives, claiming "we updated" turns a
+    one-shot window into a pop-up on every boot that nobody can switch off."""
+    with _redirect(tmp_path):
+        updater.mark_pending("2.41.0")
+        path = tmp_path / "update" / updater.PENDING
+
+        with mock.patch.object(pathlib.Path, "unlink", side_effect=PermissionError("held")):
+            first = updater.take_pending("2.41.1")
+
+        assert first is True, "an emptied marker still counts as consumed once"
+        assert path.read_text(encoding="utf-8") == "", "the marker must be neutered"
+        assert updater.take_pending("2.41.1") is False, "it must never fire twice"
+
+
+def test_an_unclearable_marker_stays_silent(tmp_path):
+    """Neither delete nor write works — read-only folder. Say nothing rather
+    than open About on every start for ever."""
+    with _redirect(tmp_path):
+        updater.mark_pending("2.41.0")
+        with mock.patch.object(pathlib.Path, "unlink", side_effect=PermissionError("held")), \
+             mock.patch.object(pathlib.Path, "write_text", side_effect=PermissionError("ro")):
+            assert updater.take_pending("2.41.1") is False
+
+
+def test_a_non_string_from_field_is_not_a_version(tmp_path):
+    """`1 != "2.41.1"` is True, so an unvalidated field fires About on a marker
+    that means nothing."""
+    with _redirect(tmp_path):
+        path = tmp_path / "update" / updater.PENDING
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"from": 1, "at": time.time()}), encoding="utf-8")
+
+        assert updater.take_pending("2.41.1") is False
