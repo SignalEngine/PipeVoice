@@ -17,7 +17,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from wisprlite import config
 from wisprlite import meeting
-from wisprlite.meeting import MeetingRecorder
+from wisprlite.meeting import SAMPLE_RATE, MeetingRecorder
 
 
 class FixedDateTime(RealDateTime):
@@ -135,7 +135,7 @@ def test_meta_round_trip_and_elapsed():
 
         meta = json.loads((session / "meta.json").read_text(encoding="utf-8"))
         assert json.loads(json.dumps(meta)) == meta
-        assert meta["sample_rate"] == 16_000
+        assert meta["sample_rate"] == SAMPLE_RATE
         assert meta["channels"] == 1
         assert meta["mic"]["first_block_monotonic"] is not None
         assert meta["desktop"]["first_block_monotonic"] is not None
@@ -146,10 +146,14 @@ def test_meta_round_trip_and_elapsed():
 
         for filename in ("mic.wav", "desktop.wav"):
             with wave.open(str(session / filename), "rb") as audio:
-                assert audio.getframerate() == 16_000
+                assert audio.getframerate() == SAMPLE_RATE
                 assert audio.getnchannels() == 1
                 assert audio.getsampwidth() == 2
                 assert audio.getnframes() > 0
+
+
+def test_meeting_records_at_48khz_not_the_16khz_speech_rate():
+    assert SAMPLE_RATE == 48_000
 
 
 def test_mid_recording_checkpoint_patches_wave_header():
@@ -978,3 +982,33 @@ def test_a_writer_that_finished_hands_over_its_tail():
         recorder._close_waves()
         with wave.open(str(path), "rb") as audio:
             assert audio.getnframes() == 800
+
+
+def test_a_quiet_meeting_wav_is_normalised_when_the_recording_stops():
+    """The normalisation maths being right proves nothing about whether stop()
+    CALLS it. Sabotaging the call site left the whole suite green."""
+    import numpy as np
+    from wisprlite import loudness
+
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp) / "meeting-quiet"
+        session.mkdir()
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder.session_dir = session
+        recorder._started_at = "2026-09-04T12:00:00+00:00"
+        recorder._active = True
+        for stream in ("mic", "desktop"):
+            recorder._waves[stream] = recorder._open_wave(session / f"{stream}.wav")
+            # -26 dBFS: quiet enough to correct, inside the 8x cap.
+            quiet = np.full((4_000, 1), 10 ** (-26 / 20), dtype=np.float32)
+            recorder._write_block(stream, quiet)
+
+        recorder.stop()
+
+        for stream in ("mic", "desktop"):
+            with wave.open(str(session / f"{stream}.wav"), "rb") as audio:
+                samples = np.frombuffer(audio.readframes(audio.getnframes()), dtype="<i2")
+            assert loudness.peak_dbfs(samples) > -10, (
+                f"{stream}.wav left at {loudness.peak_dbfs(samples):.1f} dBFS — "
+                "stop() is not normalising"
+            )

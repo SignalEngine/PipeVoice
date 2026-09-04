@@ -15,3 +15,4 @@ assets/wisprlite.png
 
 # review-gate output artifact — never commit
 .review-verdict.md
+node_modules

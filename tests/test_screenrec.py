@@ -77,6 +77,20 @@ def test_it_produces_an_mp4_that_decodes_back_to_the_frames_put_in():
         assert decoded == 20, f"put in 20 frames, got {decoded} back"
 
 
+def test_the_recording_rate_is_48khz_not_the_16khz_speech_rate():
+    """16kHz is a speech-recognition rate; a file people LISTEN to needs treble."""
+    assert screenrec.AUDIO_RATE == 48_000
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp, fps=10)
+        _feed(rec, _frames(10))
+        _write_wav(rec.audio_path, seconds=1.0)
+
+        out = rec._mux()
+
+        with av.open(str(out)) as container:
+            assert container.streams.audio[0].codec_context.sample_rate == 48_000
+
+
 def test_the_narration_survives_into_the_mp4():
     with tempfile.TemporaryDirectory() as tmp:
         rec = _recording(tmp, fps=10)
@@ -717,3 +731,33 @@ def test_the_pill_naming_hands_back_what_was_typed_and_never_blocks_for_ever():
     ui.answer_name("")
     assert ui.take_name() == ""
     assert ui.snapshot()["phase"] == "working"
+
+
+def test_a_quiet_recording_comes_out_of_the_mux_normalised():
+    """The pure normalisation maths being right proves nothing about whether
+    _mux actually CALLS it. Sabotaging the call site left the whole suite green,
+    which is how a feature ships built-but-not-mounted."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp, fps=10)
+        _feed(rec, _frames(10))
+        # -26 dBFS: quiet enough to correct, inside the 8x cap.
+        quiet = (np.sin(np.linspace(0, 220 * 2 * np.pi, screenrec.AUDIO_RATE))
+                 * (32767 * 10 ** (-26 / 20))).astype("<i2")
+        with wave.open(str(rec.audio_path), "wb") as handle:
+            handle.setparams((1, 2, screenrec.AUDIO_RATE, 0, "NONE", "not compressed"))
+            handle.writeframes(quiet.tobytes())
+
+        out = rec._mux()
+
+        assert out is not None, rec.errors
+        with av.open(str(out)) as container:
+            decoded = np.concatenate([
+                f.to_ndarray().reshape(-1) for f in container.decode(audio=0)
+            ])
+        # AAC decodes to float32 in [-1, 1], not int16.
+        # AAC is lossy, so assert the LEVEL moved, not the exact sample values.
+        peak_dbfs = 20 * np.log10(np.abs(decoded).max())
+        assert peak_dbfs > -10, (
+            f"quiet narration reached the mp4 at {peak_dbfs:.1f} dBFS — "
+            "_mux is not normalising"
+        )
