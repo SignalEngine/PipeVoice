@@ -187,3 +187,64 @@ things that already existed, which is why they were cheap.
 until **1.0.2** (0 occurrences in the v1.0.0 and v1.0.1 tagged source, 12 in
 v1.0.2). Any hotword code would have crashed for a user who resolved 1.0.0.
 Pin now `>=1.0.2`.
+
+## Shipped vocabulary (v2.44.0)
+
+`cfg.vocabulary` and `cfg.replacements` both existed for a long time, were wired
+to every engine, and **shipped empty**. So the feature only worked for someone who
+found Settings and typed a list by hand, and whether "CLAUDE.md" survived a
+dictation came down to the polish model's guess on that run. James watched it land
+correctly once and wrong the next time in the same conversation.
+
+`wisprlite/starter_vocab.py` ships two things, deliberately different:
+
+| | When | Nature |
+|---|---|---|
+| `TERMS` (~60) | BEFORE recognition, as engine bias (`prompt` / `keywords`) | a hint the engine may ignore |
+| `FIXES` (~22) | AFTER recognition, as replacements | deterministic, guarantees a spelling |
+
+Rules that keep it safe:
+- **Merged, never assigned.** A term the user already has is not duplicated; a fix
+  they wrote is never overwritten. That is what makes it safe to seed onto the
+  existing installs, which it does - not just first run.
+- **Seeded ONCE**, tracked by `starter_vocab_seeded`. Re-running every load would
+  be idempotent against the file and wrong against the person: delete a term you
+  do not want and it would reappear next launch, which is the app arguing with you.
+- **A failed seed does not mark itself done**, and it logs. A silent retry inside
+  a bare `except: pass` is a permanent no-op nobody can diagnose.
+- **It must not become a dictionary.** Every term is paid for in prompt budget on
+  EVERY utterance. A test fails past 80 terms.
+- Dedup is case-INSENSITIVE, so a user's "github" blocks TERMS' "GitHub".
+  Intentional: two spellings of one word in the bias prompt is worse than one
+  imperfect spelling.
+
+## The installer reported the wrong version for 18 releases
+
+`installer/Pipevoice.iss` hardcoded `#define AppVersion "2.25.0"` and CI compiled
+it with a bare `ISCC` call, no `/D`. **Every installer built from 2.25.0 onward
+told Add/Remove Programs it was 2.25.0.**
+
+Cosmetic until winget, which reads exactly that field (`DisplayVersion`, which Inno
+derives from `AppVersion`) to decide whether an upgrade exists. Submitting the
+package with this bug means `winget upgrade` never fires for anyone.
+
+Fixed by reading `wisprlite/__init__.py` in CI and passing `ISCC /DAppVersion=$v`.
+The `.iss` keeps an `#ifndef` fallback so a local build compiles, but that fallback
+is `0.0.0-dev` and never a release number, so the bug cannot silently return.
+Guarded by `tests/test_installer_version.py`.
+
+**`VersionInfoVersion` is NOT the field.** An earlier attempt added it; that sets
+the setup EXE's file-version resource, may require four components, and Inno lists
+it among obsolete directives. Wrong field, and untestable from Linux.
+
+**Proof it works:** the release build logs `Building installer for version X.Y.Z`,
+and Add/Remove Programs must show that number after install.
+
+## winget
+
+Manifests live in `packaging/winget/` (version, installer, en-US locale) with a
+README naming what must be true before submitting: an uppercase SHA-256 matching
+the release asset, a **stable** not prerelease asset, and a correctly reported
+installed version. `ProductCode` is the `.iss` `AppId` plus Inno's `_is1` uninstall
+key suffix - if `AppId` changes, that changes with it or winget stops recognising
+existing installs. Not yet submitted.
