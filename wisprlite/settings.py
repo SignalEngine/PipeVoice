@@ -1504,7 +1504,11 @@ def main(first_run: bool = False) -> None:
         right = fix_right_var.get().strip()
         if not wrong:
             return
-        existing = {line.partition(_FIX_SEP)[0]: i for i, line in enumerate(fixes_list.get(0, "end"))}
+        # .strip() on both sides of the comparison, or a row that ever picks up
+        # stray whitespace silently becomes a second entry for the same word
+        # instead of replacing the first.
+        existing = {line.partition(_FIX_SEP)[0].strip(): i
+                    for i, line in enumerate(fixes_list.get(0, "end"))}
         line = f"{wrong}{_FIX_SEP}{right}"
         if wrong in existing:
             fixes_list.delete(existing[wrong])
@@ -1523,7 +1527,7 @@ def main(first_run: bool = False) -> None:
         if not sel:
             return
         wrong, _sep, right = fixes_list.get(sel[0]).partition(_FIX_SEP)
-        fix_wrong_var.set(wrong)
+        fix_wrong_var.set(wrong.strip())
         fix_right_var.set(right)
         fixes_list.delete(sel[0])
 
