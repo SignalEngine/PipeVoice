@@ -8,6 +8,7 @@ has shifted callback signatures between minor versions.
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Optional
 
@@ -15,7 +16,21 @@ import numpy as np
 
 from .base import Engine, OnPartial, Session
 
+log = logging.getLogger("wisprlite")
+
 SAMPLE_RATE = 16_000
+
+
+# nova-3 replaced `keywords` with `keyterm`, and rejects the old parameter
+# outright - the connection 400s rather than ignoring it. Sending the wrong one
+# is indistinguishable from being offline from the user's side.
+KEYTERM_MODELS = ("nova-3",)
+
+
+def bias_param(model: str) -> str:
+    """Which term-biasing parameter this model accepts."""
+    name = (model or "").strip().lower()
+    return "keyterm" if name.startswith(KEYTERM_MODELS) else "keywords"
 
 
 def _pick(args, kwargs, key):
@@ -36,6 +51,7 @@ class _DeepgramSession(Session):
         self._finals: list[str] = []
         self._done = threading.Event()
         self._error: Optional[str] = None
+        self._retried_without_bias = False
         self._finish_timeout = getattr(engine, "finish_timeout", 6.0)
 
         listen = engine.client.listen
@@ -83,14 +99,26 @@ class _DeepgramSession(Session):
             smart_format=True,
             punctuate=True,
         )
+        bias_key = bias_param(engine.model)
         if engine.keywords:
-            opts["keywords"] = engine.keywords  # bias toward these terms
+            opts[bias_key] = engine.keywords
         try:
             options = LiveOptions(**opts)
         except TypeError:
-            opts.pop("keywords", None)  # some versions reject unknown kwargs
+            opts.pop(bias_key, None)   # some SDK versions reject unknown kwargs
             options = LiveOptions(**opts)
         if not self.conn.start(options):
+            # A rejected biasing option must NEVER cost you dictation. Deepgram
+            # 400s the whole connection when the parameter does not suit the
+            # model, and the user just sees "connection failed to start" with no
+            # idea a word list caused it. Drop the biasing and try once more:
+            # slightly worse recognition beats no recognition.
+            if engine.keywords:
+                log.warning("Deepgram rejected %s; retrying without term biasing", bias_key)
+                opts.pop(bias_key, None)
+                self._retried_without_bias = True
+                if self.conn.start(LiveOptions(**opts)):
+                    return
             raise RuntimeError("Deepgram connection failed to start")
 
     def feed(self, pcm_int16: bytes) -> None:

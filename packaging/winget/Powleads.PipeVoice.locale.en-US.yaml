@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
 PackageIdentifier: Powleads.PipeVoice
-PackageVersion: 2.44.0
+PackageVersion: 2.44.1
 PackageLocale: en-US
 Publisher: Powleads
 PublisherUrl: https://github.com/SignalEngine
@@ -33,6 +33,6 @@ Tags:
   - accessibility
   - productivity
   - offline
-ReleaseNotesUrl: https://github.com/SignalEngine/PipeVoice/releases/tag/v2.44.0
+ReleaseNotesUrl: https://github.com/SignalEngine/PipeVoice/releases/tag/v2.44.1
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0

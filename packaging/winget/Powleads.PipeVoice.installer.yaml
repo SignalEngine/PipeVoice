@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
 PackageIdentifier: Powleads.PipeVoice
-PackageVersion: 2.44.0
+PackageVersion: 2.44.1
 InstallerType: inno
 Scope: user
 InstallModes:
@@ -14,7 +14,7 @@ ProductCode: '{41C3C77C-2125-40AF-AE40-5AAC67809491}_is1'
 ReleaseDate: 2026-09-04
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/SignalEngine/PipeVoice/releases/download/v2.44.0/Pipevoice-Setup.exe
+    InstallerUrl: https://github.com/SignalEngine/PipeVoice/releases/download/v2.44.1/Pipevoice-Setup.exe
     InstallerSha256: 0F60C2844803A7B5503269BE0F6ACE3B7AEF29B4C93E3BD8B82770A47A874F0E
 ManifestType: installer
 ManifestVersion: 1.6.0
