@@ -35,12 +35,17 @@ def test_ci_passes_the_version_into_the_installer_compiler():
         "the version must be read from the source of truth, not retyped in CI"
 
 
-def test_add_remove_programs_shows_the_real_version():
-    """winget compares against the Add/Remove Programs version. Without
-    VersionInfoVersion it can read stale or missing metadata."""
+def test_add_remove_programs_reads_appversion():
+    """AppVersion IS the Add/Remove Programs DisplayVersion, and DisplayVersion is
+    what winget compares to decide an upgrade exists. An earlier attempt at this
+    added VersionInfoVersion instead - that sets the setup EXE's file-version
+    resource, a different field, which Inno also lists as obsolete and which may
+    require four components. Wrong field, and untestable from Linux."""
     text = ISS.read_text(encoding="utf-8")
-    assert "VersionInfoVersion={#AppVersion}" in text, \
-        "the installer does not stamp the version Add/Remove Programs reports"
+    assert "AppVersion={#AppVersion}" in text, \
+        "AppVersion is not wired to the define, so ARP would show a literal"
+    assert "VersionInfoVersion" not in text, \
+        "VersionInfoVersion is not the ARP field and risks a four-part compile error"
 
 
 def test_the_iss_still_defines_a_fallback_so_a_local_build_works():

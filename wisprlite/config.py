@@ -167,6 +167,8 @@ class Config:
     cleanup_instruction: str = ""     # the instruction used when cleanup_style == "custom"
     auto_enter: bool = False        # press Enter after typing (hands-free send)
     vocabulary: str = ""            # comma-separated terms to bias recognition
+    starter_vocab: bool = True      # seed dev terms so they work on install
+    starter_vocab_seeded: bool = False   # one-time marker; see apply_starter_vocab
     speech_notes: str = ""          # free text about the user's accent / speech, fed to AI cleanup
     replacements: dict = field(default_factory=dict)  # {wrong: right} post-fixes
     voices: list = field(default_factory=lambda: copy.deepcopy(STARTER_VOICES))
@@ -226,6 +228,10 @@ class Config:
                         setattr(cfg, k, v)
             except Exception:
                 pass
+            # An existing install has never seen the starter vocabulary, and the
+            # 1,760 of them are most of the users. Seed once here too.
+            if cfg.apply_starter_vocab():
+                cfg.save()
         else:
             # First run: seed a few settings from the environment, then persist.
             cfg.engine = os.getenv("WISPRLITE_ENGINE", cfg.engine)
@@ -234,8 +240,34 @@ class Config:
             cfg.language = os.getenv("WISPRLITE_LANG", cfg.language)
             cfg.device = os.getenv("WISPRLITE_DEVICE", cfg.device)
             cfg.openai_model = os.getenv("WISPRLITE_MODEL", cfg.openai_model)
-            cfg.save()
+            cfg.apply_starter_vocab()
+            cfg.save()   # marker included, so it never runs twice
         return cfg
+
+    def apply_starter_vocab(self) -> bool:
+        """Seed the dev terms every engine mishears. True if anything changed.
+
+        Both `vocabulary` and `replacements` have shipped EMPTY since they were
+        added, so the feature only ever worked for someone who found Settings and
+        typed a list by hand. Merged, never assigned: anything the user already
+        set wins.
+
+        Runs ONCE, tracked by `starter_vocab_seeded`. Re-running on every load
+        would be idempotent against the file but wrong against the user - delete
+        a term you do not want and it would reappear at the next launch, which is
+        the app arguing with you.
+        """
+        if not self.starter_vocab or self.starter_vocab_seeded:
+            return False
+        try:
+            from . import starter_vocab
+
+            self.vocabulary, self.replacements = starter_vocab.merge_into(
+                self.vocabulary, self.replacements)
+            self.starter_vocab_seeded = True
+            return True
+        except Exception:
+            return False    # a bad starter list must never stop the app loading
 
     def save(self) -> None:
         try:

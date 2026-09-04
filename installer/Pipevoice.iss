@@ -19,9 +19,6 @@ AppId={{41C3C77C-2125-40AF-AE40-5AAC67809491}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Pipevoice
-; What Add/Remove Programs shows, and what winget compares against to decide
-; whether an upgrade is available. Without it ARP falls back to AppVersion only.
-VersionInfoVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
