@@ -380,3 +380,36 @@ def test_a_speaker_is_one_shot_and_says_so():
 
     assert "ONE-SHOT" in readaloud.Speaker.speak.__doc__, \
         "the one-shot contract is not documented on speak()"
+
+
+def test_the_selftest_writes_its_verdict_to_a_file():
+    """The release exe is built --noconsole, so stdout does not reach the CI log.
+    The first real run of this gate failed the build correctly and printed
+    nothing - a red build with no reason attached."""
+    import os
+    from unittest import mock
+    import pytest
+    from wisprlite import readaloud
+
+    with mock.patch.object(readaloud, "winrt_selftest", return_value=(False, "FAIL: no voices")):
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), "verdict.txt")
+        with mock.patch.dict(os.environ, {"PV_SELFTEST_OUT": path}):
+            with pytest.raises(SystemExit) as exit_info:
+                readaloud.main()
+        assert exit_info.value.code == 1
+        assert open(path, encoding="utf-8").read().strip() == "FAIL: no voices"
+
+
+def test_a_failure_to_write_the_verdict_does_not_change_it():
+    """Reporting must never turn a FAIL into a PASS or vice versa."""
+    import os
+    from unittest import mock
+    import pytest
+    from wisprlite import readaloud
+
+    with mock.patch.object(readaloud, "winrt_selftest", return_value=(True, "PASS: ok")), \
+         mock.patch.dict(os.environ, {"PV_SELFTEST_OUT": "/nonexistent-dir/verdict.txt"}):
+        with pytest.raises(SystemExit) as exit_info:
+            readaloud.main()
+    assert exit_info.value.code == 0, "a write failure flipped the verdict"

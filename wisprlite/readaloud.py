@@ -346,9 +346,24 @@ def should_speak(*, quiet_with_screenreader: bool) -> bool:
 def main() -> None:
     """`--winrt-selftest` entry point: one PASS/FAIL line, exit non-zero on
     failure. CI runs this against the BUILT EXE and fails the build on it —
-    this is spike 1, made permanent."""
+    this is spike 1, made permanent.
+
+    The result is also written to a FILE, because the release exe is built
+    `--noconsole`: the first real run of this gate failed the build correctly
+    and printed nothing, so nobody could tell whether it was a missing module,
+    a dead activation, or simply no voices on the runner. A gate that fails
+    without saying why is half a gate.
+    """
+    import os
     import sys
 
     ok, message = winrt_selftest()
     print(message)
+    out = os.environ.get("PV_SELFTEST_OUT")
+    if out:
+        try:
+            with open(out, "w", encoding="utf-8") as f:
+                f.write(message + "\n")
+        except Exception as exc:      # never let reporting change the verdict
+            print(f"(could not write {out}: {exc})")
     sys.exit(0 if ok else 1)
