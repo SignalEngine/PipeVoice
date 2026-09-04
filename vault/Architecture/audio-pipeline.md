@@ -1,0 +1,78 @@
+# Audio pipeline
+
+Three capture paths, two sample rates, one normalisation stage. Getting these
+confused is how the "recordings sound muffled" bug happened.
+
+## The rates are different on purpose
+
+| Path | Module | Rate | Why |
+|---|---|---|---|
+| Dictation (push-to-talk) | `audio.py`, `engines/{deepgram,openai,gemini}_engine.py` | **16 kHz** | Never played back. Goes straight to a speech API, which wants 16 kHz. |
+| Screen recording | `screenrec.py` (`AUDIO_RATE`) | **48 kHz** | The `.mp4` is a file a human watches. |
+| Meeting capture | `meeting.py` (`SAMPLE_RATE`) | **48 kHz** | `mic.wav` / `desktop.wav` get played back. |
+
+**Do not unify them.** 16 kHz hard-cuts everything above 8 kHz — the sibilance
+and "air" that make a voice sound present. That is exactly what made recordings
+sound like a phone call before v2.41.0. Raising dictation to 48 kHz would waste
+bandwidth on every utterance for a listener that does not exist.
+
+### Transcription needs no resampling
+`transcribe_file` (faster-whisper via bundled PyAV) and `transcribe_file_deepgram`
+both take a **file path** and resample internally. This is why the 48 kHz move
+was a small change.
+
+### The one coupling that bites
+PipeFocus streams **live PCM**, so it must be told the rate:
+`focus_stream(cfg, on_text, sample_rate=...)` in `engines/deepgram_engine.py`,
+filled by `app.py` from `meeting.SAMPLE_RATE`. If those disagree, Deepgram
+decodes at the wrong speed and every PipeFocus transcript is garbage — not
+merely worse-sounding. Pinned by a test in `tests/test_focus.py`.
+
+## Normalisation — `loudness.py`
+
+Peak normalisation at **finalise**, never in an audio callback (an audio
+callback that touches disk or blocks causes PortAudio `input overflow`).
+
+- Boost towards **-1 dBFS**, only when the peak is below **-3 dBFS**.
+- Gain capped at **8x / +18 dB** so a near-silent take is not amplified into hiss.
+- Monotonic gain only. No compression, EQ or noise suppression — so it cannot
+  hurt transcription accuracy.
+
+Call sites: `screenrec._mux()` and `MeetingRecorder.stop()`. **Both are guarded
+by call-site tests**, because deleting either call once left the entire 349-test
+suite green — the maths being right proves nothing about it being wired.
+
+## Microphone selection — `mics.py`
+
+PortAudio enumerates every device once per Windows host API, so one physical mic
+appears as MME, DirectSound, WASAPI and WDM-KS entries. The old picker dumped all
+of them, unranked.
+
+- `group_inputs()` collapses duplicates on the device name, **truncated to 30 raw
+  chars before punctuation is stripped** — MME truncates names to 31 chars, so the
+  key must be a prefix of every host API's rendering.
+- Endpoint preference: `WASAPI > WDM-KS > DirectSound > MME`.
+- `recommend()` prefers the Windows default input, then sample rate, then index.
+  **Not channel count** — a stereo endpoint is not a better microphone; webcams
+  and headsets report both.
+- Loopback/virtual endpoints (`stereo mix`, `cable output`, `voicemeeter out`, …)
+  are selectable but never recommended.
+- `measure()` / `verdict()` are pure functions over a numpy buffer, so "Test my
+  mic" is testable without a sound card. Recording runs on a **worker thread** —
+  on the UI thread it froze the window for 3s, or 1.5s per device on "Test all".
+
+## Failure modes seen in the wild
+
+Read from a real 2,453-line `pipevoice.log`, 20 Jun – 4 Sep 2026:
+
+| Symptom | Cause | Fixed |
+|---|---|---|
+| Output quietly worse than usual | AI polish failed 235× (dead Gemini model id, then `PERMISSION_DENIED`) and returned raw text with only a log line | v2.40.6 — the overlay now names the reason |
+| 59 × Deepgram `1011` ERROR pairs, 5% of dictations | A tap under `min_seconds` opened a websocket on key-down and abandoned it; the server killed it 10s later | v2.40.6 — `_finish` cancels the session it opened |
+| Recordings sound muffled | 16 kHz capture on paths people listen to | v2.41.0 |
+| Quiet mic → quiet video | No gain stage anywhere in the capture path | v2.41.0 |
+| "Which of these 12 mics is good?" | Raw PortAudio dump | v2.41.0 |
+
+**Not verified on the VPS:** there is no audio device and no Windows here. How a
+recording *sounds*, and how a real device list groups, can only be confirmed on
+James's machine.
