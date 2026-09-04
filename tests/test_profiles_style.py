@@ -20,6 +20,35 @@ def test_legacy_backcompat():
     assert result == {"cleanup_style": "prompt", "auto_enter": True}, result
 
 
+def test_per_app_profile_overrides_cleanup_style_for_that_app_only():
+    """Gate 3: a profile pointing an app at a Voice with cleanup_style=email
+    overrides the global style only when that app is focused."""
+    cfg = config.Config()
+    cfg.cleanup_style = "tidy"  # the global style
+    cfg.voices.append({"name": "Email voice", "cleanup_style": "email",
+                        "cleanup_instruction": "", "engine": "", "auto_enter": None,
+                        "output_mode": "", "ai_cleanup": True})
+    cfg.profiles = [{"match": {"exe": "outlook.exe"}, "voice": "Email voice"}]
+
+    matched = profiles.resolve(cfg, {"exe": "outlook.exe"})
+    assert matched["cleanup_style"] == "email"
+    assert cfg.cleanup_style == "tidy"  # the global setting is untouched
+
+    other_app = profiles.resolve(cfg, {"exe": "notepad.exe"})
+    assert other_app == {}, "the override must not leak to an app with no matching profile"
+
+
+def test_sabotage_removing_the_override_turns_it_red():
+    # Positive control for the gate above.
+    cfg = config.Config()
+    cfg.voices.append({"name": "Email voice", "cleanup_style": "email",
+                        "cleanup_instruction": "", "engine": "", "auto_enter": None,
+                        "output_mode": "", "ai_cleanup": True})
+    cfg.profiles = [{"match": {"exe": "outlook.exe"}, "voice": "Email voice"}]
+    cfg.profiles = []  # remove the override
+    assert profiles.resolve(cfg, {"exe": "outlook.exe"}) == {}
+
+
 def test_no_match_returns_empty():
     """No matching profile: resolve returns {}."""
     cfg = config.Config()
@@ -59,6 +88,8 @@ def test_migrate_profiles():
 if __name__ == "__main__":
     test_voice_profile()
     test_legacy_backcompat()
+    test_per_app_profile_overrides_cleanup_style_for_that_app_only()
+    test_sabotage_removing_the_override_turns_it_red()
     test_no_match_returns_empty()
     test_migrate_profiles()
     print("OK")

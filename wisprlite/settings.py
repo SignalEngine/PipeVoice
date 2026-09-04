@@ -26,7 +26,11 @@ OUTPUTS = [("type", "Type keystrokes"), ("paste", "Clipboard + Ctrl+V")]
 PASTE_SPEEDS = [("fast", "Fast"), ("normal", "Normal"), ("slow", "Slow")]
 CLEANUP_PROVIDERS = [("openai", "OpenAI"), ("gemini", "Google Gemini (free tier)"),
                      ("openrouter", "OpenRouter (free models)"), ("ollama", "Local — Ollama (offline)")]
-STYLES = [("tidy", "Tidy — clean up"), ("prompt", "Prompt — for AI tools"), ("custom", "Custom…")]
+STYLES = [("tidy", "Tidy — clean up"), ("prompt", "Prompt — for AI tools"),
+          ("email", "Email — greeting, body, sign-off"),
+          ("code_comment", "Code comment — wrapped in comment syntax"),
+          ("meeting_actions", "Meeting actions — bullet the action items"),
+          ("custom", "Custom…")]
 LOCAL_SIZES = ["tiny.en", "base.en", "small.en", "medium.en",
                "tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"]
 LOCAL_DEVICES = [("auto", "Auto-detect"), ("cpu", "CPU"), ("cuda", "GPU (NVIDIA CUDA)")]
@@ -43,6 +47,48 @@ LANGUAGES = [
     ("pt", "Portuguese"), ("it", "Italian"), ("nl", "Dutch"),
     ("ja", "Japanese"), ("zh", "Chinese"),
 ]
+
+_FIX_SEP = " → "
+
+
+def fixes_from_lines(lines) -> dict:
+    """Parse ["wrong → right", ...] rows back into {wrong: right}. Pure, testable
+    without Tk — the Listbox just stores these strings as its display rows."""
+    out = {}
+    for line in lines:
+        wrong, sep, right = str(line).partition(_FIX_SEP)
+        wrong = wrong.strip()
+        if wrong and sep:
+            out[wrong] = right.strip()
+    return out
+
+
+def fixes_to_lines(fixes: dict) -> list:
+    return [f"{k}{_FIX_SEP}{v}" for k, v in (fixes or {}).items()]
+
+
+def write_fixes_csv(path, fixes: dict) -> None:
+    import csv
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["wrong", "right"])
+        for k, v in (fixes or {}).items():
+            w.writerow([k, v])
+
+
+def read_fixes_csv(path) -> dict:
+    """Merge a wrong,right CSV into a dict. A header row (wrong,right) is skipped
+    if present; a plain two-column file with no header works the same."""
+    import csv
+    out = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    if rows and [c.strip().lower() for c in rows[0][:2]] == ["wrong", "right"]:
+        rows = rows[1:]
+    for row in rows:
+        if len(row) >= 2 and row[0].strip():
+            out[row[0].strip()] = row[1].strip()
+    return out
 
 BG = "#13151d"
 CARD = "#1b1e29"
@@ -372,7 +418,8 @@ def _build_guide(parent, wheel) -> None:
     body("• Speech notes: describe your accent, stutter or filler habits. The AI polish uses it to "
          "fix mis-hearings tailored to how you speak.")
     body("• Vocabulary: add names and jargon so they're always spelled right.")
-    body("• Word fixes: wrong=right pairs, applied last so they always win.")
+    body("• Word fixes: a wrong → right list, applied last so they always win. Fix a "
+         "misheard word straight from History, or import/export a shared list as CSV.")
 
     head("Need a hand?", key="help")
     link("Pipevoice on GitHub — docs, issues, source  ↗", "github")
@@ -554,9 +601,20 @@ def main(first_run: bool = False) -> None:
 
     _canvas.bind("<Configure>", _fit_form)
     _wheel(_canvas)
-    history.build(tab_history, root, _wheel)
+    def fix_word_from_history(wrong: str) -> None:
+        """"Fix this" on a history row: prefill the wrong side, jump to Settings."""
+        fix_wrong_var.set(wrong)
+        fix_right_var.set("")
+        _show_tab("Settings")
+        root.after(50, fix_right_entry.focus_set)
+
+    history.build(tab_history, root, _wheel, on_fix_word=fix_word_from_history)
+
     def sync_meeting_replacements(replacements):
-        fixes_var.set(", ".join(f"{k}={v}" for k, v in replacements.items()))
+        items = [f"{k} → {v}" for k, v in replacements.items()]
+        fixes_list.delete(0, "end")
+        for line in items:
+            fixes_list.insert("end", line)
 
     # Both tabs hand back an empty settings panel. They are built here, but the
     # form helpers (card/row/entry/check) do not exist until further down, so
@@ -697,7 +755,6 @@ def main(first_run: bool = False) -> None:
     meetings_keep_var = tk.StringVar(value=str(cfg.meetings_keep))
     meetings_dir_var = tk.StringVar(value=cfg.meetings_dir)
     paste_speed_var = tk.StringVar(value=dict(PASTE_SPEEDS).get(cfg.paste_speed, PASTE_SPEEDS[1][1]))
-    fixes_var = tk.StringVar(value=", ".join(f"{k}={v}" for k, v in cfg.replacements.items()))
     speech_notes_var = tk.StringVar(value=cfg.speech_notes)
     overlay_var = tk.BooleanVar(value=cfg.overlay)
     sounds_var = tk.BooleanVar(value=cfg.sounds)
@@ -1288,9 +1345,11 @@ def main(first_run: bool = False) -> None:
     combo(row(c, "Cleanup with", "OpenAI, free Google Gemini, OpenRouter, or fully offline Ollama."),
           cleanup_var, [l for _, l in CLEANUP_PROVIDERS])
     entry(row(c, "Cleanup model", "Blank uses the provider's default."), cleanup_model_var, width=22)
-    combo(row(c, "Polish style", "Tidy keeps your words; Prompt rewrites rambling into a clear AI instruction; Custom uses your own instruction."),
+    combo(row(c, "Polish style", "Tidy keeps your words; Prompt rewrites rambling into a clear AI instruction; Email/Code comment/Meeting actions reshape it for that context; Custom uses your own instruction."),
           cleanup_style_var, [l for _, l in STYLES])
-    entry(row(c, "Custom polish instruction", "Used when Polish style = Custom."), cleanup_instruction_var, width=24)
+    entry(row(c, "Custom instruction / sign-off name",
+              "Your own instruction when Polish style = Custom, or the sign-off name when style = Email."),
+          cleanup_instruction_var, width=24)
 
     def _on_cleanup_provider(*_):
         prov = value_for(cleanup_var, CLEANUP_PROVIDERS)
@@ -1422,7 +1481,85 @@ def main(first_run: bool = False) -> None:
         side="left", padx=(6, 0)
     )
 
-    entry(row(c, "Word fixes", "Auto-corrections as wrong=right, comma separated."), fixes_var, width=24)
+    wf = stack(c, "Word fixes", "Corrections applied last, so they always win. Double-click a row to edit it.")
+    fixes_list = tk.Listbox(wf, height=4, width=30, bg=BG, fg=FG,
+                            selectbackground=ACCENT, selectforeground="#1a0c0d",
+                            highlightthickness=1, highlightbackground=DIV,
+                            relief="flat", activestyle="none", exportselection=False,
+                            font=("Segoe UI", 9))
+    fixes_list.pack(side="left", anchor="n")
+    for _line in fixes_to_lines(cfg.replacements):
+        fixes_list.insert("end", _line)
+    fside = tk.Frame(wf, bg=CARD)
+    fside.pack(side="left", padx=(8, 0), anchor="n")
+    fix_wrong_var = tk.StringVar()
+    fix_right_var = tk.StringVar()
+    ttk.Entry(fside, textvariable=fix_wrong_var, width=16).pack(anchor="w")
+    tk.Label(fside, text="→", bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w")
+    fix_right_entry = ttk.Entry(fside, textvariable=fix_right_var, width=16)
+    fix_right_entry.pack(anchor="w")
+
+    def _fix_add(*_a):
+        wrong = fix_wrong_var.get().strip()
+        right = fix_right_var.get().strip()
+        if not wrong:
+            return
+        # .strip() on both sides of the comparison, or a row that ever picks up
+        # stray whitespace silently becomes a second entry for the same word
+        # instead of replacing the first.
+        existing = {line.partition(_FIX_SEP)[0].strip(): i
+                    for i, line in enumerate(fixes_list.get(0, "end"))}
+        line = f"{wrong}{_FIX_SEP}{right}"
+        if wrong in existing:
+            fixes_list.delete(existing[wrong])
+            fixes_list.insert(existing[wrong], line)
+        else:
+            fixes_list.insert("end", line)
+        fix_wrong_var.set("")
+        fix_right_var.set("")
+
+    def _fix_remove():
+        for i in reversed(fixes_list.curselection()):
+            fixes_list.delete(i)
+
+    def _fix_edit(_event=None):
+        sel = fixes_list.curselection()
+        if not sel:
+            return
+        wrong, _sep, right = fixes_list.get(sel[0]).partition(_FIX_SEP)
+        fix_wrong_var.set(wrong.strip())
+        fix_right_var.set(right)
+        fixes_list.delete(sel[0])
+
+    def _fix_export():
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(
+            parent=root, defaultextension=".csv", filetypes=[("CSV", "*.csv")])
+        if path:
+            write_fixes_csv(path, fixes_from_lines(fixes_list.get(0, "end")))
+
+    def _fix_import():
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(parent=root, filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
+        if not path:
+            return
+        merged = fixes_from_lines(fixes_list.get(0, "end"))
+        merged.update(read_fixes_csv(path))
+        fixes_list.delete(0, "end")
+        for _line in fixes_to_lines(merged):
+            fixes_list.insert("end", _line)
+
+    fix_right_entry.bind("<Return>", _fix_add)
+    fixes_list.bind("<Double-Button-1>", _fix_edit)
+    _frow = tk.Frame(fside, bg=CARD)
+    _frow.pack(anchor="w", pady=(6, 0))
+    ttk.Button(_frow, text="Add", command=_fix_add, width=7).pack(side="left")
+    ttk.Button(_frow, text="Remove", command=_fix_remove, width=8).pack(side="left", padx=(6, 0))
+    _frow2 = tk.Frame(fside, bg=CARD)
+    _frow2.pack(anchor="w", pady=(4, 0))
+    ttk.Button(_frow2, text="Import CSV", command=_fix_import).pack(side="left")
+    ttk.Button(_frow2, text="Export CSV", command=_fix_export).pack(side="left", padx=(6, 0))
+
     entry(row(c, "Speech notes", "Describe your accent, stutter or fillers to guide AI cleanup."),
           speech_notes_var, width=24)
 
@@ -1609,14 +1746,7 @@ def main(first_run: bool = False) -> None:
         cfg.meetings_dir = meetings_dir_var.get().strip()
         cfg.paste_speed = value_for(paste_speed_var, PASTE_SPEEDS)
         cfg.speech_notes = speech_notes_var.get().strip()
-        fixes = {}
-        for part in fixes_var.get().split(","):
-            if "=" in part:
-                k, v = part.split("=", 1)
-                k = k.strip()
-                if k:
-                    fixes[k] = v.strip()
-        cfg.replacements = fixes
+        cfg.replacements = fixes_from_lines(fixes_list.get(0, "end"))
         cfg.save()
         if oai_key_var.get().strip():
             config.save_api_key("OPENAI_API_KEY", oai_key_var.get())

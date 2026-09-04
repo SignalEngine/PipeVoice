@@ -9,7 +9,7 @@ python-dotenv>=1.0
 # --- Engines ---
 openai>=1.30          # OpenAI Whisper API (default engine)
 deepgram-sdk>=3,<4     # Deepgram streaming (v4+ changed the API; pin to v3)
-faster-whisper>=1.0   # Local/offline Whisper (no internet needed)
+faster-whisper>=1.0.2   # Local/offline Whisper (no internet needed)
 
 # --- Screen recorder ---
 mss>=9.0              # grabs a screen region; ~0.1 MB
