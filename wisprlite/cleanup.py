@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Optional
 
 log = logging.getLogger("wisprlite")
@@ -181,6 +182,7 @@ def chat_completion(
     if key_env:
         api_key = os.getenv(key_env, "").strip()
         if not api_key:
+            _set_last_error(f"no API key for {provider}")
             log.warning("AI request: no API key for provider %s", provider)
             if raise_errors:
                 raise RuntimeError(f"no API key for provider {provider}")
@@ -200,12 +202,40 @@ def chat_completion(
             messages=messages,
         )
         out = (resp.choices[0].message.content or "").strip()
+        _set_last_error("")
         return out if allow_empty else (out or None)
     except Exception as exc:
+        _set_last_error(_short_reason(exc))
         log.warning("AI request failed (%s): %s", provider, exc)
         if raise_errors:
             raise RuntimeError(f"{provider} request failed: {exc}") from exc
         return None
+
+
+_last_error = ""
+
+
+def _set_last_error(msg: str) -> None:
+    global _last_error
+    _last_error = msg
+
+
+def last_error() -> str:
+    """Why the most recent AI request came back empty, in a line a human can read.
+
+    The provider errors are JSON blobs three lines long; the caller wants to put
+    the reason on a 110-pixel overlay, so this keeps the sentence and drops the
+    envelope.
+    """
+    return _last_error
+
+
+def _short_reason(exc: Exception) -> str:
+    text = str(exc)
+    match = re.search(r"'message':\s*'([^']+)'", text)
+    if match:
+        return match.group(1).strip().rstrip(".")
+    return text.strip().splitlines()[0][:120] if text.strip() else exc.__class__.__name__
 
 
 def clean(text: str, provider: str = "openai", model: str = "",
