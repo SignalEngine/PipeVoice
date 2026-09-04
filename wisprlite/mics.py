@@ -133,8 +133,15 @@ def measure(samples: np.ndarray, rate: int) -> dict:
         frames = samples[: frame_count * frame_len].reshape(frame_count, frame_len)
         frame_rms = np.sqrt(np.mean(frames ** 2, axis=1))
         noise_floor = float(np.percentile(frame_rms, 10))
+        # The level of the SPEECH, not of the recording. Whole-buffer RMS
+        # averages in every pause between words, which drags a perfectly good
+        # microphone 10-15 dB down and reports it as "too quiet" - the level
+        # you would measure depends mostly on how much you paused. The loudest
+        # quarter of the frames is where the talking is.
+        speech = float(np.mean(frame_rms[frame_rms >= np.percentile(frame_rms, 75)]))
     else:
         noise_floor = rms
+        speech = rms
 
     rms_db = to_dbfs(rms)
     noise_floor_db = to_dbfs(noise_floor)
@@ -147,6 +154,7 @@ def measure(samples: np.ndarray, rate: int) -> dict:
 
     return {
         "peak_dbfs": to_dbfs(peak),
+        "speech_dbfs": to_dbfs(speech),
         "rms_dbfs": rms_db,
         "noise_floor_dbfs": noise_floor_db,
         "clipping_pct": clipping_pct,
@@ -155,12 +163,18 @@ def measure(samples: np.ndarray, rate: int) -> dict:
 
 
 def verdict(measurement: dict) -> str:
-    """First-match-wins verdict string for a `measure()` result."""
+    """First-match-wins verdict string for a `measure()` result.
+
+    Judged on `speech_dbfs`, never on whole-buffer RMS: a pause is not a quiet
+    microphone, and grading on the average made a normal test with gaps between
+    sentences come back "too quiet" however good the mic was.
+    """
+    level = measurement.get("speech_dbfs", measurement["rms_dbfs"])
     if measurement["clipping_pct"] > 0.1:
         return "Too loud — turn the mic gain down"
-    if measurement["rms_dbfs"] < -40:
+    if level < -45:
         return "Nothing heard — is this the right mic?"
-    if measurement["rms_dbfs"] < -30:
+    if level < -32:
         return "Too quiet — move closer or raise the gain"
     if measurement["snr_db"] < 15:
         return "Noisy — a lot of background for the level of your voice"

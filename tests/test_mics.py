@@ -171,3 +171,46 @@ def test_a_stereo_endpoint_does_not_outrank_a_mono_one():
     ]
     assert mics.recommend(grouped)["index"] == 3, \
         "the stereo endpoint won purely on channel count"
+
+
+def _speech_with_pauses(level_dbfs, rate=16_000, seconds=3.0, duty=0.4):
+    """Talking for `duty` of the window, silent the rest — a real 3s test."""
+    amplitude = 10 ** (level_dbfs / 20)
+    n = int(rate * seconds)
+    t = np.arange(n) / rate
+    tone = np.sin(2 * np.pi * 180 * t) * amplitude
+    # 500ms on / off blocks, so the buffer is `duty` speech and the rest quiet.
+    block = int(rate * 0.5)
+    gate = np.zeros(n)
+    for start in range(0, n, block):
+        if (start // block) % 5 < duty * 5:
+            gate[start:start + block] = 1.0
+    return (tone * gate).astype(np.float32)
+
+
+def test_pauses_between_sentences_do_not_read_as_a_quiet_microphone():
+    """James, 2026-09-04: "it kept on saying that it was too quiet."
+
+    A speaking level of -20 dBFS is fine. Whole-buffer RMS over a 3s window
+    that is 60% silence reports it far lower, so a good mic was graded on how
+    much the user happened to pause.
+    """
+    # -25 dBFS peak is about -28 dBFS of actual speech RMS: usable. Talking for
+    # a fifth of a 3s window drops whole-buffer RMS past -32, so the two grading
+    # methods DISAGREE here — the only kind of fixture that proves which is used.
+    m = mics.measure(_speech_with_pauses(-25.0, duty=0.2), 16_000)
+
+    assert m["rms_dbfs"] < -32, (
+        f"fixture does not exercise the averaging problem: rms {m['rms_dbfs']:.1f}"
+    )
+    assert m["speech_dbfs"] > -30, f"speech level lost to the pauses: {m['speech_dbfs']:.1f}"
+    assert mics.verdict(m) != "Too quiet — move closer or raise the gain"
+
+
+def test_a_genuinely_quiet_microphone_is_still_called_out():
+    """The fix must not make the verdict useless — a real problem still shows."""
+    m = mics.measure(_speech_with_pauses(-45.0), 16_000)
+    assert mics.verdict(m) in (
+        "Too quiet — move closer or raise the gain",
+        "Nothing heard — is this the right mic?",
+    ), mics.verdict(m)
