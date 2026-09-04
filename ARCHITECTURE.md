@@ -237,3 +237,31 @@ CI (`build.yml`) runs on `windows-latest`: `pip install -r requirements.txt pyin
 - **Tests.** Live in `tests/` (`test_voices`, `test_profiles_style`, `test_cleanup_styles`, `test_*`). **No pytest/framework, no CI test step** — run each file directly (`python3 tests/test_x.py`), manually. Tests that need `faster_whisper`/`deepgram` (absent on the dev box) stub the engine module instead — see `test_transcribe_window.py`.
 - **Always run codex-review.** Standing instruction: run the `codex-review` skill on any substantive code change before declaring it done, and screenshot-verify UI changes.
 - **Release ritual.** Bump `wisprlite/__init__.py` `__version__` → merge to `main` → push an **annotated** tag `vX.Y.Z`. CI builds and publishes the GitHub Release with `Pipevoice-Setup.exe`. Then set the changelog with `gh release edit <tag> --notes-file …` (the CI tag-message auto-notes is flaky). Installed apps auto-update from the latest Release.
+
+## Two sample rates, deliberately
+
+Dictation and recording have different jobs, so they run at different rates.
+Six modules define a rate constant; only two of them are about listening.
+
+| Path | Rate | Why |
+|---|---|---|
+| `audio.py`, `engines/{deepgram,openai,gemini}_engine.py` | 16 kHz | Dictation audio is never played back. It goes straight to a speech engine, and 16 kHz is the rate those APIs want. |
+| `screenrec.py` (`AUDIO_RATE`), `meeting.py` (`SAMPLE_RATE`) | 48 kHz | The `.mp4` and the session `.wav`s are files a human listens to. 16 kHz hard-cuts everything above 8 kHz — the sibilance and "air" that make a voice sound present — so recordings sounded like a phone call.
+
+**Do not "unify" these.** Raising the dictation rate wastes bandwidth on every
+utterance for a listener that does not exist; lowering the recording rate brings
+the muffle back.
+
+Transcription of recordings needs no resampling: `transcribe_file` and
+`transcribe_file_deepgram` both take a **file path** and resample internally.
+The one exception is PipeFocus, which streams live PCM — `focus_stream()` takes
+a `sample_rate` argument and `app.py` passes `meeting.SAMPLE_RATE`. If those two
+ever disagree, Deepgram decodes the audio at the wrong speed and every PipeFocus
+transcript becomes garbage.
+
+`loudness.py` applies peak normalisation at finalise (never in an audio
+callback): quiet takes are boosted towards -1 dBFS, gain capped at 8x so a
+near-silent take is not amplified into hiss, and audio already above -3 dBFS is
+left alone. `mics.py` collapses PortAudio's per-host-API duplicate endpoints to
+one entry per physical microphone and ranks them, which is what the settings
+picker and "Test my mic" both read.
