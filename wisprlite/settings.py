@@ -1088,25 +1088,60 @@ def main(first_run: bool = False) -> None:
             value = dict((lbl, val) for lbl, val in devices).get(device_var.get(), "")
             return int(value) if value else None
 
+        def _show(text, fg):
+            # Recording happens on a worker thread, so every UI write comes back
+            # through the main loop. A destroyed dialog would abort the whole
+            # interpreter, not just this callback - see the about.py incident.
+            def apply():
+                if result.winfo_exists():
+                    result.config(text=text, fg=fg)
+            try:
+                if dialog.winfo_exists():
+                    dialog.after(0, apply)
+            except Exception:
+                pass
+
+        def _in_background(fn):
+            # sd.rec + sd.wait blocks for 3s, or 1.5s PER DEVICE. On the UI
+            # thread that is a frozen, "Not Responding" window for the whole
+            # test - on the one feature that exists to feel reassuring.
+            for button in (single_btn, all_btn):
+                button.config(state="disabled")
+
+            def done():
+                for button in (single_btn, all_btn):
+                    if button.winfo_exists():
+                        button.config(state="normal")
+
+            def work():
+                try:
+                    fn()
+                finally:
+                    try:
+                        if dialog.winfo_exists():
+                            dialog.after(0, done)
+                    except Exception:
+                        pass
+
+            threading.Thread(target=work, daemon=True).start()
+
         def run_single():
-            result.config(text="Recording 3s…", fg=MUTED)
-            dialog.update()
+            _show("Recording 3s…", MUTED)
             try:
                 samples, rate = _record_seconds(_selected_device(), 3.0)
                 m = mics.measure(samples, rate)
                 v = mics.verdict(m)
                 fg = GOOD if v == "Good" else (ACCENT if "loud" in v or "Nothing" in v else WARN)
-                result.config(
-                    text=f"{v}\npeak {m['peak_dbfs']:.1f} dBFS · rms {m['rms_dbfs']:.1f} dBFS · "
-                         f"snr {m['snr_db']:.1f} dB · clipping {m['clipping_pct']:.2f}%",
-                    fg=fg,
+                _show(
+                    f"{v}\npeak {m['peak_dbfs']:.1f} dBFS · rms {m['rms_dbfs']:.1f} dBFS · "
+                    f"snr {m['snr_db']:.1f} dB · clipping {m['clipping_pct']:.2f}%",
+                    fg,
                 )
             except Exception as exc:
-                result.config(text=f"Microphone unavailable: {exc}", fg=ACCENT)
+                _show(f"Microphone unavailable: {exc}", ACCENT)
 
         def run_all():
-            result.config(text="Testing every microphone— keep talking…", fg=MUTED)
-            dialog.update()
+            _show("Testing every microphone — keep talking…", MUTED)
             try:
                 grouped = mics.group_inputs(mics.list_inputs())
                 scored = []
@@ -1119,11 +1154,8 @@ def main(first_run: bool = False) -> None:
                     in_band = -30 <= m["rms_dbfs"] <= -6
                     scored.append((g, m, in_band))
                 if not heard_any:
-                    result.config(
-                        text="Nothing heard on any device — inconclusive, "
-                             "keep talking and try again.",
-                        fg=WARN,
-                    )
+                    _show("Nothing heard on any device — inconclusive, "
+                          "keep talking and try again.", WARN)
                     return
                 best_g, best_m, _ = max(scored, key=lambda t: (t[2], t[1]["snr_db"]))
                 best_label = next(
@@ -1131,14 +1163,18 @@ def main(first_run: bool = False) -> None:
                 )
                 if best_label:
                     device_var.set(best_label)
-                result.config(text=f"Picked {best_g['name']} — {mics.verdict(best_m)}", fg=GOOD)
+                _show(f"Picked {best_g['name']} — {mics.verdict(best_m)}", GOOD)
             except Exception as exc:
-                result.config(text=f"Test failed: {exc}", fg=ACCENT)
+                _show(f"Test failed: {exc}", ACCENT)
 
         btns = tk.Frame(dialog, bg=BG)
         btns.pack(pady=(0, 8))
-        ttk.Button(btns, text="Test mic (3s)", command=run_single).pack(side="left", padx=4)
-        ttk.Button(btns, text="Test all and pick the best", command=run_all).pack(side="left", padx=4)
+        single_btn = ttk.Button(btns, text="Test mic (3s)",
+                                command=lambda: _in_background(run_single))
+        single_btn.pack(side="left", padx=4)
+        all_btn = ttk.Button(btns, text="Test all and pick the best",
+                             command=lambda: _in_background(run_all))
+        all_btn.pack(side="left", padx=4)
         ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=(0, 16))
 
     ttk.Button(mic_row, text="Test my mic", command=test_mic).pack(side="left", padx=(8, 0))

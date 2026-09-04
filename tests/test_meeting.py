@@ -982,3 +982,33 @@ def test_a_writer_that_finished_hands_over_its_tail():
         recorder._close_waves()
         with wave.open(str(path), "rb") as audio:
             assert audio.getnframes() == 800
+
+
+def test_a_quiet_meeting_wav_is_normalised_when_the_recording_stops():
+    """The normalisation maths being right proves nothing about whether stop()
+    CALLS it. Sabotaging the call site left the whole suite green."""
+    import numpy as np
+    from wisprlite import loudness
+
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp) / "meeting-quiet"
+        session.mkdir()
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        recorder.session_dir = session
+        recorder._started_at = "2026-09-04T12:00:00+00:00"
+        recorder._active = True
+        for stream in ("mic", "desktop"):
+            recorder._waves[stream] = recorder._open_wave(session / f"{stream}.wav")
+            # -26 dBFS: quiet enough to correct, inside the 8x cap.
+            quiet = np.full((4_000, 1), 10 ** (-26 / 20), dtype=np.float32)
+            recorder._write_block(stream, quiet)
+
+        recorder.stop()
+
+        for stream in ("mic", "desktop"):
+            with wave.open(str(session / f"{stream}.wav"), "rb") as audio:
+                samples = np.frombuffer(audio.readframes(audio.getnframes()), dtype="<i2")
+            assert loudness.peak_dbfs(samples) > -10, (
+                f"{stream}.wav left at {loudness.peak_dbfs(samples):.1f} dBFS — "
+                "stop() is not normalising"
+            )
