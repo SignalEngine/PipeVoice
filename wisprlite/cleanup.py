@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import threading
 from typing import Optional
 
 log = logging.getLogger("wisprlite")
@@ -181,6 +183,7 @@ def chat_completion(
     if key_env:
         api_key = os.getenv(key_env, "").strip()
         if not api_key:
+            _set_last_error(f"no API key for {provider}")
             log.warning("AI request: no API key for provider %s", provider)
             if raise_errors:
                 raise RuntimeError(f"no API key for provider {provider}")
@@ -200,12 +203,46 @@ def chat_completion(
             messages=messages,
         )
         out = (resp.choices[0].message.content or "").strip()
+        _set_last_error("")
         return out if allow_empty else (out or None)
     except Exception as exc:
+        _set_last_error(_short_reason(exc))
         log.warning("AI request failed (%s): %s", provider, exc)
         if raise_errors:
             raise RuntimeError(f"{provider} request failed: {exc}") from exc
         return None
+
+
+# Thread-local, not a module global: a meeting summary polishing in the
+# background must not overwrite the reason a dictation's polish just failed.
+_errors = threading.local()
+
+
+def _set_last_error(msg: str) -> None:
+    _errors.last = msg
+
+
+def last_error() -> str:
+    """Why the most recent AI request came back empty, in a line a human can read.
+
+    The provider errors are JSON blobs three lines long; the caller wants to put
+    the reason on a 110-pixel overlay, so this keeps the sentence and drops the
+    envelope.
+    """
+    return getattr(_errors, "last", "")
+
+
+def _short_reason(exc: Exception) -> str:
+    text = str(exc)
+    # Stop at the NEXT key, not at the next apostrophe - "It's no longer
+    # available" would otherwise come back as the single word "It". Python's own
+    # repr switches the quoting to double quotes when the value contains one,
+    # so both styles have to be accepted.
+    match = re.search(r"""['"]message['"]:\s*(['"])(.*?)\1,\s*['"](?:status|code)['"]""",
+                      text, re.DOTALL)
+    if match:
+        return match.group(2).strip().rstrip(".")
+    return text.strip().splitlines()[0][:120] if text.strip() else exc.__class__.__name__
 
 
 def clean(text: str, provider: str = "openai", model: str = "",

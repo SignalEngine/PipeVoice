@@ -1161,3 +1161,174 @@ def test_the_local_fallback_loads_the_model_once_not_every_utterance():
     assert len(builds) == 1, \
         f"the model was loaded {len(builds)} times for 5 utterances"
     assert not app._fail.called
+
+
+def _np_zeros(n):
+    import numpy as np
+    return np.zeros(n, dtype="float32")
+
+
+def test_a_press_too_short_to_transcribe_closes_the_engine_socket():
+    """A tap under min_seconds opened a Deepgram websocket on key-down and then
+    walked away from it. Ten seconds later the server killed it with a 1011 and
+    two ERROR lines - 59 of them in one of James's logs, 5% of all dictations,
+    every one a live connection held open for nothing.
+    """
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app.cfg = types.SimpleNamespace(min_seconds=0.35)
+    app._session = mock.Mock()
+    app.overlay = mock.Mock()
+    app._set_icon = mock.Mock()
+    app._release = mock.Mock()
+    app._active = {}
+    app._fg_ctx = {}
+
+    session = app._session
+    App._finish(app, _np_zeros(16000), 0.1)
+
+    session.cancel.assert_called_once_with()
+
+
+def test_a_short_press_with_no_session_does_not_explode():
+    """The early return also runs when start_session failed, so _session is None."""
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app.cfg = types.SimpleNamespace(min_seconds=0.35)
+    app._session = None
+    app.overlay = mock.Mock()
+    app._set_icon = mock.Mock()
+    app._release = mock.Mock()
+    app._active = {}
+    app._fg_ctx = {}
+
+    App._finish(app, _np_zeros(16000), 0.1)   # must not raise
+
+    app.overlay.hide.assert_called_once_with()
+
+
+def test_a_silent_polish_failure_is_shown_instead_of_hidden():
+    """Flow mode ON, provider reachable, nothing came back - a dead model id, a
+    revoked key, a quota wall. cleanup.clean() returns None and the raw text was
+    delivered with only a log line, so the words just got worse with no way to
+    know why. One log carried 235 of these across three months.
+    """
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import cleanup
+
+    app = App.__new__(App)
+    app.cfg = types.SimpleNamespace(
+        cleanup_provider="gemini", cleanup_model="gemini-2.5-flash",
+        language="", speech_notes="",
+    )
+    app._eff = lambda key: {"ai_cleanup": True}.get(key, "")
+    app.overlay = mock.Mock()
+
+    with mock.patch.object(cleanup, "provider_ready", return_value=True), \
+         mock.patch.object(cleanup, "clean", return_value=None), \
+         mock.patch.object(cleanup, "last_error", return_value="model no longer available"):
+        out = App._polish(app, "raw words")
+
+    assert out == "raw words", "the raw text must still be delivered"
+    assert app._polish_error == "model no longer available", \
+        "the failure must be recorded, not swallowed"
+
+
+def test_a_successful_polish_leaves_no_warning_behind():
+    """The flag is per-utterance. One bad polish must not mark every later one."""
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import cleanup
+
+    app = App.__new__(App)
+    app.cfg = types.SimpleNamespace(
+        cleanup_provider="gemini", cleanup_model="m", language="", speech_notes="",
+    )
+    app._eff = lambda key: {"ai_cleanup": True}.get(key, "")
+    app.overlay = mock.Mock()
+    app._polish_error = "stale failure from last time"
+
+    with mock.patch.object(cleanup, "provider_ready", return_value=True), \
+         mock.patch.object(cleanup, "clean", return_value="Raw words."):
+        out = App._polish(app, "raw words")
+
+    assert out == "Raw words."
+    assert app._polish_error is None, "a good polish must clear the previous warning"
+
+
+def test_the_polish_warning_never_overwrites_a_delivery_failure():
+    """Two things went wrong at once: the polish failed AND the paste failed.
+    The overlay has one line, and 'couldn't type there' is the news that costs
+    the user words. It must be the message left on screen."""
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+    from wisprlite import history
+
+    app = App.__new__(App)
+    app.cfg = types.SimpleNamespace(
+        history_enabled=True, replacements={}, paste_speed="normal",
+    )
+    app.overlay = mock.Mock()
+    app._fail = mock.Mock()
+
+    with mock.patch.object(history, "record"), \
+         mock.patch("wisprlite.app.type_text", side_effect=RuntimeError("no window")), \
+         mock.patch("wisprlite.app.copy_clipboard", return_value=True):
+        ok = App._deliver(app, "hello", False, "type", False)
+
+    assert ok is False, \
+        "a failed paste must report failure so the polish warning stays off the screen"
+
+
+def test_the_reason_is_pulled_out_of_the_provider_json_blob():
+    """Providers return a three-line JSON envelope; the overlay has one line."""
+    from wisprlite.cleanup import _short_reason
+
+    exc = Exception(
+        "Error code: 404 - [{'error': {'code': 404, 'message': 'This model "
+        "models/gemini-2.5-flash is no longer available.', 'status': 'NOT_FOUND'}}]"
+    )
+    assert _short_reason(exc) == "This model models/gemini-2.5-flash is no longer available"
+
+
+def test_an_apostrophe_in_the_reason_does_not_cut_it_to_one_word():
+    """`[^']+` stopped at the first apostrophe inside the value, so a message
+    like "It's no longer available" reached the overlay as "It"."""
+    from wisprlite.cleanup import _short_reason
+
+    exc = Exception(
+        "Error code: 404 - [{'error': {'code': 404, 'message': \"It's no longer "
+        "available, use a newer model\", 'status': 'NOT_FOUND'}}]"
+    )
+    assert _short_reason(exc) == "It's no longer available, use a newer model"
+
+
+def test_one_thread_s_failure_does_not_overwrite_another_s():
+    """A meeting summary polishing in the background shares cleanup.py with a
+    live dictation. A module-global reason let the later call win."""
+    import threading
+    from wisprlite.cleanup import _set_last_error, last_error
+
+    _set_last_error("the dictation's reason")
+    done = threading.Event()
+
+    def other():
+        _set_last_error("the meeting summary's reason")
+        done.set()
+
+    t = threading.Thread(target=other)
+    t.start()
+    done.wait(2)
+    t.join()
+
+    assert last_error() == "the dictation's reason"

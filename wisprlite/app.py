@@ -159,6 +159,7 @@ class App:
         self._engines = {}            # per-engine cache (name -> engine), for per-app profiles
         self._session = None
         self._clipboard_only = False
+        self._polish_error: str | None = None
         self._active = {}             # per-utterance profile overrides (never mutates cfg)
         self._fg_ctx = {}             # foreground window captured at hotkey-press time
         self._started_at = 0.0
@@ -362,6 +363,16 @@ class App:
     def _finish(self, audio, duration) -> None:
         try:
             if duration < self.cfg.min_seconds or audio.size == 0:
+                # Close the socket we opened on key-down. Without this a tap too
+                # short to transcribe left a live Deepgram connection with no
+                # audio on it, and ten seconds later the server killed it with a
+                # 1011 - two ERROR lines per accidental tap, and a connection
+                # held open for nothing. 59 of them in one log.
+                if self._session is not None:
+                    try:
+                        self._session.cancel()
+                    except Exception:
+                        log.exception("cancel failed on short press")
                 self.overlay.hide()
                 self._set_icon("idle")
                 return
@@ -432,7 +443,9 @@ class App:
             out = self._eff("output_mode")
             to_clipboard = (self._clipboard_only or out == "clipboard"
                             or foreground.is_no_text_target(self._fg_ctx))
-            self._deliver(text, to_clipboard, out, press_enter)
+            if self._deliver(text, to_clipboard, out, press_enter) and self._polish_error:
+                self.overlay.set_state(
+                    "error", f"Raw text — polish failed: {self._polish_error}"[:110])
             self._beep(990, 60)
             self._set_icon("idle")
         finally:
@@ -441,8 +454,12 @@ class App:
             self._fg_ctx = {}
             self._release()
 
-    def _deliver(self, text: str, to_clipboard: bool, out: str, press_enter: bool) -> None:
-        """Save the words, then hand them over. In that order, deliberately."""
+    def _deliver(self, text: str, to_clipboard: bool, out: str, press_enter: bool) -> bool:
+        """Save the words, then hand them over. In that order, deliberately.
+
+        Returns True when delivery landed cleanly, so a caller can add a softer
+        warning on top without stomping a real failure message.
+        """
         # Record BEFORE delivering. Typing is the fragile half - a window
         # that refuses synthetic input, a keyboard backend that raises - and
         # this used to run AFTER it, inside a try that has only a finally.
@@ -461,6 +478,7 @@ class App:
             if text:
                 copy_clipboard(text)
             self.overlay.set_state("done", "Copied to clipboard" if text else "↵")
+            return True
         else:
             try:
                 type_text(text, out, press_enter=press_enter,
@@ -470,6 +488,7 @@ class App:
                 # flipped to an error - two contradictory answers to "did that
                 # work?", in the order that reads as yes.
                 self.overlay.set_state("done", text or "↵")
+                return True
             except Exception as exc:
                 # Never swallow the words. Put them somewhere usable and say
                 # so, rather than showing the polished text on the overlay
@@ -480,6 +499,7 @@ class App:
                         "error", "Couldn't type there — copied instead, press Ctrl+V")
                 else:
                     self._fail(f"couldn't type that: {exc}")
+                return False
 
     def _fallback(self, audio, err) -> str:
         """If a cloud engine failed (e.g. offline), try local Whisper once."""
@@ -997,6 +1017,7 @@ class App:
     # ---- agent MCP -------------------------------------------------------
     def _polish(self, text: str) -> str:
         """Optional LLM cleanup ('Flow mode'); returns the input unchanged if off/unavailable."""
+        self._polish_error = None
         if not (text and self._eff("ai_cleanup")):
             return text
         from . import cleanup
@@ -1007,6 +1028,13 @@ class App:
                                  self.cfg.language, self.cfg.speech_notes,
                                  style=self._eff("cleanup_style"),
                                  custom_instruction=self._eff("cleanup_instruction"))
+        if polished is None:
+            # Flow mode was ON and the provider was reachable, yet nothing came
+            # back - a dead model id, a revoked key, a quota wall. This used to
+            # return the raw text with only a log line, so the words simply got
+            # worse and nobody could see why. One log carried 235 of these.
+            self._polish_error = cleanup.last_error() or "AI cleanup unavailable"
+            log.warning("polish failed, delivering raw text: %s", self._polish_error)
         return polished or text
 
     def _agent_dispatch(self, req: dict) -> dict:
