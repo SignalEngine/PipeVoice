@@ -326,3 +326,57 @@ def test_the_png_is_not_expanded_into_a_python_list_first():
               / "wisprlite" / "readaloud.py").read_text(encoding="utf-8")
     assert "writer.write_bytes(png_bytes)" in source, \
         "the raw bytes are not passed straight to the writer"
+
+
+def test_a_second_press_during_the_ocr_pass_does_not_start_a_second_read():
+    """The mid-read check reads _read_aloud_speaker, which is still None while
+    OCR runs - seconds on a full-screen grab. Without a lock, two threads race
+    to own the speaker and you hear both reads at once."""
+    import threading
+    from unittest import mock
+
+    from uistub import install_platform_stubs
+    install_platform_stubs()          # app.py imports sounddevice/keyboard at module scope
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app._read_aloud_speaker = None
+    app._read_aloud_busy = threading.Lock()
+
+    with mock.patch("wisprlite.app.threading.Thread") as thread:
+        App._read_aloud_trigger(app)   # first press starts a read
+        App._read_aloud_trigger(app)   # second press, still mid-OCR
+    assert thread.call_count == 1, "a second press started a second read"
+
+
+def test_the_read_lock_is_released_on_every_path_out():
+    """A read that finds no text, or raises, must not leave the hotkey dead for
+    the rest of the session."""
+    import threading
+    from unittest import mock
+
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app._read_aloud_busy = threading.Lock()
+    app._read_aloud_busy.acquire()
+
+    with mock.patch.object(App, "_read_aloud_body", side_effect=RuntimeError("boom")):
+        try:
+            App._read_aloud_run(app)
+        except RuntimeError:
+            pass
+
+    assert app._read_aloud_busy.acquire(blocking=False), \
+        "the lock survived an exception - the hotkey is now dead"
+
+
+def test_a_speaker_is_one_shot_and_says_so():
+    """stop() is latched so an Esc during OCR is honoured. That makes the class
+    one-shot, which must be documented rather than left as a silent no-op."""
+    from wisprlite import readaloud
+
+    assert "ONE-SHOT" in readaloud.Speaker.speak.__doc__, \
+        "the one-shot contract is not documented on speak()"

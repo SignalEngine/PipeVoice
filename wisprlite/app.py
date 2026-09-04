@@ -153,6 +153,7 @@ class App:
             is_paused=lambda: self.paused or self._meeting_active,
         )
         self._read_aloud_speaker = None   # the live readaloud.Speaker, None when idle
+        self._read_aloud_busy = threading.Lock()   # one read at a time
 
         self._screenrec = None        # the live ScreenRecording, None when idle
         self._screenrec_selecting = False   # the region selector is open
@@ -338,9 +339,29 @@ class App:
             # Pressed again mid-read: the hotkey itself is also a stop.
             speaker.stop()
             return
+        # A second press during the OCR pass - seconds on a full-screen grab -
+        # arrives while _read_aloud_speaker is still None, so the check above
+        # does not catch it. Without this, two threads race to own the speaker
+        # and you hear both reads at once over a torn overlay. Dictation has
+        # guarded this since forever; read-aloud needs its own, since the two
+        # are independent and either may be running.
+        if not self._read_aloud_busy.acquire(blocking=False):
+            return
         threading.Thread(target=self._read_aloud_run, daemon=True).start()
 
     def _read_aloud_run(self) -> None:
+        try:
+            self._read_aloud_body()
+        finally:
+            # Released HERE, not at any early return inside the body. Every path
+            # out of a read - no text, no engine, an exception - must free the
+            # lock, or the hotkey is dead for the rest of the session.
+            try:
+                self._read_aloud_busy.release()
+            except RuntimeError:
+                pass
+
+    def _read_aloud_body(self) -> None:
         from . import readaloud
 
         try:

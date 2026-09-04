@@ -146,7 +146,10 @@ def ocr_png(png_bytes: bytes, *, language: str = "") -> str:
             writer.write_bytes(list(png_bytes))
         await writer.store_async()
         await writer.flush_async()
-        stream.seek(0)
+        try:
+            stream.seek(0)
+        except AttributeError:
+            stream.position = 0    # projection versions differ on which exists
         decoder = await BitmapDecoder.create_async(stream)
         bitmap = await decoder.get_software_bitmap_async()
         engine = (
@@ -193,6 +196,15 @@ class Speaker:
         self.paused = False
 
     def speak(self, text: str) -> None:
+        """Speak once. A Speaker is ONE-SHOT by design.
+
+        `stop()` is latched, so that pressing Esc DURING the OCR pass - before
+        speech has started - still prevents it speaking. Resetting the latch
+        here would silently discard that Esc. The cost is that a stopped Speaker
+        cannot be reused, so say that loudly rather than no-op'ing: a "repeat
+        last" button built on a reused Speaker would otherwise just do nothing.
+        The app builds a fresh Speaker per read.
+        """
         text = " ".join((text or "").split())
         if not text:
             raise ReadAloudError("nothing to read")
@@ -204,6 +216,7 @@ class Speaker:
             raise ReadAloudError(f"speech unavailable: {exc}") from exc
         with self._lock:
             if self._stopped:
+                # Stopped before playback began - an Esc during OCR. Honour it.
                 self._stop_player(player)
                 return
             self._player = player
