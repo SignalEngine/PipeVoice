@@ -61,6 +61,30 @@ of them, unranked.
   mic" is testable without a sound card. Recording runs on a **worker thread** —
   on the UI thread it froze the window for 3s, or 1.5s per device on "Test all".
 
+### Grade on `speech_dbfs`, never on whole-buffer RMS
+v2.41.0 shipped a verdict that judged on the RMS of the entire 3-second capture,
+which averages in **every pause between words**. Someone talking for a fifth of
+the window reads ~7 dB below their actual speaking level, so a perfectly good
+microphone was graded on how much the user happened to pause — and it reported
+"Too quiet" to James on his first try. `measure()` now also returns
+`speech_dbfs`, the mean of the loudest quarter of 20 ms frames, and `verdict()`
+uses that (thresholds -45 / -32, not -40 / -30 on the average).
+
+The regression test is built so the two grading methods **disagree** on the
+fixture; a first attempt at it did not discriminate and stayed green when the
+fix was reverted.
+
+### Every device gets its own try
+Windows always enumerates endpoints that will not open — in use by another app,
+disconnected, or refusing mono float32. "Test all" originally wrapped the whole
+loop in one `try`, so the first such device aborted the run with "Test failed"
+and every microphone after it went untested.
+
+### A verdict must carry its remedy
+"Too quiet" alone is a diagnosis with no treatment. The dialog states the gap
+and direction ("Aim for -20 dBFS — about 12 dB louder than this") and offers a
+button to the Windows Recording tab, where the level slider actually lives.
+
 ## Failure modes seen in the wild
 
 Read from a real 2,453-line `pipevoice.log`, 20 Jun – 4 Sep 2026:
@@ -72,6 +96,8 @@ Read from a real 2,453-line `pipevoice.log`, 20 Jun – 4 Sep 2026:
 | Recordings sound muffled | 16 kHz capture on paths people listen to | v2.41.0 |
 | Quiet mic → quiet video | No gain stage anywhere in the capture path | v2.41.0 |
 | "Which of these 12 mics is good?" | Raw PortAudio dump | v2.41.0 |
+| "It kept saying it was too quiet" | Verdict graded on whole-buffer RMS, so pauses counted as quietness | v2.41.1 |
+| "Test all came up with an error" | One `try` around the whole loop; first unopenable device killed the run | v2.41.1 |
 
 **Not verified on the VPS:** there is no audio device and no Windows here. How a
 recording *sounds*, and how a real device list groups, can only be confirmed on
