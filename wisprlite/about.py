@@ -121,8 +121,12 @@ def build(container, root, wheel=None) -> None:
     vbar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
     inner = tk.Frame(canvas, bg=BG)
-    canvas.create_window((0, 0), window=inner, anchor="nw")
+    inner_window = canvas.create_window((0, 0), window=inner, anchor="nw")
     inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    # Without this the inner frame keeps its natural width and hugs the left
+    # edge once the canvas grows past it — the classic Tk scrollable-frame trap,
+    # and a maximised window is the normal case now, not an edge case.
+    canvas.bind("<Configure>", lambda e: canvas.itemconfigure(inner_window, width=e.width))
     wheel(canvas)
 
     def _exit_for_install():

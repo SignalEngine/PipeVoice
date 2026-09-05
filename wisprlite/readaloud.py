@@ -62,12 +62,18 @@ def focused_window_rect() -> Optional[tuple[int, int, int, int]]:
 def capture_mode_for(*, shift: bool, ctrl: bool) -> str:
     """Which of the three modes a hotkey press means, by which modifiers were
     ALSO held. Pure function so the mode-selection logic is testable without a
-    keyboard: focused window is the default because it needs no mouse."""
+    keyboard.
+
+    Dragging a region is the default: James, the actual user, asked plainly to
+    "select what I want to be read aloud... where we just highlight what we
+    want", overriding an earlier design decision that defaulted to the focused
+    window on the theory that some hypothetical user has no mouse.
+    """
     if ctrl:
-        return "region"
+        return "window"
     if shift:
         return "screen"
-    return "window"
+    return "region"
 
 
 def extra_modifiers(hotkey: str, *, shift_down: bool, ctrl_down: bool) -> tuple[bool, bool]:
@@ -391,6 +397,80 @@ class Speaker:
             with self._lock:
                 if self._stopped or self._player is not player:
                     return
+
+
+# ---- tiered voice selection (Windows / Deepgram / ElevenLabs) ---------------
+
+def _winrt_player_from_bytes(audio_bytes: bytes, content_type: str):
+    """A winrt MediaPlayer sourced from already-synthesized bytes (a cloud TTS
+    response) instead of SpeechSynthesizer. Reuses the same interruptible
+    player Speaker already knows how to stop/pause/release, rather than a
+    second playback path for cloud voices."""
+    import asyncio
+
+    from winrt.windows.media.core import MediaSource
+    from winrt.windows.media.playback import MediaPlayer
+    from winrt.windows.storage.streams import DataWriter, InMemoryRandomAccessStream
+
+    async def build():
+        stream = InMemoryRandomAccessStream()
+        writer = DataWriter(stream.get_output_stream_at(0))
+        try:
+            writer.write_bytes(audio_bytes)
+        except TypeError:
+            writer.write_bytes(list(audio_bytes))
+        await writer.store_async()
+        await writer.flush_async()
+        try:
+            stream.seek(0)
+        except AttributeError:
+            stream.position = 0
+        player = MediaPlayer()
+        player.source = MediaSource.create_from_stream(stream, content_type)
+        return player
+
+    return asyncio.run(build())
+
+
+def build_speaker(text: str, cfg) -> tuple["Speaker", str]:
+    """Build the Speaker for one read, honouring `cfg.read_aloud_tts`.
+
+    Windows stays the default: offline, no key, no cost, and the privacy
+    promise is the product — a cloud voice must always be an explicit choice.
+    Every cloud path degrades to the Windows voice on ANY failure (a dead key,
+    no network, a 402): the second item in the returned tuple is empty on
+    success or a reason to surface when it degraded — Read Aloud must never go
+    silent about why it fell back.
+    """
+    tier = (getattr(cfg, "read_aloud_tts", "") or "windows").strip().lower()
+    rate = getattr(cfg, "read_aloud_rate", 1.0)
+    if tier == "windows":
+        return Speaker(voice=getattr(cfg, "read_aloud_voice", ""), rate=rate), ""
+
+    from . import config as _config
+    from . import tts_cloud
+
+    try:
+        if tier == "deepgram":
+            audio = tts_cloud.deepgram_speak(
+                text,
+                getattr(cfg, "read_aloud_voice", "") or tts_cloud.DEFAULT_DEEPGRAM_VOICE,
+                _config.deepgram_key())
+            content_type = "audio/wav"
+        elif tier == "elevenlabs":
+            audio = tts_cloud.elevenlabs_speak(
+                text,
+                getattr(cfg, "read_aloud_elevenlabs_voice_id", ""),
+                _config.elevenlabs_key())
+            content_type = "audio/mpeg"
+        else:
+            return Speaker(voice=getattr(cfg, "read_aloud_voice", ""), rate=rate), ""
+    except tts_cloud.CloudTTSError as exc:
+        return (Speaker(voice="", rate=rate),
+                f"{str(exc)} — using the Windows voice instead")
+
+    player = _winrt_player_from_bytes(audio, content_type)
+    return Speaker(rate=rate, player_factory=lambda: player), ""
 
 
 # ---- screen reader detection (informational only — never gates speaking) -----

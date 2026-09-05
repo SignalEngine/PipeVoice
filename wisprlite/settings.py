@@ -727,7 +727,17 @@ def main(first_run: bool = False) -> None:
     bookmark_sensitivity_var = tk.DoubleVar(value=cfg.bookmark_sensitivity)
     bookmark_phrases_var = tk.StringVar(value=cfg.bookmark_phrases)
     read_aloud_hotkey_var = tk.StringVar(value=cfg.read_aloud_hotkey)
+    read_aloud_tts_opts = [
+        ("windows", "Windows natural voices — free, offline, no key"),
+        ("deepgram", "Deepgram Aura-2 — cloud, uses your Deepgram key"),
+        ("elevenlabs", "ElevenLabs — best quality, your own key, paid"),
+    ]
+    read_aloud_tts_var = tk.StringVar(
+        value=dict(read_aloud_tts_opts).get(cfg.read_aloud_tts, read_aloud_tts_opts[0][1]))
     read_aloud_voice_var = tk.StringVar(value=cfg.read_aloud_voice)
+    from . import tts_cloud as _tts_cloud
+    read_aloud_deepgram_pick_var = tk.StringVar(value="")
+    read_aloud_elevenlabs_id_var = tk.StringVar(value=cfg.read_aloud_elevenlabs_voice_id)
     read_aloud_rate_var = tk.StringVar(value=str(cfg.read_aloud_rate))
     read_aloud_lang_var = tk.StringVar(value=cfg.read_aloud_ocr_language)
     read_aloud_clipboard_var = tk.BooleanVar(value=cfg.read_aloud_clipboard)
@@ -1136,17 +1146,50 @@ def main(first_run: bool = False) -> None:
     c = card(
         "Read Aloud",
         "For text a screen reader can't reach — an image, a canvas, a scanned "
-        "PDF. Tap = the focused window, +Shift = the whole screen, +Ctrl = drag "
-        "a region. Speaks even with a screen reader running, unless you turn "
-        "that off below.",
+        "PDF. Tap = drag a region, +Shift = the whole screen, +Ctrl = the "
+        "focused window. Speaks even with a screen reader running, unless you "
+        "turn that off below.",
     )
     r = row(c, "Read Aloud hotkey", "Blank turns the feature off.")
     entry(r, read_aloud_hotkey_var, width=14)
     ra_cap_btn = ttk.Button(r, text="Capture", width=8)
     ra_cap_btn.pack(side="left", padx=(8, 0))
     ra_cap_btn.config(command=_mk_capture(ra_cap_btn, read_aloud_hotkey_var))
-    entry(row(c, "Voice", "Blank uses the system default voice."),
+
+    combo(row(c, "Voice engine",
+              "Windows is free, offline, no key — nothing ever leaves this "
+              "machine. Deepgram and ElevenLabs send the recognized text to "
+              "their servers to speak it; only pick those on purpose. Any "
+              "cloud failure (dead key, no network) falls back to Windows and "
+              "says why."),
+          read_aloud_tts_var, [l for _, l in read_aloud_tts_opts])
+
+    wr = row(c, "Get better Windows voices",
+             "Windows 11 ships far better \"Natural\" voices, but they aren't "
+             "installed by default. Opens Settings → Speech → Manage voices.")
+    ttk.Button(wr, text="Open Windows voice settings",
+               command=lambda: os.startfile("ms-settings:speech")).pack(side="left")
+
+    entry(row(c, "Voice / model",
+              "Blank uses the system default Windows voice, or the default "
+              "Deepgram voice (aura-2-draco-en)."),
           read_aloud_voice_var, width=28)
+    dg_row = row(c, "Deepgram voice (pick one)",
+                 "Only used when the voice engine above is Deepgram.")
+    dg_combo = combo(dg_row, read_aloud_deepgram_pick_var,
+                     [f"{name} — {desc}" for name, desc in _tts_cloud.DEEPGRAM_VOICES], width=40)
+
+    def _pick_deepgram_voice(_evt=None):
+        i = dg_combo.current()
+        if 0 <= i < len(_tts_cloud.DEEPGRAM_VOICES):
+            read_aloud_voice_var.set(_tts_cloud.DEEPGRAM_VOICES[i][0])
+    dg_combo.bind("<<ComboboxSelected>>", _pick_deepgram_voice)
+
+    entry(row(c, "ElevenLabs voice ID",
+              "Only used when the voice engine above is ElevenLabs — their "
+              "catalogue is per-account, so this is an ID, not a picklist."),
+          read_aloud_elevenlabs_id_var, width=28)
+
     entry(row(c, "Speed", "0.5 (slow) to 2.0 (fast). 1.0 is normal."),
           read_aloud_rate_var, width=6)
     entry(row(c, "OCR language",
@@ -1723,7 +1766,9 @@ def main(first_run: bool = False) -> None:
         except ValueError:
             cfg.screenrec_fps = 12
         cfg.read_aloud_hotkey = read_aloud_hotkey_var.get().strip()
+        cfg.read_aloud_tts = value_for(read_aloud_tts_var, read_aloud_tts_opts)
         cfg.read_aloud_voice = read_aloud_voice_var.get().strip()
+        cfg.read_aloud_elevenlabs_voice_id = read_aloud_elevenlabs_id_var.get().strip()
         try:
             cfg.read_aloud_rate = max(0.5, min(2.0, float(read_aloud_rate_var.get().strip() or 1.0)))
         except ValueError:
