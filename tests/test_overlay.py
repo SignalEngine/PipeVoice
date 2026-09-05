@@ -335,3 +335,34 @@ def test_every_done_button_is_reachable_by_a_click():
         x1, y1, x2, y2 = ov._done_button_box(index)
         hit = ov._screenrec_hit((x1 + x2) // 2, (y1 + y2) // 2, "done")
         assert hit == action, f"clicking the {action!r} button returned {hit!r}"
+
+
+def test_reading_buttons_fit_inside_the_pill():
+    """Same shared geometry as the done row - must not regress just because a
+    second button set now uses it."""
+    from wisprlite.overlay import Overlay, WIN_W
+
+    ov = Overlay.__new__(Overlay)
+    boxes = [ov._done_button_box(i, Overlay.READING_BUTTONS)
+             for i in range(len(Overlay.READING_BUTTONS))]
+    assert boxes[0][0] >= 0, f"the first reading button starts off the left edge: {boxes[0]}"
+    assert boxes[-1][2] <= WIN_W, f"the last reading button runs off the right edge: {boxes[-1]}"
+    for left, right in zip(boxes, boxes[1:]):
+        assert left[2] <= right[0], "the reading buttons overlap"
+
+
+def test_every_reading_button_is_reachable_by_a_click():
+    from wisprlite.overlay import Overlay
+
+    ov = Overlay.__new__(Overlay)
+    for index, (action, _label) in enumerate(Overlay.READING_BUTTONS):
+        x1, y1, x2, y2 = ov._done_button_box(index, Overlay.READING_BUTTONS)
+        hit = ov._reading_hit((x1 + x2) // 2, (y1 + y2) // 2)
+        assert hit == action, f"clicking the {action!r} button returned {hit!r}"
+
+
+def test_a_click_outside_the_reading_buttons_hits_nothing():
+    from wisprlite.overlay import Overlay
+
+    ov = Overlay.__new__(Overlay)
+    assert ov._reading_hit(0, 0) == ""
