@@ -1242,6 +1242,11 @@ def main(first_run: bool = False) -> None:
                    "https://elevenlabs.io/app/voice-library")).pack(side="left", padx=(8, 0))
 
     speed_row = row(c, "Speed", "0.5 (slow) to 2.0 (fast). 1.0 is normal.")
+    # row() returns the RIGHT-hand frame, so .master is the row frame packed
+    # into the card - which is what `before=` needs. If row() ever returns
+    # the row frame itself this becomes `before=<the card>` and pack() errors.
+    # tests/test_read_aloud_voice_keys.py walks the same two levels, so a
+    # change to row() breaks that test rather than the settings window.
     speed_row_frame = speed_row.master
     entry(speed_row, read_aloud_rate_var, width=6)
     entry(row(c, "OCR language",
