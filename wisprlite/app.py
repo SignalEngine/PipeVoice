@@ -154,6 +154,7 @@ class App:
         )
         self._read_aloud_speaker = None   # the live readaloud.Speaker, None when idle
         self._read_aloud_busy = threading.Lock()   # one read at a time
+        self._read_aloud_last_text = None   # so Restart can re-speak without re-OCR
 
         self._screenrec = None        # the live ScreenRecording, None when idle
         self._screenrec_selecting = False   # the region selector is open
@@ -402,6 +403,16 @@ class App:
             self.overlay.set_state("done", "No text found")
             return
 
+        self._read_aloud_last_text = text
+        self._read_aloud_speak(text)
+
+    def _read_aloud_speak(self, text: str) -> None:
+        """Copy + speak already-captured text. Shared by the initial read and
+        `ra_restart`, so restarting never re-runs OCR - re-OCRing would be
+        slower and could return different text, which is not what "again"
+        means."""
+        from . import readaloud
+
         copied = bool(self.cfg.read_aloud_clipboard)
         if copied:
             copy_clipboard(text)
@@ -429,6 +440,29 @@ class App:
             if not failed:
                 self.overlay.set_state("done", fallback_reason[:80])
 
+    def _read_aloud_restart(self) -> None:
+        """Stop whatever is speaking and read the last-captured text again,
+        from the start - the achievable form of "rewind"."""
+        text = self._read_aloud_last_text
+        if not text:
+            return
+        speaker = self._read_aloud_speaker
+        if speaker is not None:
+            speaker.stop()
+        # Blocks until the interrupted read's own thread has actually released
+        # this lock (it does so right after speaker.speak() returns, which
+        # stop() forces within ~200ms) - so that thread's finally cannot clear
+        # the NEW speaker this call is about to set.
+        if not self._read_aloud_busy.acquire(timeout=5):
+            return
+        try:
+            self._read_aloud_speak(text)
+        finally:
+            try:
+                self._read_aloud_busy.release()
+            except RuntimeError:
+                pass
+
     def _read_aloud_watch_interrupt(self, speaker) -> None:
         """Esc stops, Space pauses/resumes, the hotkey again stops. Polled at
         ~50Hz so an interrupt lands well inside the ~200ms budget — stopping
@@ -449,6 +483,9 @@ class App:
                 space = keyboard.is_pressed("space")
                 if space and not prev_space:
                     (speaker.resume if speaker.paused else speaker.pause)()
+                    # The pill has to hear about a KEYBOARD pause too, or the
+                    # button says "Pause" while clicking it resumes.
+                    self.overlay.set_reading_paused(speaker.paused)
                 prev_space = space
                 hotkey_down = _all_pressed(self.cfg.read_aloud_hotkey)
                 if hotkey_down and not prev_hotkey:
@@ -752,6 +789,21 @@ class App:
 
     def _screenrec_action(self, action: str, value: str = "") -> None:
         """A control on the pill. Runs on the overlay's worker thread."""
+        if action in ("ra_pause", "ra_stop", "ra_restart"):
+            speaker = self._read_aloud_speaker
+            if action == "ra_pause":
+                if speaker is not None:
+                    (speaker.resume if speaker.paused else speaker.pause)()
+                    # Push the REAL state back, so the label cannot drift from
+                    # the speaker - and so a click with no live speaker does
+                    # not flip the label onto nothing.
+                    self.overlay.set_reading_paused(speaker.paused)
+            elif action == "ra_stop":
+                if speaker is not None:
+                    speaker.stop()
+            else:
+                self._read_aloud_restart()
+            return
         if action in ("save", "skip"):
             self._screenrec_ui.answer_name(value if action == "save" else "")
             return

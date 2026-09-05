@@ -143,6 +143,16 @@ class Overlay:
     def set_state(self, state: str, text: Optional[str] = None) -> None:
         self._q.put(("state", state, text))
 
+    def set_reading_paused(self, paused: bool) -> None:
+        """Tell the pill whether the voice is paused, so the button can say
+        Pause or Resume truthfully.
+
+        The overlay used to flip this itself on a click, which made it a SECOND
+        source of truth: pressing Space paused the speaker without the pill
+        knowing, so the button read "Pause" while clicking it called resume().
+        The app owns the speaker, so the app owns the label."""
+        self._q.put(("reading_paused", "1" if paused else "", None))
+
     def set_text(self, text: str) -> None:
         self._q.put(("text", None, text))
 
@@ -272,9 +282,12 @@ class Overlay:
                         if st["name"] == "meeting" and self.on_meeting_click:
                             callback = self.on_meeting_click
                             threading.Thread(target=callback, daemon=True).start()
-                        elif st["name"] == "screenrec" and self.on_screenrec_action:
-                            action = self._screenrec_hit(
-                                state, text, st.get("screenrec_phase", "recording"))
+                        elif self.on_screenrec_action:
+                            # ONE call, not a branch per state. The reading
+                            # branch and its label toggle used to live inline
+                            # here, where nothing could reach them: deleting
+                            # either left every test green.
+                            action = self._pill_click(st, state, text)
                             if action:
                                 fire(action)
                     elif kind == "hover":
@@ -315,8 +328,15 @@ class Overlay:
                         st["hide_at"] = 0.0
                         resize(WIN_H)
                         reveal()
+                    elif kind == "reading_paused":
+                        st["reading_paused"] = bool(state)
                     elif kind == "state":
                         if state:
+                            # A fresh "reading" message always means a new
+                            # read - the initial one, or ra_restart - so the
+                            # Pause label must not carry over a stale pause.
+                            if state == "reading":
+                                st["reading_paused"] = False
                             st["name"] = state
                         if text is not None:
                             st["text"] = text
@@ -356,6 +376,8 @@ class Overlay:
                 except Exception:
                     phase = "recording"
                 resize(self.SCREENREC_H.get(phase, WIN_H))
+            elif st["name"] == "reading":
+                resize(self.SCREENREC_H["done"])   # same taller pill, same button row
             if st["visible"]:
                 self._draw(canvas, st)
             root.after(FRAME_MS, tick)
@@ -384,6 +406,9 @@ class Overlay:
             return
         if st["name"] == "screenrec":
             self._draw_screenrec(c, st, H, accent)
+            return
+        if st["name"] == "reading":
+            self._draw_reading(c, st, H, accent)
             return
         self._draw_status(c, st, H, accent)
 
@@ -603,25 +628,59 @@ class Overlay:
     # not say "open PipeVoice".
     SCREENREC_DONE = (("play", "Play"), ("send", "Send"),
                       ("copy", "Copy path"), ("open", "Open"))
+    # Reading-pill controls. Prefixed ra_ so they cannot collide with the
+    # screenrec actions they share a callback with. Stop is rightmost and
+    # drawn as the primary action - it's the one you reach for in a hurry.
+    READING_BUTTONS = (("ra_pause", "Pause"), ("ra_restart", "Restart"),
+                        ("ra_stop", "Stop"))
     DONE_BTN_H, DONE_BTN_Y = 30, 62
     DONE_GAP, DONE_EDGE = 8, 8
     SCREENREC_H = {"recording": WIN_H, "naming": 88, "working": WIN_H, "done": 100}
 
-    def _done_button_w(self):
+    def _done_button_w(self, buttons=None):
         # Derived from the count, never a constant. A fourth button at the old
         # fixed 108px measured 456px inside a 380px pill, so two of them would
         # have been drawn off the edge - and the hit test would still have
         # claimed they were there.
-        count = len(self.SCREENREC_DONE)
+        buttons = self.SCREENREC_DONE if buttons is None else buttons
+        count = len(buttons)
         gaps = (count - 1) * self.DONE_GAP
         return max(48, (WIN_W - 2 * self.DONE_EDGE - gaps) // count)
 
-    def _done_button_box(self, index: int):
-        width = self._done_button_w()
-        count = len(self.SCREENREC_DONE)
+    def _done_button_box(self, index: int, buttons=None):
+        buttons = self.SCREENREC_DONE if buttons is None else buttons
+        width = self._done_button_w(buttons)
+        count = len(buttons)
         total = count * width + (count - 1) * self.DONE_GAP
         x1 = (WIN_W - total) // 2 + index * (width + self.DONE_GAP)
         return x1, self.DONE_BTN_Y, x1 + width, self.DONE_BTN_Y + self.DONE_BTN_H
+
+    def _pill_click(self, st, x, y) -> str:
+        """Resolve a click on the pill for whichever state it is in, and apply
+        any state change the click implies.
+
+        This exists as one function so the WIRING is testable. The hit tests
+        and the Pause-label toggle were each covered, but only ever invoked
+        from inside the Tk drain loop - so removing the invocation, or the
+        toggle, broke nothing any test could see.
+        """
+        name = st.get("name")
+        if name == "screenrec":
+            return self._screenrec_hit(x, y, st.get("screenrec_phase", "recording"))
+        if name == "reading":
+            # Resolve only. The label is NOT flipped here: the app owns the
+            # speaker and pushes the real state back via set_reading_paused,
+            # so a Space keypress and a button click cannot disagree.
+            return self._reading_hit(x, y)
+        return ""
+
+    def _reading_hit(self, x, y) -> str:
+        """Which reading-pill button a click at (x, y) landed on, or ""."""
+        for index, (action, _label) in enumerate(self.READING_BUTTONS):
+            x1, y1, x2, y2 = self._done_button_box(index, self.READING_BUTTONS)
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return action
+        return ""
 
     def _screenrec_hit(self, x, y, phase: str = "recording") -> str:
         """Which control a click at (x, y) landed on, or "" for the pill body."""
@@ -805,6 +864,32 @@ class Overlay:
         entry.bind("<Return>", lambda _e: self._q.put(("screenrec_submit", "save", "")))
         entry.bind("<Escape>", lambda _e: self._q.put(("screenrec_submit", "skip", "")))
         return entry
+
+    def _draw_reading(self, c, st, H: int, accent: str) -> None:
+        """The reading pill: preview text, the shortcuts nobody knew existed,
+        and Pause/Restart/Stop so the voice is never one you cannot see how to
+        interrupt."""
+        items = self._base_scene(c, st, "reading", H, accent)
+        if "reading_text" not in items:
+            items["reading_text"] = c.create_text(
+                24, 26, anchor="w", fill=PALETTE["fg"], font=("Segoe UI Semibold", 11))
+            items["reading_hint"] = c.create_text(
+                24, 44, anchor="w", fill=PALETTE["muted"], font=("Segoe UI", 8),
+                text="Esc stop · Space pause")
+            for index, (action, label) in enumerate(self.READING_BUTTONS):
+                x1, y1, x2, y2 = self._done_button_box(index, self.READING_BUTTONS)
+                items[f"reading_{action}_bg"] = self._round_rect(
+                    c, x1, y1, x2, y2, 8, fill=PALETTE["card"], outline="")
+                items[f"reading_{action}_text"] = c.create_text(
+                    (x1 + x2) // 2, (y1 + y2) // 2, text=label,
+                    fill=PALETTE["fg"], font=("Segoe UI", 9))
+        c.itemconfigure(items["reading_text"], text=self._fit(st["text"], WIN_W - 48))
+        # A "Pause" label on an already-paused read is a lie - the overlay
+        # tracks its own paused flag so the label always matches reality.
+        c.itemconfigure(items["reading_ra_pause_text"],
+                        text="Resume" if st.get("reading_paused") else "Pause")
+        c.itemconfigure(items["reading_ra_stop_bg"], fill=accent)
+        c.itemconfigure(items["reading_ra_stop_text"], fill="#1a0c0d")
 
     def _draw_status(self, c, st, H: int, accent: str) -> None:
         items = self._base_scene(c, st, "status", H, accent)

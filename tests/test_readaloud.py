@@ -337,6 +337,8 @@ def test_a_second_press_during_the_ocr_pass_does_not_start_a_second_read():
 
     from uistub import install_platform_stubs
     install_platform_stubs()          # app.py imports sounddevice/keyboard at module scope
+    from uistub import install_platform_stubs
+    install_platform_stubs()
     from wisprlite.app import App
 
     app = App.__new__(App)
@@ -380,6 +382,223 @@ def test_a_speaker_is_one_shot_and_says_so():
 
     assert "ONE-SHOT" in readaloud.Speaker.speak.__doc__, \
         "the one-shot contract is not documented on speak()"
+
+
+# ---- overlay controls (gates 1, 4, 5) --------------------------------------
+
+class _FakeSpeaker:
+    def __init__(self):
+        self.paused = False
+        self.pause_calls = 0
+        self.resume_calls = 0
+        self.stop_calls = 0
+
+    def pause(self):
+        self.pause_calls += 1
+        self.paused = True
+
+    def resume(self):
+        self.resume_calls += 1
+        self.paused = False
+
+    def stop(self):
+        self.stop_calls += 1
+
+
+def _make_app():
+    import threading
+
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    from unittest import mock
+
+    app = App.__new__(App)
+    app._read_aloud_speaker = None
+    app._read_aloud_last_text = None
+    app._read_aloud_busy = threading.Lock()
+    # Every read-aloud action reports the resulting state back to the pill, so
+    # an App built for a test needs an overlay even when the test does not
+    # assert on it.
+    app.overlay = mock.Mock()
+    return app
+
+
+def test_ra_pause_pauses_a_playing_speaker():
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    app = _make_app()
+    speaker = _FakeSpeaker()
+    app._read_aloud_speaker = speaker
+    App._screenrec_action(app, "ra_pause")
+    assert speaker.pause_calls == 1
+    assert speaker.resume_calls == 0
+
+
+def test_ra_pause_toggles_to_resume_on_a_paused_speaker():
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    app = _make_app()
+    speaker = _FakeSpeaker()
+    speaker.paused = True
+    app._read_aloud_speaker = speaker
+    App._screenrec_action(app, "ra_pause")
+    assert speaker.resume_calls == 1
+    assert speaker.pause_calls == 0
+
+
+def test_the_pause_label_follows_the_SPEAKER_not_the_click():
+    """Two sources of truth is the bug. The overlay used to flip the label
+    itself on a click, so pressing SPACE paused the speaker without the pill
+    knowing: the button read "Pause" while clicking it called resume().
+
+    The app owns the speaker, so the app pushes the label state.
+    """
+    from unittest import mock
+
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app.overlay = mock.Mock()
+    speaker = mock.Mock(paused=False)
+    app._read_aloud_speaker = speaker
+
+    def pause():
+        speaker.paused = True
+    def resume():
+        speaker.paused = False
+    speaker.pause.side_effect = pause
+    speaker.resume.side_effect = resume
+
+    App._screenrec_action(app, "ra_pause")
+    speaker.pause.assert_called_once()
+    app.overlay.set_reading_paused.assert_called_with(True)
+
+    App._screenrec_action(app, "ra_pause")
+    speaker.resume.assert_called_once()
+    app.overlay.set_reading_paused.assert_called_with(False)
+
+
+def test_a_pause_click_with_no_speaker_does_not_flip_the_label():
+    """Clicking Pause in the window before a speaker exists used to flip the
+    label to Resume with nothing to resume."""
+    from unittest import mock
+
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app.overlay = mock.Mock()
+    app._read_aloud_speaker = None
+
+    App._screenrec_action(app, "ra_pause")
+
+    app.overlay.set_reading_paused.assert_not_called()
+
+
+def test_the_click_resolver_does_not_touch_the_label():
+    """It resolves. It must not also decide what the label says, or the two
+    disagree the moment a keypress pauses instead of a click."""
+    from wisprlite.overlay import Overlay
+
+    ov = Overlay.__new__(Overlay)
+    st = {"name": "reading"}
+    x1, y1, x2, y2 = ov._done_button_box(0, Overlay.READING_BUTTONS)
+    assert ov._pill_click(st, (x1 + x2) // 2, (y1 + y2) // 2) == "ra_pause"
+    assert "reading_paused" not in st, \
+        "the resolver is still guessing at the label state"
+
+
+def test_a_click_on_the_reading_pill_is_actually_routed():
+    """The reading branch lived inline in the Tk drain loop, where no test
+    could reach it - deleting the whole branch left every test green."""
+    from wisprlite.overlay import Overlay
+
+    ov = Overlay.__new__(Overlay)
+    for index, (action, _label) in enumerate(Overlay.READING_BUTTONS):
+        x1, y1, x2, y2 = ov._done_button_box(index, Overlay.READING_BUTTONS)
+        got = ov._pill_click({"name": "reading"}, (x1 + x2) // 2, (y1 + y2) // 2)
+        assert got == action, f"a click on {action!r} resolved to {got!r}"
+
+
+def test_the_same_click_resolver_still_serves_the_recording_pill():
+    """One function now serves both, so it must not have lost the other."""
+    from wisprlite.overlay import Overlay
+
+    ov = Overlay.__new__(Overlay)
+    x1, y1, x2, y2 = ov._done_button_box(0, Overlay.SCREENREC_DONE)
+    got = ov._pill_click({"name": "screenrec", "screenrec_phase": "done"},
+                         (x1 + x2) // 2, (y1 + y2) // 2)
+    assert got == Overlay.SCREENREC_DONE[0][0], f"the recording pill lost its clicks: {got!r}"
+
+
+def test_a_click_in_a_state_with_no_buttons_resolves_to_nothing():
+    from wisprlite.overlay import Overlay
+
+    ov = Overlay.__new__(Overlay)
+    assert ov._pill_click({"name": "listening"}, 100, 70) == ""
+
+
+def test_ra_stop_stops_a_playing_speaker():
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    app = _make_app()
+    speaker = _FakeSpeaker()
+    app._read_aloud_speaker = speaker
+    App._screenrec_action(app, "ra_stop")
+    assert speaker.stop_calls == 1
+
+
+def test_ra_stop_with_no_active_speaker_does_nothing():
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    app = _make_app()
+    App._screenrec_action(app, "ra_stop")   # must not raise
+
+
+def test_ra_restart_with_no_prior_read_does_nothing():
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    app = _make_app()
+    App._screenrec_action(app, "ra_restart")   # must not raise, nothing to restart
+
+
+def test_ra_restart_speaks_again_without_re_running_ocr():
+    """Gate 4. `_read_aloud_speak` is the only thing ra_restart calls - it never
+    touches `readaloud.ocr_png`, so restarting cannot re-OCR by construction.
+    Assert that directly against the source, and that speaking happens again."""
+    from unittest import mock
+
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    app = _make_app()
+    old_speaker = _FakeSpeaker()
+    app._read_aloud_speaker = old_speaker
+    app._read_aloud_last_text = "hello world"
+
+    with mock.patch.object(App, "_read_aloud_speak") as speak, \
+         mock.patch("wisprlite.readaloud.ocr_png") as ocr:
+        App._screenrec_action(app, "ra_restart")
+
+    assert old_speaker.stop_calls == 1, "restart must stop whatever was already playing"
+    speak.assert_called_once_with("hello world")
+    ocr.assert_not_called()
 
 
 def test_the_selftest_writes_its_verdict_to_a_file():
