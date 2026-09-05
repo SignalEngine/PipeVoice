@@ -77,7 +77,7 @@ def main() -> None:
     holder = tk.Frame(canvas, bg=BG)
     _holder_window = canvas.create_window((0, 0), window=holder, anchor="nw")
     holder.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    canvas.bind("<Configure>", lambda e: canvas.itemconfigure(_holder_window, width=e.width))
+    winui.fit_scroll_body(canvas, _holder_window)
     canvas.bind("<Enter>", lambda e: canvas.bind_all(
         "<MouseWheel>", lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units")))
     canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))

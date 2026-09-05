@@ -465,11 +465,19 @@ def build_speaker(text: str, cfg) -> tuple["Speaker", str]:
             content_type = "audio/mpeg"
         else:
             return Speaker(voice=getattr(cfg, "read_aloud_voice", ""), rate=rate), ""
+        # Building the player is INSIDE the try. It was outside, so a cloud
+        # call that succeeded and then failed to produce a player raised
+        # straight out of here - no fallback, and silence, which is the one
+        # thing this path must never do.
+        player = _winrt_player_from_bytes(audio, content_type)
     except tts_cloud.CloudTTSError as exc:
         return (Speaker(voice="", rate=rate),
                 f"{str(exc)} — using the Windows voice instead")
+    except Exception as exc:
+        log.exception("read-aloud: cloud voice failed, falling back")
+        return (Speaker(voice="", rate=rate),
+                f"{type(exc).__name__} — using the Windows voice instead")
 
-    player = _winrt_player_from_bytes(audio, content_type)
     return Speaker(rate=rate, player_factory=lambda: player), ""
 
 

@@ -184,3 +184,42 @@ def test_build_speaker_uses_the_cloud_audio_on_success():
     builder.assert_called_once_with(b"wav-bytes", "audio/wav")
     # the factory hands back the pre-built player rather than re-synthesizing
     assert speaker._build_player("hello") is fake_player
+
+
+def test_a_cloud_call_that_succeeds_but_cannot_play_still_falls_back():
+    """The player was built OUTSIDE the try, so a cloud response that arrived
+    and then failed to become a player raised out of build_speaker - no
+    fallback, and silence, which is the one thing this path must never do."""
+    import types
+    from unittest import mock
+    from wisprlite import readaloud, tts_cloud
+    from wisprlite import config as _config
+
+    cfg = types.SimpleNamespace(read_aloud_tts="deepgram", read_aloud_rate=1.0,
+                                read_aloud_voice="aura-2-draco-en")
+
+    with mock.patch.object(tts_cloud, "deepgram_speak", return_value=b"RIFFfake"), \
+         mock.patch.object(_config, "deepgram_key", return_value="k"), \
+         mock.patch.object(readaloud, "_winrt_player_from_bytes",
+                           side_effect=RuntimeError("no MediaPlayer here")):
+        speaker, note = readaloud.build_speaker("hello", cfg)
+
+    assert speaker is not None, "it raised instead of falling back"
+    assert "Windows voice" in note, f"the fallback was silent about why: {note!r}"
+
+
+def test_a_dead_key_falls_back_and_says_why():
+    import types
+    from unittest import mock
+    from wisprlite import readaloud, tts_cloud
+    from wisprlite import config as _config
+
+    cfg = types.SimpleNamespace(read_aloud_tts="deepgram", read_aloud_rate=1.0,
+                                read_aloud_voice="aura-2-draco-en")
+    with mock.patch.object(tts_cloud, "deepgram_speak",
+                           side_effect=tts_cloud.CloudTTSError("HTTP 401")), \
+         mock.patch.object(_config, "deepgram_key", return_value="bad"):
+        speaker, note = readaloud.build_speaker("hello", cfg)
+
+    assert speaker is not None
+    assert "401" in note and "Windows voice" in note
