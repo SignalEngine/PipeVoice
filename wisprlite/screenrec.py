@@ -23,6 +23,7 @@ import threading
 import time
 import wave
 from datetime import datetime
+from fractions import Fraction
 from pathlib import Path
 
 log = logging.getLogger("wisprlite")
@@ -76,6 +77,7 @@ class ScreenRecording:
         self.errors: list[str] = []
         self.dropped_audio_blocks = 0
         self.frames_written = 0
+        self._last_pts = None       # PTS must strictly increase; see _encode_frame
         # The mic opens faster than mss + the x264 container, so audio starts
         # first. Measured on a real 12s clip: 12.46s of audio against 11.42s of
         # video, both starting at 0 — the narration ran a second ahead of the
@@ -184,6 +186,14 @@ class ScreenRecording:
 
         self._container = av.open(str(self.video_path), mode="w")
         stream = self._container.add_stream("libx264", rate=self.fps)
+        # Milliseconds, so every frame carries the time it was ACTUALLY grabbed.
+        # `rate=` alone is a promise the capture cannot keep: pure-Python mss at
+        # 1080p manages ~17fps whatever you ask for, and with implicit
+        # sequential PTS the container then claims those frames are 1/fps apart.
+        # A 30fps stamp on a 16.8fps capture plays 1.79x fast and drifts out of
+        # sync with audio for the whole recording - James, 2026-09-05, on a
+        # 32-minute take that ended at 17:58 of video against 32:06 of audio.
+        stream.time_base = Fraction(1, 1000)
         stream.width, stream.height = width, height
         stream.pix_fmt = "yuv420p"
         # Small enough to send over a phone tether, still readable text.
@@ -204,6 +214,18 @@ class ScreenRecording:
         import av
 
         picture = av.VideoFrame.from_ndarray(frame, format="rgb24")
+        # elapsed() excludes time spent PAUSED, which matters: the mic is paused
+        # too, so a wall-clock timestamp would leave a video-only gap and put
+        # everything after a pause out of sync by the length of that pause.
+        stamp = int(self.elapsed() * 1000)
+        # Strictly increasing: two grabs inside the same millisecond, or a clock
+        # that does not advance, would otherwise emit a duplicate PTS, which
+        # libx264 rejects and which ends the recording.
+        if self._last_pts is not None and stamp <= self._last_pts:
+            stamp = self._last_pts + 1
+        self._last_pts = stamp
+        picture.pts = stamp
+        picture.time_base = self._video_stream.time_base
         for packet in self._video_stream.encode(picture):
             self._container.mux(packet)
 
