@@ -455,13 +455,16 @@ def build_speaker(text: str, cfg) -> tuple["Speaker", str]:
             audio = tts_cloud.deepgram_speak(
                 text,
                 getattr(cfg, "read_aloud_voice", "") or tts_cloud.DEFAULT_DEEPGRAM_VOICE,
-                _config.deepgram_key())
+                # A key on the cfg wins over the saved one, so Settings can
+                # preview a key that has been TYPED but not saved yet - which
+                # is exactly the moment someone wants to hear whether it works.
+                getattr(cfg, "read_aloud_deepgram_key", "") or _config.deepgram_key())
             content_type = "audio/wav"
         elif tier == "elevenlabs":
             audio = tts_cloud.elevenlabs_speak(
                 text,
                 getattr(cfg, "read_aloud_elevenlabs_voice_id", ""),
-                _config.elevenlabs_key())
+                getattr(cfg, "read_aloud_elevenlabs_key", "") or _config.elevenlabs_key())
             content_type = "audio/mpeg"
         else:
             # An unrecognised tier used to hand back a Windows speaker and no

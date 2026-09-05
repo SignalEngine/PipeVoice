@@ -98,6 +98,32 @@ MUTED = "#94a3b8"
 ACCENT = "#e06c75"
 
 
+def preview_snapshot(*, tier, voice, elevenlabs_voice_id, rate_text,
+                     elevenlabs_key, deepgram_key):
+    """The config object a voice Preview speaks with.
+
+    Module level on purpose. As a closure inside main() nothing could reach it,
+    so dropping a field from it - the typed API key, say - broke no test at all,
+    while breaking the one flow Preview exists for: paste a key, press Preview,
+    before saving anything.
+    """
+    import types
+
+    try:
+        rate = max(0.5, min(2.0, float((rate_text or "").strip() or 1.0)))
+    except ValueError:
+        rate = 1.0
+    return types.SimpleNamespace(
+        read_aloud_tts=tier,
+        read_aloud_voice=(voice or "").strip(),
+        read_aloud_elevenlabs_voice_id=(elevenlabs_voice_id or "").strip(),
+        read_aloud_rate=rate,
+        # The TYPED keys, not the saved ones.
+        read_aloud_elevenlabs_key=(elevenlabs_key or "").strip(),
+        read_aloud_deepgram_key=(deepgram_key or "").strip(),
+    )
+
+
 def _input_devices(show_all: bool = False):
     """Return [(label, value)] for the device picker; never raises.
 
@@ -1246,15 +1272,13 @@ def main(first_run: bool = False) -> None:
     PREVIEW_TEXT = "Six sharp trucks strapped their crisp black cargo, then quickly turned north."
 
     def _preview_snapshot():
-        try:
-            rate = max(0.5, min(2.0, float(read_aloud_rate_var.get().strip() or 1.0)))
-        except ValueError:
-            rate = 1.0
-        return types.SimpleNamespace(
-            read_aloud_tts=_read_aloud_tier(),
-            read_aloud_voice=read_aloud_voice_var.get().strip(),
-            read_aloud_elevenlabs_voice_id=read_aloud_elevenlabs_id_var.get().strip(),
-            read_aloud_rate=rate,
+        return preview_snapshot(
+            tier=_read_aloud_tier(),
+            voice=read_aloud_voice_var.get(),
+            elevenlabs_voice_id=read_aloud_elevenlabs_id_var.get(),
+            rate_text=read_aloud_rate_var.get(),
+            elevenlabs_key=eleven_key_var.get(),
+            deepgram_key=dg_key_var.get(),
         )
 
     def _preview_show(text, fg):

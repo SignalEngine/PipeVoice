@@ -287,3 +287,93 @@ def test_preview_button_disabled_while_running_and_reenabled_after_failure():
             root.destroy()
     finally:
         readaloud.build_speaker = orig_build
+
+
+def test_preview_uses_a_key_that_is_typed_but_not_yet_saved():
+    """Paste a key, press Preview. That is the obvious order, and without this
+    it failed with "no ElevenLabs API key configured" while the key sat right
+    there in the box - because build_speaker read the SAVED key."""
+    import types
+    from unittest import mock
+    from wisprlite import readaloud, tts_cloud
+    from wisprlite import config as _config
+
+    cfg = types.SimpleNamespace(
+        read_aloud_tts="elevenlabs", read_aloud_rate=1.0, read_aloud_voice="",
+        read_aloud_elevenlabs_voice_id="abc123",
+        read_aloud_elevenlabs_key="typed-not-saved",
+    )
+    seen = {}
+
+    def fake(text, voice_id, api_key, **kw):
+        seen["key"] = api_key
+        return b"audio"
+
+    with mock.patch.object(tts_cloud, "elevenlabs_speak", side_effect=fake), \
+         mock.patch.object(_config, "elevenlabs_key", return_value=""), \
+         mock.patch.object(readaloud, "_winrt_player_from_bytes", return_value=object()):
+        _speaker, reason = readaloud.build_speaker("hello", cfg)
+
+    assert seen.get("key") == "typed-not-saved", \
+        f"preview used the saved key, not the typed one: {seen!r}"
+    assert reason == "", f"it fell back despite a usable key: {reason!r}"
+
+
+def test_a_saved_key_is_still_used_when_nothing_is_typed():
+    """The override must not break the normal path, where the field is blank
+    because the key is already saved."""
+    import types
+    from unittest import mock
+    from wisprlite import readaloud, tts_cloud
+    from wisprlite import config as _config
+
+    cfg = types.SimpleNamespace(
+        read_aloud_tts="deepgram", read_aloud_rate=1.0,
+        read_aloud_voice="aura-2-draco-en", read_aloud_deepgram_key="",
+    )
+    seen = {}
+
+    def fake(text, voice, api_key, **kw):
+        seen["key"] = api_key
+        return b"audio"
+
+    with mock.patch.object(tts_cloud, "deepgram_speak", side_effect=fake), \
+         mock.patch.object(_config, "deepgram_key", return_value="saved-key"), \
+         mock.patch.object(readaloud, "_winrt_player_from_bytes", return_value=object()):
+        readaloud.build_speaker("hello", cfg)
+
+    assert seen.get("key") == "saved-key", f"the saved key was ignored: {seen!r}"
+
+
+def test_the_preview_snapshot_carries_the_typed_keys():
+    """It was a closure inside main(), so dropping a field from it broke no
+    test while breaking the one flow Preview exists for."""
+    from wisprlite.settings import preview_snapshot
+
+    snap = preview_snapshot(
+        tier="elevenlabs", voice=" aura-2-draco-en ", elevenlabs_voice_id=" abc ",
+        rate_text="1.5", elevenlabs_key="  el-key  ", deepgram_key=" dg-key ")
+
+    assert snap.read_aloud_elevenlabs_key == "el-key"
+    assert snap.read_aloud_deepgram_key == "dg-key"
+    assert snap.read_aloud_voice == "aura-2-draco-en"
+    assert snap.read_aloud_elevenlabs_voice_id == "abc"
+    assert snap.read_aloud_rate == 1.5
+
+
+def test_a_nonsense_rate_does_not_break_preview():
+    from wisprlite.settings import preview_snapshot
+
+    for text in ("", "  ", "fast", None):
+        snap = preview_snapshot(tier="windows", voice="", elevenlabs_voice_id="",
+                                rate_text=text, elevenlabs_key="", deepgram_key="")
+        assert snap.read_aloud_rate == 1.0, f"{text!r} produced {snap.read_aloud_rate}"
+
+
+def test_the_rate_is_clamped_to_the_supported_range():
+    from wisprlite.settings import preview_snapshot
+
+    assert preview_snapshot(tier="windows", voice="", elevenlabs_voice_id="",
+                            rate_text="9", elevenlabs_key="", deepgram_key="").read_aloud_rate == 2.0
+    assert preview_snapshot(tier="windows", voice="", elevenlabs_voice_id="",
+                            rate_text="0.1", elevenlabs_key="", deepgram_key="").read_aloud_rate == 0.5
