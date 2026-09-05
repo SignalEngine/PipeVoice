@@ -22,6 +22,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import threading
+import time
 from typing import Callable, Optional
 
 log = logging.getLogger("wisprlite")
@@ -67,6 +68,24 @@ def capture_mode_for(*, shift: bool, ctrl: bool) -> str:
     if shift:
         return "screen"
     return "window"
+
+
+def extra_modifiers(hotkey: str, *, shift_down: bool, ctrl_down: bool) -> tuple[bool, bool]:
+    """The modifiers held BEYOND the ones the hotkey itself requires.
+
+    Asking `keyboard.is_pressed("ctrl")` the instant a hotkey fires is useless
+    when the hotkey IS a chord containing ctrl: it is trivially true, so every
+    press picked region mode and opened the selector. Subtract what the chord
+    already holds, and only genuinely extra modifiers choose a mode.
+    """
+    # Substring, not exact match: the keyboard library yields "ctrl",
+    # "left ctrl", "right ctrl", "control" and people type "Ctrl". An alias
+    # table has to be complete to be correct; a substring test does not.
+    chord = (hotkey or "").lower()
+    holds_ctrl = "ctrl" in chord or "control" in chord
+    holds_shift = "shift" in chord
+    return (shift_down and not holds_shift,
+            ctrl_down and not holds_ctrl)
 
 
 def grab_png(region: Optional[tuple[int, int, int, int]]) -> bytes:
@@ -244,6 +263,7 @@ class Speaker:
             self._player = player
         try:
             self._play(player)
+            self._await_end(player, text)
         except Exception:
             # Do not leave a dead player as the live one - stop() would then
             # think something is speaking and pause a player that never played.
@@ -274,6 +294,8 @@ class Speaker:
                 log.info("read-aloud: resume failed: %s", exc)
 
     def stop(self) -> None:
+        # _stopped is set INSIDE the lock, which is what _await_end polls, so a
+        # stop breaks the wait within one 100ms tick.
         with self._lock:
             self._stopped = True
             player, self._player = self._player, None
@@ -334,6 +356,41 @@ class Speaker:
             player.play()
         except Exception as exc:
             raise ReadAloudError(f"playback failed: {exc}") from exc
+
+    def _await_end(self, player, text: str) -> None:
+        """Block until playback ends, is stopped, or a generous cap passes.
+
+        play() is ASYNCHRONOUS. Returning straight after it meant the caller's
+        finally dropped the last reference to the Speaker and its MediaPlayer,
+        the player was garbage-collected mid-sentence, and nothing was ever
+        audible. It also killed the Esc/Space watcher, which loops on that same
+        reference.
+
+        The cap is generous and derived from the text: it exists so a WinRT
+        event that never arrives cannot wedge the hotkey for ever, not as the
+        normal path.
+        """
+        done = threading.Event()
+        for attach in ("add_media_ended", "add_MediaEnded"):
+            adder = getattr(player, attach, None)
+            if adder is None:
+                continue
+            try:
+                adder(lambda *_a: done.set())
+                break
+            except Exception as exc:
+                log.info("read-aloud: could not attach the end handler: %s", exc)
+
+        # ~14 chars/second is slow speech; +5s of slack, capped at 10 minutes.
+        budget = min(600.0, 5.0 + len(text) / 14.0)
+        deadline = time.monotonic() + budget
+        while not done.wait(0.1):
+            if time.monotonic() > deadline:
+                log.info("read-aloud: playback cap reached after %.0fs", budget)
+                return
+            with self._lock:
+                if self._stopped or self._player is not player:
+                    return
 
 
 # ---- screen reader detection (informational only — never gates speaking) -----

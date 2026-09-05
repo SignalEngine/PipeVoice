@@ -366,7 +366,13 @@ class App:
 
         try:
             import keyboard
-            shift, ctrl = keyboard.is_pressed("shift"), keyboard.is_pressed("ctrl")
+            # Subtract the modifiers the hotkey chord itself holds. Without that,
+            # a hotkey containing ctrl reads as "ctrl is down" on every press and
+            # always opened the region selector.
+            shift, ctrl = readaloud.extra_modifiers(
+                self.cfg.read_aloud_hotkey,
+                shift_down=keyboard.is_pressed("shift"),
+                ctrl_down=keyboard.is_pressed("ctrl"))
         except Exception:
             shift = ctrl = False
         mode = readaloud.capture_mode_for(shift=shift, ctrl=ctrl)

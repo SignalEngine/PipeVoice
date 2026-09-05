@@ -461,3 +461,93 @@ def test_instrumentation_cannot_change_the_verdict():
         ok, _ = readaloud.winrt_selftest(progress=boom)
 
     assert ok is True, "a failing progress callback flipped the verdict"
+
+
+# ---- James, 2026-09-05: "blue thing came up but did nothing" / "cant hear it"
+
+def test_a_ctrl_hotkey_does_not_always_mean_region_mode():
+    """asking is_pressed("ctrl") the instant a ctrl-chord hotkey fires is
+    trivially true, so EVERY press picked region mode and opened the selector -
+    which is the blue thing that appeared when it should have read the window."""
+    from wisprlite import readaloud
+
+    shift, ctrl = readaloud.extra_modifiers(
+        "ctrl+shift+r", shift_down=True, ctrl_down=True)
+    assert (shift, ctrl) == (False, False), \
+        "the hotkey's own modifiers were counted as a mode choice"
+    assert readaloud.capture_mode_for(shift=shift, ctrl=ctrl) == "window"
+
+
+def test_a_genuinely_extra_modifier_still_picks_its_mode():
+    """The fix must not make the modes unreachable."""
+    from wisprlite import readaloud
+
+    # hotkey is alt+r, so a held ctrl IS extra
+    shift, ctrl = readaloud.extra_modifiers("alt+r", shift_down=False, ctrl_down=True)
+    assert readaloud.capture_mode_for(shift=shift, ctrl=ctrl) == "region"
+
+    shift, ctrl = readaloud.extra_modifiers("alt+r", shift_down=True, ctrl_down=False)
+    assert readaloud.capture_mode_for(shift=shift, ctrl=ctrl) == "screen"
+
+
+def test_modifier_names_are_normalised():
+    from wisprlite import readaloud
+    for chord in ("control+r", "CTRL+R", "left ctrl+r", "Ctrl + R"):
+        _s, c = readaloud.extra_modifiers(chord, shift_down=False, ctrl_down=True)
+        assert c is False, f"{chord!r} was not recognised as holding ctrl"
+
+
+def test_speak_waits_for_playback_instead_of_returning_immediately():
+    """play() is ASYNC. Returning straight after it let the caller's finally drop
+    the last reference, so the MediaPlayer was collected mid-sentence and nothing
+    was ever audible."""
+    import threading as _t
+    from unittest import mock
+    from wisprlite import readaloud
+
+    ended = None
+
+    class FakePlayer:
+        def __init__(self):
+            self.played = False
+        def add_media_ended(self, handler):
+            nonlocal ended
+            ended = handler
+        def play(self):
+            self.played = True
+        def pause(self):
+            pass
+        def close(self):
+            pass
+
+    player = FakePlayer()
+    speaker = readaloud.Speaker(player_factory=lambda: player)
+
+    returned = _t.Event()
+    _t.Thread(target=lambda: (speaker.speak("hello there"), returned.set()),
+              daemon=True).start()
+
+    assert not returned.wait(0.4), "speak() returned before playback ended"
+    assert player.played
+    ended()                                   # WinRT fires MediaEnded
+    assert returned.wait(2), "speak() never returned after playback ended"
+
+
+def test_stopping_breaks_the_wait_promptly():
+    """Esc must not have to wait out the whole passage."""
+    import threading as _t
+    from wisprlite import readaloud
+
+    class FakePlayer:
+        def add_media_ended(self, handler): pass
+        def play(self): pass
+        def pause(self): pass
+        def close(self): pass
+
+    speaker = readaloud.Speaker(player_factory=FakePlayer)
+    returned = _t.Event()
+    _t.Thread(target=lambda: (speaker.speak("a" * 2000), returned.set()),
+              daemon=True).start()
+    assert not returned.wait(0.3)
+    speaker.stop()
+    assert returned.wait(2), "stop() did not break the playback wait"
