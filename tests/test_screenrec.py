@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import wave
+from unittest import mock
 from unittest.mock import patch
 
 import numpy as np
@@ -761,3 +762,68 @@ def test_a_quiet_recording_comes_out_of_the_mux_normalised():
             f"quiet narration reached the mp4 at {peak_dbfs:.1f} dBFS — "
             "_mux is not normalising"
         )
+
+
+def _decoded_duration(path):
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        last = 0.0
+        for frame in container.decode(video=0):
+            if frame.pts is not None:
+                last = float(frame.pts * stream.time_base)
+    return last
+
+
+def test_the_video_lasts_as_long_as_the_recording_actually_took():
+    """James, 2026-09-05, on a 32-minute take: the picture ran 1.79x fast and
+    ended at 17:58 against 32:06 of audio.
+
+    Cause: add_stream(rate=self.fps) stamps the REQUESTED rate, and frames got
+    implicit sequential PTS - so a capture that really managed 16.8fps was
+    written as if every frame were 1/30s apart. Pure-Python mss at 1080p never
+    hits a high requested rate, so this fired on every long recording.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        # Ask for 30fps and deliver 10 frames over ~1s of recording: exactly the
+        # shape of the bug. Correct output is ~1s of video, not 10/30 = 0.33s.
+        rec = _recording(tmp, fps=30)
+        rec.first_frame_at = time.monotonic()
+        rec.first_audio_at = rec.first_frame_at
+        for index, frame in enumerate(_frames(10)):
+            with mock.patch.object(type(rec), "elapsed", lambda self, i=index: i * 0.1):
+                with rec._encode_lock:
+                    if rec._container is None:
+                        rec._open_container(frame.shape[1], frame.shape[0])
+                    rec._encode_frame(np.ascontiguousarray(frame))
+                rec.frames_written += 1
+        _write_wav(rec.audio_path, seconds=1.0)
+
+        out = rec._mux()
+
+        assert out is not None, rec.errors
+        duration = _decoded_duration(out)
+        assert 0.8 <= duration <= 1.2, (
+            f"10 frames spanning 0.9s of real time became {duration:.2f}s of "
+            "video - the requested fps was stamped instead of the real timing"
+        )
+
+
+def test_two_frames_in_the_same_millisecond_get_distinct_timestamps():
+    """libx264 rejects a duplicate PTS and the recording ends there. Two grabs
+    inside one millisecond is ordinary on a fast machine, and elapsed() is
+    milliseconds. Asserts the ENCODE path, not a whole mux: three frames
+    spanning 2ms is not a file any encoder should be asked to produce."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp, fps=30)
+        seen = []
+        with mock.patch.object(type(rec), "elapsed", lambda self: 0.5):
+            for frame in _frames(3):
+                with rec._encode_lock:
+                    if rec._container is None:
+                        rec._open_container(frame.shape[1], frame.shape[0])
+                    rec._encode_frame(np.ascontiguousarray(frame))
+                seen.append(rec._last_pts)
+
+    assert seen == sorted(set(seen)), \
+        f"timestamps were not strictly increasing: {seen}"
+    assert len(set(seen)) == 3, f"a duplicate PTS was emitted: {seen}"
