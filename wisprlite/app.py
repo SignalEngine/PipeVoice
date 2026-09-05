@@ -412,16 +412,22 @@ class App:
             self.overlay.set_state("done", "Copied — staying quiet (screen reader running)")
             return
 
-        speaker = readaloud.Speaker(voice=self.cfg.read_aloud_voice, rate=self.cfg.read_aloud_rate)
+        speaker, fallback_reason = readaloud.build_speaker(text, self.cfg)
         self._read_aloud_speaker = speaker
         threading.Thread(target=self._read_aloud_watch_interrupt, args=(speaker,), daemon=True).start()
+        failed = False
         try:
             speaker.speak(text)
         except readaloud.ReadAloudError as exc:
+            failed = True
             self.overlay.set_state("error", str(exc)[:80])
         finally:
             self._read_aloud_speaker = None
-            self.overlay.set_state("done", "")
+            # The finally used to overwrite unconditionally, so the error set
+            # two lines above was replaced by "done" before anyone could read
+            # it - a failed read looked exactly like a successful one.
+            if not failed:
+                self.overlay.set_state("done", fallback_reason[:80])
 
     def _read_aloud_watch_interrupt(self, speaker) -> None:
         """Esc stops, Space pauses/resumes, the hotkey again stops. Polled at

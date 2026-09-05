@@ -20,20 +20,20 @@ from wisprlite import readaloud
 
 # ---- mode selection (pure logic) -------------------------------------------
 
-def test_plain_press_captures_the_focused_window():
-    assert readaloud.capture_mode_for(shift=False, ctrl=False) == "window"
+def test_plain_press_drags_a_region():
+    assert readaloud.capture_mode_for(shift=False, ctrl=False) == "region"
 
 
 def test_shift_captures_the_whole_screen():
     assert readaloud.capture_mode_for(shift=True, ctrl=False) == "screen"
 
 
-def test_ctrl_drags_a_region():
-    assert readaloud.capture_mode_for(shift=False, ctrl=True) == "region"
+def test_ctrl_captures_the_focused_window():
+    assert readaloud.capture_mode_for(shift=False, ctrl=True) == "window"
 
 
 def test_ctrl_wins_over_shift_if_somehow_both_are_held():
-    assert readaloud.capture_mode_for(shift=True, ctrl=True) == "region"
+    assert readaloud.capture_mode_for(shift=True, ctrl=True) == "window"
 
 
 # ---- hotkey collision (gate 3: testable headlessly) ------------------------
@@ -465,17 +465,17 @@ def test_instrumentation_cannot_change_the_verdict():
 
 # ---- James, 2026-09-05: "blue thing came up but did nothing" / "cant hear it"
 
-def test_a_ctrl_hotkey_does_not_always_mean_region_mode():
+def test_a_ctrl_hotkey_does_not_always_mean_a_non_default_mode():
     """asking is_pressed("ctrl") the instant a ctrl-chord hotkey fires is
-    trivially true, so EVERY press picked region mode and opened the selector -
-    which is the blue thing that appeared when it should have read the window."""
+    trivially true, so EVERY press picked a non-default mode - which is the
+    blue thing that appeared when it should have dragged a region."""
     from wisprlite import readaloud
 
     shift, ctrl = readaloud.extra_modifiers(
         "ctrl+shift+r", shift_down=True, ctrl_down=True)
     assert (shift, ctrl) == (False, False), \
         "the hotkey's own modifiers were counted as a mode choice"
-    assert readaloud.capture_mode_for(shift=shift, ctrl=ctrl) == "window"
+    assert readaloud.capture_mode_for(shift=shift, ctrl=ctrl) == "region"
 
 
 def test_a_genuinely_extra_modifier_still_picks_its_mode():
@@ -484,7 +484,7 @@ def test_a_genuinely_extra_modifier_still_picks_its_mode():
 
     # hotkey is alt+r, so a held ctrl IS extra
     shift, ctrl = readaloud.extra_modifiers("alt+r", shift_down=False, ctrl_down=True)
-    assert readaloud.capture_mode_for(shift=shift, ctrl=ctrl) == "region"
+    assert readaloud.capture_mode_for(shift=shift, ctrl=ctrl) == "window"
 
     shift, ctrl = readaloud.extra_modifiers("alt+r", shift_down=True, ctrl_down=False)
     assert readaloud.capture_mode_for(shift=shift, ctrl=ctrl) == "screen"

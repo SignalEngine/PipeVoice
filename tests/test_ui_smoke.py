@@ -1638,3 +1638,115 @@ def test_a_transcript_that_failed_to_upload_is_not_called_sent():
         f"the title claims it was sent while the transcript failed: {snap}"
     assert "disk full" in (snap.get("subtitle") or ""), \
         f"the reason must survive to the pill: {snap}"
+
+
+def test_voices_editor_scroll_content_tracks_the_canvas_width():
+    """Same trap, same fix, different window: the standalone --voices editor
+    has its own scrollable canvas and had the identical missing width-bind."""
+    _skip_if_headless()
+    import tkinter as tk
+
+    from wisprlite import voices_editor
+
+    def _find_canvases(widget):
+        found = []
+        for child in widget.winfo_children():
+            if isinstance(child, tk.Canvas):
+                found.append(child)
+            found.extend(_find_canvases(child))
+        return found
+
+    # build_window destroys root before returning, so rebuild manually here to
+    # keep the window alive long enough to resize it and inspect the item.
+    real_mainloop = tk.Misc.mainloop
+    captured = {}
+
+    def stub_mainloop(self, _n=0):
+        self.update_idletasks()
+        self.update()
+        captured["root"] = self
+
+    tk.Misc.mainloop = stub_mainloop
+    try:
+        voices_editor.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+
+    root = captured["root"]
+    try:
+        canvases = _find_canvases(root)
+        assert canvases, "the voices editor did not build a scrolling canvas"
+        canvas = canvases[0]
+        items = canvas.find_all()
+        assert items, "the canvas has no scroll item"
+        item = items[0]
+
+        seen = []
+        for root_width in (520, 940):
+            root.geometry(f"{root_width}x400")
+            root.update_idletasks()
+            root.update()
+            actual = canvas.winfo_width()
+            tracked = int(canvas.itemcget(item, "width") or 0)
+            seen.append((actual, tracked))
+            assert tracked == actual, (
+                f"inner item width is {tracked}, but the canvas itself is "
+                f"{actual} wide — the content will hug the left edge"
+            )
+        assert seen[0][0] != seen[1][0], "the two geometries produced the same canvas width"
+    finally:
+        root.destroy()
+
+
+def test_about_tab_scroll_content_tracks_the_canvas_width():
+    """The classic Tk scrollable-frame trap: a canvas item created with
+    create_window keeps its NATURAL width forever unless something binds it to
+    the canvas's own width. Without that bind, the inner frame hugs the left
+    edge and a maximised window (the normal case now) leaves dead space on the
+    right instead of filling it. Prove it holds at two different widths."""
+    _skip_if_headless()
+    import tkinter as tk
+    from unittest import mock
+
+    from wisprlite import about, updater
+
+    root = tk.Tk()
+    try:
+        container = tk.Frame(root)
+        container.pack(fill="both", expand=True)
+        with mock.patch.object(updater, "recent_releases", return_value=[]), \
+             mock.patch.object(updater, "current_version", return_value="9.9.9"):
+            about.build(container, root, wheel=lambda _c: None)
+        root.update_idletasks()
+        root.update()
+
+        def _find_canvases(widget):
+            found = []
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Canvas):
+                    found.append(child)
+                found.extend(_find_canvases(child))
+            return found
+
+        canvases = _find_canvases(container)
+        assert canvases, "About did not build a scrolling canvas"
+        canvas = canvases[0]
+        items = canvas.find_all()
+        assert items, "the canvas has no scroll item"
+        item = items[0]
+
+        seen = []
+        for root_width in (520, 940):
+            root.geometry(f"{root_width}x400")
+            root.update_idletasks()
+            root.update()
+            actual = canvas.winfo_width()
+            tracked = int(canvas.itemcget(item, "width") or 0)
+            seen.append((actual, tracked))
+            assert tracked == actual, (
+                f"inner item width is {tracked}, but the canvas itself is "
+                f"{actual} wide — the content will hug the left edge"
+            )
+        assert seen[0][0] != seen[1][0], "the two geometries produced the same canvas width"
+    finally:
+        root.destroy()

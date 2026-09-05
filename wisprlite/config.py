@@ -201,9 +201,11 @@ class Config:
     screenrec_dir: str = ""           # blank = %USERPROFILE%\\Videos\\PipeVoice
     screenrec_fps: int = 12           # pure-python capture; 10-15 is realistic at 1080p
     # Read Aloud — OCR + speech via WinRT. "" = off, like meeting/screenrec hotkeys.
-    # Base = focused window, +Shift = whole screen, +Ctrl = drag a region.
+    # Base = drag a region, +Shift = whole screen, +Ctrl = the focused window.
     read_aloud_hotkey: str = ""
-    read_aloud_voice: str = ""        # "" = the system default WinRT voice
+    read_aloud_tts: str = "windows"   # windows | deepgram | elevenlabs
+    read_aloud_voice: str = ""        # "" = the system default WinRT voice; tier-specific otherwise
+    read_aloud_elevenlabs_voice_id: str = ""  # bring-your-own voice ID, per-account catalogue
     read_aloud_rate: float = 1.0      # 0.5-2.0, passed straight to SpeechSynthesisStream
     read_aloud_ocr_language: str = "" # "" = user's profile languages
     read_aloud_clipboard: bool = True # also copy the recognized text; never silent about it
@@ -352,6 +354,10 @@ def groq_key() -> str:
 
 def openrouter_key() -> str:
     return os.getenv("OPENROUTER_API_KEY", "").strip()
+
+
+def elevenlabs_key() -> str:
+    return os.getenv("ELEVENLABS_API_KEY", "").strip()
 
 
 def device_arg(cfg: Config):
