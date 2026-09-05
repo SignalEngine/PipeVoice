@@ -143,6 +143,16 @@ class Overlay:
     def set_state(self, state: str, text: Optional[str] = None) -> None:
         self._q.put(("state", state, text))
 
+    def set_reading_paused(self, paused: bool) -> None:
+        """Tell the pill whether the voice is paused, so the button can say
+        Pause or Resume truthfully.
+
+        The overlay used to flip this itself on a click, which made it a SECOND
+        source of truth: pressing Space paused the speaker without the pill
+        knowing, so the button read "Pause" while clicking it called resume().
+        The app owns the speaker, so the app owns the label."""
+        self._q.put(("reading_paused", "1" if paused else "", None))
+
     def set_text(self, text: str) -> None:
         self._q.put(("text", None, text))
 
@@ -318,6 +328,8 @@ class Overlay:
                         st["hide_at"] = 0.0
                         resize(WIN_H)
                         reveal()
+                    elif kind == "reading_paused":
+                        st["reading_paused"] = bool(state)
                     elif kind == "state":
                         if state:
                             # A fresh "reading" message always means a new
@@ -656,10 +668,10 @@ class Overlay:
         if name == "screenrec":
             return self._screenrec_hit(x, y, st.get("screenrec_phase", "recording"))
         if name == "reading":
-            action = self._reading_hit(x, y)
-            if action == "ra_pause":
-                st["reading_paused"] = not st.get("reading_paused", False)
-            return action
+            # Resolve only. The label is NOT flipped here: the app owns the
+            # speaker and pushes the real state back via set_reading_paused,
+            # so a Space keypress and a button click cannot disagree.
+            return self._reading_hit(x, y)
         return ""
 
     def _reading_hit(self, x, y) -> str:

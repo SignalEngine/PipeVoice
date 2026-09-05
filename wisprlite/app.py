@@ -483,6 +483,9 @@ class App:
                 space = keyboard.is_pressed("space")
                 if space and not prev_space:
                     (speaker.resume if speaker.paused else speaker.pause)()
+                    # The pill has to hear about a KEYBOARD pause too, or the
+                    # button says "Pause" while clicking it resumes.
+                    self.overlay.set_reading_paused(speaker.paused)
                 prev_space = space
                 hotkey_down = _all_pressed(self.cfg.read_aloud_hotkey)
                 if hotkey_down and not prev_hotkey:
@@ -791,6 +794,10 @@ class App:
             if action == "ra_pause":
                 if speaker is not None:
                     (speaker.resume if speaker.paused else speaker.pause)()
+                    # Push the REAL state back, so the label cannot drift from
+                    # the speaker - and so a click with no live speaker does
+                    # not flip the label onto nothing.
+                    self.overlay.set_reading_paused(speaker.paused)
             elif action == "ra_stop":
                 if speaker is not None:
                     speaker.stop()
