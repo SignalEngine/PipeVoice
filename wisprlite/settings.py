@@ -1234,10 +1234,14 @@ def main(first_run: bool = False) -> None:
     entry(row(elevenlabs_group, "ElevenLabs API key",
               "Saved" if config.elevenlabs_key() else "Not set"),
           eleven_key_var, width=26, show="•")
-    eleven_id_row = row(elevenlabs_group, "ElevenLabs voice ID",
-                         "Their catalogue is per-account, so this is an ID, not a picklist.")
+    eleven_id_row = row(
+        elevenlabs_group, "ElevenLabs voice ID",
+        "Search the Voice Library for a character or accent, add it to your "
+        "collection, and copy its ID here. Nothing there? Voice Design builds "
+        "one from a description. The catalogue is per-account, which is why "
+        "this is an ID rather than a picklist.")
     entry(eleven_id_row, read_aloud_elevenlabs_id_var, width=28)
-    ttk.Button(eleven_id_row, text="Where do I find this?",
+    ttk.Button(eleven_id_row, text="Browse voices ↗",
                command=lambda: webbrowser.open(
                    "https://elevenlabs.io/app/voice-library")).pack(side="left", padx=(8, 0))
 
