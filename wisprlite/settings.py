@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import json
 import threading
+import types
 import webbrowser
 
 from . import (about, autostart, cleanup, config, history, meeting, meetings_tab,
@@ -95,6 +96,32 @@ CARD = "#1b1e29"
 FG = "#e5e7eb"
 MUTED = "#94a3b8"
 ACCENT = "#e06c75"
+
+
+def preview_snapshot(*, tier, voice, elevenlabs_voice_id, rate_text,
+                     elevenlabs_key, deepgram_key):
+    """The config object a voice Preview speaks with.
+
+    Module level on purpose. As a closure inside main() nothing could reach it,
+    so dropping a field from it - the typed API key, say - broke no test at all,
+    while breaking the one flow Preview exists for: paste a key, press Preview,
+    before saving anything.
+    """
+    import types
+
+    try:
+        rate = max(0.5, min(2.0, float((rate_text or "").strip() or 1.0)))
+    except ValueError:
+        rate = 1.0
+    return types.SimpleNamespace(
+        read_aloud_tts=tier,
+        read_aloud_voice=(voice or "").strip(),
+        read_aloud_elevenlabs_voice_id=(elevenlabs_voice_id or "").strip(),
+        read_aloud_rate=rate,
+        # The TYPED keys, not the saved ones.
+        read_aloud_elevenlabs_key=(elevenlabs_key or "").strip(),
+        read_aloud_deepgram_key=(deepgram_key or "").strip(),
+    )
 
 
 def _input_devices(show_all: bool = False):
@@ -738,6 +765,7 @@ def main(first_run: bool = False) -> None:
     from . import tts_cloud as _tts_cloud
     read_aloud_deepgram_pick_var = tk.StringVar(value="")
     read_aloud_elevenlabs_id_var = tk.StringVar(value=cfg.read_aloud_elevenlabs_voice_id)
+    eleven_key_var = tk.StringVar()
     read_aloud_rate_var = tk.StringVar(value=str(cfg.read_aloud_rate))
     read_aloud_lang_var = tk.StringVar(value=cfg.read_aloud_ocr_language)
     read_aloud_clipboard_var = tk.BooleanVar(value=cfg.read_aloud_clipboard)
@@ -1164,18 +1192,36 @@ def main(first_run: bool = False) -> None:
               "says why."),
           read_aloud_tts_var, [l for _, l in read_aloud_tts_opts])
 
-    wr = row(c, "Get better Windows voices",
+    pr = row(c, "Preview voice",
+             "Speaks one test sentence using the settings on this screen — "
+             "even if you haven't saved yet.")
+    preview_btn = ttk.Button(pr, text="Preview", width=10)
+    preview_btn.pack(side="left")
+    preview_status = tk.Label(pr, text="", bg=CARD, fg=MUTED, font=("Segoe UI", 8),
+                               wraplength=220, justify="left")
+    preview_status.pack(side="left", padx=(10, 0))
+
+    # Only the group matching the chosen engine is shown — a greyed-out field
+    # still reads as "something I am supposed to fill in", and showing all
+    # three at once is exactly how choosing ElevenLabs used to reveal nothing.
+    _divide(c)
+    windows_group = tk.Frame(c, bg=CARD)
+    deepgram_group = tk.Frame(c, bg=CARD)
+    elevenlabs_group = tk.Frame(c, bg=CARD)
+
+    wr = row(windows_group, "Get better Windows voices",
              "Windows 11 ships far better \"Natural\" voices, but they aren't "
              "installed by default. Opens Settings → Speech → Manage voices.")
     ttk.Button(wr, text="Open Windows voice settings",
                command=lambda: os.startfile("ms-settings:speech")).pack(side="left")
-
-    entry(row(c, "Voice / model",
-              "Blank uses the system default Windows voice, or the default "
-              "Deepgram voice (aura-2-draco-en)."),
+    entry(row(windows_group, "Voice / model",
+              "Blank uses the system default Windows voice. Type the exact "
+              "name of an installed voice for another."),
           read_aloud_voice_var, width=28)
-    dg_row = row(c, "Deepgram voice (pick one)",
-                 "Only used when the voice engine above is Deepgram.")
+
+    dg_key_note = ("Already configured — the same key dictation uses." if config.deepgram_key()
+                   else "Not configured yet — add a Deepgram key in the API keys section below.")
+    dg_row = row(deepgram_group, "Deepgram voice (pick one)", dg_key_note)
     dg_combo = combo(dg_row, read_aloud_deepgram_pick_var,
                      [f"{name} — {desc}" for name, desc in _tts_cloud.DEEPGRAM_VOICES], width=40)
 
@@ -1185,13 +1231,24 @@ def main(first_run: bool = False) -> None:
             read_aloud_voice_var.set(_tts_cloud.DEEPGRAM_VOICES[i][0])
     dg_combo.bind("<<ComboboxSelected>>", _pick_deepgram_voice)
 
-    entry(row(c, "ElevenLabs voice ID",
-              "Only used when the voice engine above is ElevenLabs — their "
-              "catalogue is per-account, so this is an ID, not a picklist."),
-          read_aloud_elevenlabs_id_var, width=28)
+    entry(row(elevenlabs_group, "ElevenLabs API key",
+              "Saved" if config.elevenlabs_key() else "Not set"),
+          eleven_key_var, width=26, show="•")
+    eleven_id_row = row(elevenlabs_group, "ElevenLabs voice ID",
+                         "Their catalogue is per-account, so this is an ID, not a picklist.")
+    entry(eleven_id_row, read_aloud_elevenlabs_id_var, width=28)
+    ttk.Button(eleven_id_row, text="Where do I find this?",
+               command=lambda: webbrowser.open(
+                   "https://elevenlabs.io/app/voice-library")).pack(side="left", padx=(8, 0))
 
-    entry(row(c, "Speed", "0.5 (slow) to 2.0 (fast). 1.0 is normal."),
-          read_aloud_rate_var, width=6)
+    speed_row = row(c, "Speed", "0.5 (slow) to 2.0 (fast). 1.0 is normal.")
+    # row() returns the RIGHT-hand frame, so .master is the row frame packed
+    # into the card - which is what `before=` needs. If row() ever returns
+    # the row frame itself this becomes `before=<the card>` and pack() errors.
+    # tests/test_read_aloud_voice_keys.py walks the same two levels, so a
+    # change to row() breaks that test rather than the settings window.
+    speed_row_frame = speed_row.master
+    entry(speed_row, read_aloud_rate_var, width=6)
     entry(row(c, "OCR language",
               "e.g. en-US. Blank uses your Windows display language."),
           read_aloud_lang_var, width=10)
@@ -1200,6 +1257,81 @@ def main(first_run: bool = False) -> None:
     check(c, "Stay quiet while a screen reader is running", read_aloud_quiet_var,
           "Off by default — the hotkey is usually pressed because the screen "
           "reader can't read that spot, so silence there defeats the feature.")
+
+    def _read_aloud_tier():
+        label = read_aloud_tts_var.get()
+        for value, lbl in read_aloud_tts_opts:
+            if lbl == label:
+                return value
+        return read_aloud_tts_opts[0][0]
+
+    def _on_read_aloud_tts(*_):
+        tier = _read_aloud_tier()
+        for group in (windows_group, deepgram_group, elevenlabs_group):
+            group.pack_forget()
+        {"windows": windows_group, "deepgram": deepgram_group,
+         "elevenlabs": elevenlabs_group}[tier].pack(fill="x", before=speed_row_frame)
+    read_aloud_tts_var.trace_add("write", _on_read_aloud_tts)
+    _on_read_aloud_tts()
+
+    PREVIEW_TEXT = "Six sharp trucks strapped their crisp black cargo, then quickly turned north."
+
+    def _preview_snapshot():
+        return preview_snapshot(
+            tier=_read_aloud_tier(),
+            voice=read_aloud_voice_var.get(),
+            elevenlabs_voice_id=read_aloud_elevenlabs_id_var.get(),
+            rate_text=read_aloud_rate_var.get(),
+            elevenlabs_key=eleven_key_var.get(),
+            deepgram_key=dg_key_var.get(),
+        )
+
+    def _preview_show(text, fg):
+        def apply():
+            if preview_status.winfo_exists():
+                preview_status.config(text=text, fg=fg)
+        try:
+            if root.winfo_exists():
+                root.after(0, apply)
+        except Exception:
+            pass
+
+    def _run_preview():
+        preview_btn.config(state="disabled")
+        _preview_show("Speaking…", MUTED)
+        # Read every form value HERE, on the Tk thread, before the worker
+        # starts — a Tk variable read from a background thread is unsafe
+        # once the thread outlives the call that spawned it.
+        snap = _preview_snapshot()
+
+        def work():
+            from . import readaloud
+
+            try:
+                speaker, reason = readaloud.build_speaker(PREVIEW_TEXT, snap)
+                if reason:
+                    # A dead key or bad voice ID is exactly what preview exists
+                    # to surface — it must not quietly play the Windows
+                    # fallback voice the way a real read does.
+                    _preview_show(reason, WARN)
+                    return
+                speaker.speak(PREVIEW_TEXT)
+                _preview_show("Played.", GOOD)
+            except Exception as exc:
+                _preview_show(str(exc), WARN)
+            finally:
+                def reenable():
+                    if preview_btn.winfo_exists():
+                        preview_btn.config(state="normal")
+                try:
+                    if root.winfo_exists():
+                        root.after(0, reenable)
+                except Exception:
+                    pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    preview_btn.config(command=_run_preview)
 
     c = card("Audio")
     mic_row = row(c, "Microphone")
@@ -1844,6 +1976,8 @@ def main(first_run: bool = False) -> None:
             config.save_api_key("GROQ_API_KEY", groq_key_var.get())
         if or_key_var.get().strip():
             config.save_api_key("OPENROUTER_API_KEY", or_key_var.get())
+        if eleven_key_var.get().strip():
+            config.save_api_key("ELEVENLABS_API_KEY", eleven_key_var.get())
         try:
             if autostart_var.get():
                 autostart.enable()
