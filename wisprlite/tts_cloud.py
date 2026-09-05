@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -43,8 +44,11 @@ def _post_for_audio(url: str, headers: dict, payload: dict, *, timeout: float, l
         raise CloudTTSError(f"{label} failed: HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
         raise CloudTTSError(f"{label} failed: {exc.reason}") from exc
-    except Exception as exc:
-        raise CloudTTSError(f"{label} failed: {exc}") from exc
+    # Deliberately NOT a bare `except Exception` here. A TypeError from a
+    # malformed payload is our bug, not a cloud failure, and relabelling it as
+    # CloudTTSError hid it behind the friendly "using the Windows voice"
+    # message. build_speaker still catches it and still falls back - but it
+    # names the exception type, so the bug is visible in the log.
 
 
 def deepgram_speak(text: str, voice: str, api_key: str, *, timeout: float = 20.0) -> bytes:
@@ -53,7 +57,10 @@ def deepgram_speak(text: str, voice: str, api_key: str, *, timeout: float = 20.0
     if not (api_key or "").strip():
         raise CloudTTSError("no Deepgram API key configured")
     model = (voice or DEFAULT_DEEPGRAM_VOICE).strip()
-    url = f"https://api.deepgram.com/v1/speak?model={model}&encoding=linear16&container=wav"
+    # quoted: a voice string containing & or ? silently rewrites the request -
+    # a different container, a different model, or a 400 nobody can explain.
+    url = ("https://api.deepgram.com/v1/speak"
+           f"?model={urllib.parse.quote(model, safe='')}&encoding=linear16&container=wav")
     return _post_for_audio(
         url,
         {"Authorization": f"Token {api_key}", "Content-Type": "application/json"},
@@ -69,7 +76,11 @@ def elevenlabs_speak(text: str, voice_id: str, api_key: str, *, timeout: float =
         raise CloudTTSError("no ElevenLabs API key configured")
     if not (voice_id or "").strip():
         raise CloudTTSError("no ElevenLabs voice ID configured")
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    # quoted: the voice ID is free text the user pastes in. A stray slash or
+    # trailing whitespace would otherwise route the request to a different
+    # endpoint entirely.
+    url = ("https://api.elevenlabs.io/v1/text-to-speech/"
+           + urllib.parse.quote(voice_id.strip(), safe=""))
     return _post_for_audio(
         url,
         {"xi-api-key": api_key, "Content-Type": "application/json"},

@@ -464,7 +464,11 @@ def build_speaker(text: str, cfg) -> tuple["Speaker", str]:
                 _config.elevenlabs_key())
             content_type = "audio/mpeg"
         else:
-            return Speaker(voice=getattr(cfg, "read_aloud_voice", ""), rate=rate), ""
+            # An unrecognised tier used to hand back a Windows speaker and no
+            # reason, so a setting that had silently drifted looked like normal
+            # operation. Say which value was not understood.
+            return (Speaker(voice="", rate=rate),
+                    f"unknown voice engine {tier!r} — using the Windows voice instead")
         # Building the player is INSIDE the try. It was outside, so a cloud
         # call that succeeded and then failed to produce a player raised
         # straight out of here - no fallback, and silence, which is the one

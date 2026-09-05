@@ -223,3 +223,65 @@ def test_a_dead_key_falls_back_and_says_why():
 
     assert speaker is not None
     assert "401" in note and "Windows voice" in note
+
+
+def test_a_voice_name_cannot_rewrite_the_deepgram_request():
+    """Raw interpolation let a voice string containing & or ? change the
+    container or the model - a 400 nobody could explain from the UI."""
+    from unittest import mock
+    from wisprlite import tts_cloud
+
+    seen = {}
+
+    def fake(url, headers, payload, *, timeout, label):
+        seen["url"] = url
+        return b"audio"
+
+    with mock.patch.object(tts_cloud, "_post_for_audio", side_effect=fake):
+        tts_cloud.deepgram_speak("hi", "aura-2-draco-en&container=mp3", "key")
+
+    assert "container=mp3" not in seen["url"], f"the voice rewrote the request: {seen['url']}"
+    assert "container=wav" in seen["url"]
+
+
+def test_an_elevenlabs_voice_id_cannot_change_the_endpoint():
+    """The voice ID is free text the user pastes. A stray slash would route the
+    request to a different endpoint entirely."""
+    from unittest import mock
+    from wisprlite import tts_cloud
+
+    seen = {}
+
+    def fake(url, headers, payload, *, timeout, label):
+        seen["url"] = url
+        return b"audio"
+
+    with mock.patch.object(tts_cloud, "_post_for_audio", side_effect=fake):
+        tts_cloud.elevenlabs_speak("hi", "  abc/../v1/history  ", "key")
+
+    assert seen["url"].endswith("/v1/text-to-speech/abc%2F..%2Fv1%2Fhistory"), \
+        f"the voice ID escaped its path segment: {seen['url']}"
+
+
+def test_an_unknown_voice_engine_says_so_instead_of_going_quiet():
+    import types
+    from wisprlite import readaloud
+
+    cfg = types.SimpleNamespace(read_aloud_tts="jarvis", read_aloud_rate=1.0,
+                                read_aloud_voice="")
+    _speaker, note = readaloud.build_speaker("hello", cfg)
+    assert "jarvis" in note and "Windows voice" in note, \
+        f"an unrecognised engine was silently ignored: {note!r}"
+
+
+def test_the_elevenlabs_key_has_exactly_one_reader():
+    """Same single-reader rule the Deepgram key already has."""
+    import pathlib as _p
+    import re
+    root = _p.Path(__file__).resolve().parent.parent
+    hits = []
+    for path in (root / "wisprlite").rglob("*.py"):
+        for num, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(r'ELEVENLABS_API_KEY', line):
+                hits.append(f"{path.name}:{num}")
+    assert len(hits) <= 2, f"more than one place reads the ElevenLabs key: {hits}"
