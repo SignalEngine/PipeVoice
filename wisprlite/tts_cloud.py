@@ -33,6 +33,13 @@ DEEPGRAM_VOICES = [
 ]
 DEFAULT_DEEPGRAM_VOICE = "aura-2-draco-en"
 
+# Per-engine input caps, in characters. Deepgram Aura-2 hard-fails (413) above
+# 2000; 1900 leaves headroom. ElevenLabs' own limit varies by plan (free tier
+# is 2,500-5,000 depending on model) - 5000 is the conservative floor so a
+# free-tier key doesn't 400 mid-chunk.
+DEEPGRAM_MAX_CHARS = 1900
+ELEVENLABS_MAX_CHARS = 5000
+
 
 def _post_for_audio(url: str, headers: dict, payload: dict, *, timeout: float, label: str) -> bytes:
     data = json.dumps(payload).encode("utf-8")

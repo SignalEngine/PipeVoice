@@ -127,6 +127,15 @@ _CODE_COMMENT = (
     "Return ONLY the comment, nothing else."
 )
 
+_SUMMARISE = (
+    "You summarise a piece of text captured for Read Aloud (often OCR'd from a "
+    "screen). Produce a short, faithful summary in plain prose covering only the "
+    "points actually stated - do NOT add information, opinions, or conclusions "
+    "the text does not contain. Keep it much shorter than the original while "
+    "preserving every concrete fact, number, name, and requirement. Return ONLY "
+    "the summary, nothing else."
+)
+
 _MEETING_ACTIONS = (
     "You extract action items from a raw voice dictation made during or after a "
     "meeting. Output ONLY a bullet list (one `- ` per line) of concrete action "
@@ -141,7 +150,7 @@ _MEETING_ACTIONS = (
 # Presets that need no per-user free-text instruction. "custom" and "email"
 # (sign-off name) read `custom_instruction` themselves.
 _FIXED_STYLES = {"prompt": _PROMPT, "code_comment": _CODE_COMMENT,
-                 "meeting_actions": _MEETING_ACTIONS}
+                 "meeting_actions": _MEETING_ACTIONS, "summarise": _SUMMARISE}
 
 
 def _style_system(style: str = "tidy", custom_instruction: str = "") -> str:
