@@ -65,3 +65,41 @@ Whether `Windows.Media.Ocr` is good enough on real UI text - 9-11pt labels,
 dark mode, low contrast. It is the Snipping Tool engine, tuned for documents.
 The kill criterion from the plan stands: if it garbles that kind of text, cut
 the feature rather than disappoint the people it is for.
+
+## What shipped after the first cut (v2.46 – v2.49, all stable as of 2026-09-07)
+
+| Change | Why |
+|---|---|
+| **Base hotkey drags a region** (+Shift screen, +Ctrl focused window) | James asked to "select what I want to be read". This REVERSED the panel's focused-window default, which was an inference about a mouseless user. His brief wins. |
+| **Pause / Restart / Stop on the pill** | Esc/Space already worked but nothing said so. Restart re-speaks without re-OCR. |
+| **Three voice tiers** — Windows (default), Deepgram Aura-2, ElevenLabs | Windows stays default: screen contents can be anything, a cloud voice must be explicit. Every cloud path falls back to Windows with a reason. `aura-2-draco-en` is the JARVIS-adjacent pick. |
+| **ElevenLabs key field** | It did not exist — `ELEVENLABS_API_KEY` was env-only. Selecting the engine silently reverted. |
+| **Preview** | Speaks with the TYPED form values, key included. Reading the saved key made paste-then-Preview fail with "no key configured" while the key sat in the box. |
+| **Chunking** | Deepgram Aura-2 caps at **2000 chars, 413 above**. Every long read was falling back. |
+| **Summarise / Read all** at the pill | Read all is the default the hotkey takes. A failed summarise reads the full text and says so. |
+
+### The chunker corrupted words — caught by a property test, not by reading
+The first chunker hard-cut an over-long *clause* at the character limit and
+rejoined with a space: `MqXXQagO` → `MqXXQ agO`, two words to a voice. **132 of
+400 random inputs** failed, against a docstring claiming "nothing is cut
+mid-word". Now clauses → words → hard-cut only a single word longer than the
+whole limit. The property test (400 random texts, exact round-trip) is in the
+suite. Read the docstring, then test the claim anyway.
+
+### Untestable wiring — the pattern that recurred five times
+Logic inside a Tk closure or the drain loop passed every test while being
+freely deletable, because the tests only reached a helper that was not the
+thing invoked. Cases: the Pause-label toggle (the test set the flag itself, then
+asserted it), the reading click routing (no test at all), the preview snapshot
+(a closure inside `main()`), the scroll-width fit (About had an inline copy the
+helper sabotage never touched), and two pre-existing tests that passed only
+because a neighbour had stubbed `sounddevice` first. **Every fix was the same:
+extract the wiring to a module-level or method-level unit, then sabotage it.**
+
+### Still unexplained: dropped sentences
+James reported whole sentences missing on 2026-09-07. Nothing in the path
+summarises, and the chunker bug only fires above 1900 characters and garbles
+words rather than dropping sentences. The clipboard holds exactly what OCR
+produced; his paste decides whether OCR is the culprit. **Do not build an OCR
+change until it lands** — `Windows.Media.Ocr` on 9–11pt UI text was the
+unmeasured risk from the original plan, and this may be it surfacing.
