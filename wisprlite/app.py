@@ -155,6 +155,9 @@ class App:
         self._read_aloud_speaker = None   # the live readaloud.Speaker, None when idle
         self._read_aloud_busy = threading.Lock()   # one read at a time
         self._read_aloud_last_text = None   # so Restart can re-speak without re-OCR
+        self._read_aloud_last_mode = "read_all"   # so Restart repeats the same mode
+        self._ra_choice_event = None      # set while the Read all/Summarise pill is up
+        self._ra_choice_result = None
 
         self._screenrec = None        # the live ScreenRecording, None when idle
         self._screenrec_selecting = False   # the region selector is open
@@ -404,31 +407,105 @@ class App:
             return
 
         self._read_aloud_last_text = text
-        self._read_aloud_speak(text)
+        mode = self._ask_read_mode_in_pill(len(text))
+        self._read_aloud_speak(text, mode)
 
-    def _read_aloud_speak(self, text: str) -> None:
+    def _ask_read_mode_in_pill(self, char_count: int) -> str:
+        """Read all vs Summarise, decided AT the pill. Read all is the fast
+        path: the read-aloud hotkey pressed again, or Enter, takes it
+        immediately - Summarise is the deliberate click. Falls back to
+        read_all if the pill is off or nobody answers within a generous
+        window, so this can never hang a read forever."""
+        from . import readaloud
+
+        if not self.cfg.overlay:
+            return "read_all"
+        self._ra_choice_result = None
+        event = threading.Event()
+        self._ra_choice_event = event
+        self.overlay.show_ra_choice(readaloud.duration_estimate(char_count),
+                                    self.cfg.read_aloud_last_mode)
+        threading.Thread(target=self._ra_choice_watch_hotkey, args=(event,), daemon=True).start()
+        answered = event.wait(timeout=15.0)
+        return self._ra_choice_result if answered and self._ra_choice_result else "read_all"
+
+    def _ra_choice_watch_hotkey(self, event: threading.Event) -> None:
+        """Enter or the read-aloud hotkey (pressed again) both mean "Read
+        all" while the choice pill is up - the point is that the fast path
+        costs no extra decision."""
+        import keyboard
+
+        from .hotkey import _all_pressed
+
+        prev_hotkey = True   # already down to have triggered the read; arm on release
+        while not event.is_set():
+            try:
+                if keyboard.is_pressed("enter"):
+                    self._ra_choice_answer("read_all")
+                    return
+                hotkey_down = _all_pressed(self.cfg.read_aloud_hotkey)
+                if hotkey_down and not prev_hotkey:
+                    self._ra_choice_answer("read_all")
+                    return
+                prev_hotkey = hotkey_down
+            except Exception:
+                pass
+            time.sleep(0.02)
+
+    def _ra_choice_answer(self, mode: str) -> None:
+        event = self._ra_choice_event
+        if event is None or event.is_set():
+            return
+        self._ra_choice_result = mode
+        self.cfg.read_aloud_last_mode = mode
+        self.cfg.save()
+        event.set()
+
+    def _read_aloud_speak(self, text: str, mode: str = "read_all") -> None:
         """Copy + speak already-captured text. Shared by the initial read and
         `ra_restart`, so restarting never re-runs OCR - re-OCRing would be
         slower and could return different text, which is not what "again"
-        means."""
+        means. `mode` is "read_all" (verbatim) or "summarise" (through the
+        existing Flow-mode LLM first) - chosen once at the pill and reused on
+        restart, never re-asked."""
         from . import readaloud
+
+        self._read_aloud_last_mode = mode
+        spoken_text = text
+        note = ""
+        if mode == "summarise":
+            from . import cleanup
+
+            self.overlay.set_state("transcribing", "Summarising…")
+            summary = cleanup.clean(text, self.cfg.cleanup_provider, self.cfg.cleanup_model,
+                                    self.cfg.language, style="summarise")
+            if summary:
+                spoken_text = summary
+            else:
+                # Never a truncated summary passed off as the whole thing:
+                # a failed summarise reads the FULL text and says so.
+                reason = cleanup.last_error() or "AI cleanup unavailable"
+                note = f"Summarise failed ({reason}) — reading full text. "
 
         copied = bool(self.cfg.read_aloud_clipboard)
         if copied:
-            copy_clipboard(text)
-        preview = text if len(text) <= 160 else text[:157] + "…"
-        self.overlay.set_state("reading", preview + (" (copied)" if copied else ""))
+            copy_clipboard(spoken_text)
+        preview = spoken_text if len(spoken_text) <= 140 else spoken_text[:137] + "…"
+        mode_label = "Summary" if (mode == "summarise" and not note) else "Read all"
+        self.overlay.set_state(
+            "reading", f"{note}{mode_label}: {preview}" + (" (copied)" if copied else ""))
 
         if not readaloud.should_speak(quiet_with_screenreader=self.cfg.read_aloud_quiet_with_screenreader):
             self.overlay.set_state("done", "Copied — staying quiet (screen reader running)")
             return
 
-        speaker, fallback_reason = readaloud.build_speaker(text, self.cfg)
+        speaker, chunks, player_builder, fallback_reason = readaloud.build_chunked_speaker(
+            spoken_text, self.cfg)
         self._read_aloud_speaker = speaker
         threading.Thread(target=self._read_aloud_watch_interrupt, args=(speaker,), daemon=True).start()
         failed = False
         try:
-            speaker.speak(text)
+            speaker.speak_chunks(chunks, player_builder)
         except readaloud.ReadAloudError as exc:
             failed = True
             self.overlay.set_state("error", str(exc)[:80])
@@ -442,7 +519,9 @@ class App:
 
     def _read_aloud_restart(self) -> None:
         """Stop whatever is speaking and read the last-captured text again,
-        from the start - the achievable form of "rewind"."""
+        from the start - the achievable form of "rewind". Repeats the same
+        Read all/Summarise mode as the read it is restarting; the choice was
+        already made once."""
         text = self._read_aloud_last_text
         if not text:
             return
@@ -456,7 +535,7 @@ class App:
         if not self._read_aloud_busy.acquire(timeout=5):
             return
         try:
-            self._read_aloud_speak(text)
+            self._read_aloud_speak(text, getattr(self, "_read_aloud_last_mode", "read_all"))
         finally:
             try:
                 self._read_aloud_busy.release()
@@ -789,6 +868,9 @@ class App:
 
     def _screenrec_action(self, action: str, value: str = "") -> None:
         """A control on the pill. Runs on the overlay's worker thread."""
+        if action in ("ra_read_all", "ra_summarise"):
+            self._ra_choice_answer("read_all" if action == "ra_read_all" else "summarise")
+            return
         if action in ("ra_pause", "ra_stop", "ra_restart"):
             speaker = self._read_aloud_speaker
             if action == "ra_pause":

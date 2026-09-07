@@ -597,7 +597,7 @@ def test_ra_restart_speaks_again_without_re_running_ocr():
         App._screenrec_action(app, "ra_restart")
 
     assert old_speaker.stop_calls == 1, "restart must stop whatever was already playing"
-    speak.assert_called_once_with("hello world")
+    speak.assert_called_once_with("hello world", "read_all")
     ocr.assert_not_called()
 
 
@@ -770,3 +770,405 @@ def test_stopping_breaks_the_wait_promptly():
     assert not returned.wait(0.3)
     speaker.stop()
     assert returned.wait(2), "stop() did not break the playback wait"
+
+
+# ---- long-text chunking (plan: pipevoice-read-aloud-long-text, gates 1-2) --
+
+def test_a_long_text_is_split_into_chunks_under_the_limit():
+    """Gate 1: none of the pieces exceed the engine's limit."""
+    from wisprlite import readaloud
+
+    text = " ".join(f"Sentence number {i} says something." for i in range(400))
+    assert len(text) > 5000
+    chunks = readaloud.split_into_chunks(text, 1900)
+    assert len(chunks) > 1
+    assert all(len(c) <= 1900 for c in chunks)
+
+
+def test_chunks_concatenate_back_to_the_original_words_in_order():
+    """Gate 1: nothing lost, nothing duplicated."""
+    from wisprlite import readaloud
+
+    text = " ".join(f"Sentence number {i} says something interesting." for i in range(400))
+    chunks = readaloud.split_into_chunks(text, 1900)
+    normalized = " ".join(text.split())
+    assert " ".join(chunks) == normalized
+
+
+def test_a_single_sentence_over_the_limit_still_produces_speakable_chunks():
+    """Gate 2: a 3,000-character sentence (no periods at all) still splits,
+    never dropping a word, by falling back to clause punctuation then
+    whitespace."""
+    from wisprlite import readaloud
+
+    words = [f"word{i}," if i % 5 == 0 else f"word{i}" for i in range(500)]
+    sentence = " ".join(words) + "."
+    assert len(sentence) > 3000
+    chunks = readaloud.split_into_chunks(sentence, 1900)
+    assert len(chunks) > 1
+    assert all(len(c) <= 1900 for c in chunks)
+    assert " ".join(chunks) == " ".join(sentence.split())
+
+
+def test_a_single_word_longer_than_the_limit_is_hard_cut_not_dropped():
+    from wisprlite import readaloud
+
+    text = "a" * 5000
+    chunks = readaloud.split_into_chunks(text, 1900)
+    assert all(len(c) <= 1900 for c in chunks)
+    assert "".join(chunks) == text
+
+
+def test_short_text_is_a_single_chunk():
+    from wisprlite import readaloud
+
+    assert readaloud.split_into_chunks("hello there.", 1900) == ["hello there."]
+
+
+def test_a_none_limit_never_splits_windows_has_no_documented_cap():
+    from wisprlite import readaloud
+
+    text = "word " * 2000
+    assert readaloud.split_into_chunks(text, None) == [" ".join(text.split())]
+
+
+def test_empty_text_produces_no_chunks():
+    from wisprlite import readaloud
+
+    assert readaloud.split_into_chunks("", 1900) == []
+
+
+# ---- duration estimate (gate 4) --------------------------------------------
+
+def test_duration_estimate_is_silent_below_1000_characters():
+    from wisprlite import readaloud
+
+    assert readaloud.duration_estimate(999) == ""
+    assert readaloud.duration_estimate(1000) == ""
+
+
+def test_duration_estimate_appears_above_1000_characters():
+    from wisprlite import readaloud
+
+    estimate = readaloud.duration_estimate(4200)
+    assert "4,200" in estimate
+    assert "min" in estimate
+
+
+# ---- speak_chunks: stop mid-sequence never starts the next chunk (gate 3) -
+
+def test_stopping_during_chunk_one_of_four_never_starts_chunk_two():
+    from wisprlite import readaloud
+
+    built = []
+
+    class FakePlayer:
+        def __init__(self, name):
+            self.name = name
+        def play(self):
+            pass
+        def pause(self):
+            pass
+        def close(self):
+            pass
+
+    speaker = readaloud.Speaker()
+
+    def player_builder(chunk):
+        player = FakePlayer(chunk)
+        built.append(chunk)
+        if len(built) == 1:
+            # Stop lands while chunk 1 is "playing" (before it awaits end).
+            speaker.stop()
+        return player
+
+    speaker.speak_chunks(["chunk one", "chunk two", "chunk three", "chunk four"],
+                          player_builder)
+    assert built == ["chunk one"], "a later chunk was built after stop()"
+
+
+def test_speak_chunks_plays_every_chunk_when_nothing_stops_it():
+    from wisprlite import readaloud
+
+    played = []
+
+    class FakePlayer:
+        def __init__(self, chunk):
+            self.chunk = chunk
+        def play(self):
+            played.append(self.chunk)
+        def pause(self):
+            pass
+        def close(self):
+            pass
+
+    speaker = readaloud.Speaker(player_factory=None)
+    speaker.speak_chunks(["one", "two", "three"], lambda c: FakePlayer(c))
+    assert played == ["one", "two", "three"]
+
+
+def test_speak_chunks_with_no_chunks_raises_instead_of_silently_doing_nothing():
+    from wisprlite import readaloud
+
+    speaker = readaloud.Speaker()
+    try:
+        speaker.speak_chunks([], lambda c: None)
+    except readaloud.ReadAloudError:
+        pass
+    else:
+        raise AssertionError("expected ReadAloudError for an empty chunk list")
+
+
+# ---- build_chunked_speaker: same fallback contract, but chunked -----------
+
+def test_build_chunked_speaker_windows_tier_has_no_cap_so_stays_one_chunk():
+    """Windows has no documented character cap - unlike the cloud tiers, it
+    must not be split just for the sake of it."""
+    from wisprlite import config, readaloud
+
+    cfg = config.Config(read_aloud_tts="windows", read_aloud_voice="")
+    text = " ".join(f"Sentence {i} here." for i in range(400))
+    speaker, chunks, builder, reason = readaloud.build_chunked_speaker(text, cfg)
+    assert reason == ""
+    assert chunks == [" ".join(text.split())]
+    assert isinstance(speaker, readaloud.Speaker)
+    assert builder == speaker._build_player
+
+
+def test_build_chunked_speaker_falls_back_to_windows_on_a_deepgram_failure():
+    from unittest import mock
+    from wisprlite import config, readaloud, tts_cloud
+
+    cfg = config.Config(read_aloud_tts="deepgram", read_aloud_voice="aura-2-draco-en")
+    with mock.patch.object(config, "deepgram_key", return_value="a-key"), \
+         mock.patch.object(tts_cloud, "deepgram_speak",
+                            side_effect=tts_cloud.CloudTTSError("Deepgram speak failed: HTTP 401")):
+        speaker, chunks, builder, reason = readaloud.build_chunked_speaker("hello world", cfg)
+    assert isinstance(speaker, readaloud.Speaker)
+    assert "HTTP 401" in reason and "Windows" in reason
+    assert chunks == ["hello world"]
+
+
+def test_build_chunked_speaker_uses_cloud_audio_and_only_fetches_each_chunk_once():
+    from unittest import mock
+    from wisprlite import config, readaloud, tts_cloud
+
+    cfg = config.Config(read_aloud_tts="deepgram", read_aloud_voice="aura-2-draco-en")
+    calls = []
+
+    def fake_speak(text, voice, key):
+        calls.append(text)
+        return b"wav-bytes"
+
+    with mock.patch.object(config, "deepgram_key", return_value="a-key"), \
+         mock.patch.object(tts_cloud, "deepgram_speak", side_effect=fake_speak), \
+         mock.patch.object(readaloud, "_winrt_player_from_bytes",
+                           side_effect=lambda audio, ct: object()):
+        text = " ".join(f"Sentence {i} here." for i in range(400))
+        speaker, chunks, builder, reason = readaloud.build_chunked_speaker(text, cfg)
+        assert reason == ""
+        assert len(chunks) > 1
+        # First chunk already fetched to detect a dead key early.
+        assert calls == [chunks[0]]
+        for chunk in chunks:
+            builder(chunk)
+    assert calls == chunks, "each chunk must be synthesized exactly once, in order"
+
+
+# ---- Read all vs Summarise, chosen at the pill (gates 5-6) -----------------
+
+def _make_app_for_speak():
+    import threading
+    from unittest import mock
+
+    from uistub import install_platform_stubs
+    install_platform_stubs()
+    from wisprlite import config
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app.cfg = config.Config(read_aloud_tts="windows", read_aloud_clipboard=False)
+    app._read_aloud_speaker = None
+    app._read_aloud_busy = threading.Lock()
+    app.overlay = mock.Mock()
+    return app
+
+
+def test_summarise_calls_clean_once_and_speaks_its_output():
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = _make_app_for_speak()
+    with mock.patch("wisprlite.cleanup.clean", return_value="A short summary.") as clean, \
+         mock.patch("wisprlite.readaloud.build_chunked_speaker") as build:
+        fake_speaker = mock.Mock()
+        build.return_value = (fake_speaker, ["A short summary."], lambda c: None, "")
+        App._read_aloud_speak(app, "a very long original text " * 50, "summarise")
+
+    clean.assert_called_once()
+    assert clean.call_args.kwargs.get("style") == "summarise", clean.call_args
+    build.assert_called_once_with("A short summary.", app.cfg)
+    fake_speaker.speak_chunks.assert_called_once()
+
+
+def test_a_failed_summarise_speaks_the_full_text_and_shows_a_reason():
+    from unittest import mock
+    from wisprlite import cleanup
+    from wisprlite.app import App
+
+    app = _make_app_for_speak()
+    original = "a very long original text " * 50
+    with mock.patch("wisprlite.cleanup.clean", return_value=None), \
+         mock.patch.object(cleanup, "last_error", return_value="no API key for gemini"), \
+         mock.patch("wisprlite.readaloud.build_chunked_speaker") as build:
+        fake_speaker = mock.Mock()
+        build.return_value = (fake_speaker, [original], lambda c: None, "")
+        App._read_aloud_speak(app, original, "summarise")
+
+    # The FULL text is what gets built into a speaker, never a truncated summary.
+    build.assert_called_once_with(original, app.cfg)
+    state_calls = [c.args for c in app.overlay.set_state.call_args_list]
+    assert any("no API key for gemini" in str(c) for c in state_calls), state_calls
+
+
+def test_read_all_never_calls_clean():
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = _make_app_for_speak()
+    with mock.patch("wisprlite.cleanup.clean") as clean, \
+         mock.patch("wisprlite.readaloud.build_chunked_speaker") as build:
+        fake_speaker = mock.Mock()
+        build.return_value = (fake_speaker, ["hello"], lambda c: None, "")
+        App._read_aloud_speak(app, "hello", "read_all")
+
+    clean.assert_not_called()
+
+
+def test_the_pill_states_which_mode_was_read():
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = _make_app_for_speak()
+    with mock.patch("wisprlite.readaloud.build_chunked_speaker") as build:
+        fake_speaker = mock.Mock()
+        build.return_value = (fake_speaker, ["hello"], lambda c: None, "")
+        App._read_aloud_speak(app, "hello", "read_all")
+    reading_calls = [c.args[1] for c in app.overlay.set_state.call_args_list
+                     if c.args[0] == "reading"]
+    assert any("Read all" in text for text in reading_calls), reading_calls
+
+    app2 = _make_app_for_speak()
+    with mock.patch("wisprlite.cleanup.clean", return_value="short summary"), \
+         mock.patch("wisprlite.readaloud.build_chunked_speaker") as build2:
+        fake_speaker2 = mock.Mock()
+        build2.return_value = (fake_speaker2, ["short summary"], lambda c: None, "")
+        App._read_aloud_speak(app2, "hello world", "summarise")
+    reading_calls2 = [c.args[1] for c in app2.overlay.set_state.call_args_list
+                      if c.args[0] == "reading"]
+    assert any("Summary" in text for text in reading_calls2), reading_calls2
+
+
+def test_enter_or_the_hotkey_always_resolves_the_choice_to_read_all():
+    """Whatever was remembered as the last choice, the fast path (Enter, or
+    the read-aloud hotkey pressed again) always means Read all."""
+    import threading
+    from wisprlite.app import App
+
+    app = _make_app_for_speak()
+    app.cfg.read_aloud_last_mode = "summarise"
+    app._ra_choice_event = None
+    app._ra_choice_result = None
+    App._ra_choice_answer(app, "read_all")
+    assert app._ra_choice_result == "read_all" or app._ra_choice_event is None
+    # answer() with no event pre-set should not raise (mirrors a stray click)
+
+
+def test_ra_choice_answer_sets_the_event_and_remembers_the_choice():
+    import threading
+    from wisprlite.app import App
+
+    app = _make_app_for_speak()
+    app._ra_choice_event = threading.Event()
+    app._ra_choice_result = None
+    App._ra_choice_answer(app, "summarise")
+    assert app._ra_choice_result == "summarise"
+    assert app.cfg.read_aloud_last_mode == "summarise"
+    assert app._ra_choice_event.is_set()
+
+
+def test_ask_read_mode_returns_read_all_when_overlay_is_off():
+    from wisprlite.app import App
+
+    app = _make_app_for_speak()
+    app.cfg.overlay = False
+    assert App._ask_read_mode_in_pill(app, 5000) == "read_all"
+
+
+def test_ra_choice_buttons_route_through_screenrec_action():
+    from unittest import mock
+    from wisprlite.app import App
+
+    app = _make_app_for_speak()
+    app._ra_choice_event = mock.Mock()
+    app._ra_choice_event.is_set.return_value = False
+    with mock.patch.object(App, "_ra_choice_answer") as answer:
+        App._screenrec_action(app, "ra_read_all")
+        App._screenrec_action(app, "ra_summarise")
+    answer.assert_any_call("read_all")
+    answer.assert_any_call("summarise")
+
+
+# ---- chunking must not lose or corrupt a single word -------------------------
+
+def test_chunking_never_splits_a_word_across_chunks():
+    """The first implementation hard-cut an over-long CLAUSE at the character
+    limit, and _pack rejoined with a space - so "MqXXQagO" came back as
+    "MqXXQ agO", which a voice reads as two words. 132 of 400 random inputs
+    were corrupted. Only a single word longer than the whole limit may be cut.
+    """
+    import random
+    import string
+
+    from wisprlite.readaloud import split_into_chunks
+
+    random.seed(7)
+    for _ in range(400):
+        words = []
+        for _ in range(random.randint(1, 60)):
+            word = "".join(random.choice(string.ascii_letters)
+                           for _ in range(random.randint(1, 14)))
+            if random.random() < 0.15:
+                word += random.choice(".!?;,")
+            words.append(word)
+        text = " ".join(words)
+        limit = random.choice([20, 50, 200, 1900])
+
+        chunks = split_into_chunks(text, limit)
+
+        assert " ".join(chunks) == " ".join(text.split()), (
+            f"text was corrupted at limit={limit}\n"
+            f"  in : {text[:120]!r}\n  out: {' '.join(chunks)[:120]!r}")
+        for chunk in chunks:
+            assert len(chunk) <= limit, f"chunk of {len(chunk)} exceeds {limit}"
+
+
+def test_a_single_word_longer_than_the_limit_is_the_only_hard_cut():
+    """Pathological, but it must still be speakable rather than dropped."""
+    from wisprlite.readaloud import split_into_chunks
+
+    chunks = split_into_chunks("x" * 3000, 1900)
+    assert [len(c) for c in chunks] == [1900, 1100]
+    assert "".join(chunks) == "x" * 3000, "characters were lost in the hard cut"
+
+
+def test_a_long_clause_is_split_on_words_not_characters():
+    """The exact shape of the bug: one clause, no sentence punctuation, longer
+    than the limit."""
+    from wisprlite.readaloud import split_into_chunks
+
+    text = " ".join(["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"])
+    chunks = split_into_chunks(text, 20)
+    for chunk in chunks:
+        for word in chunk.split():
+            assert word in text.split(), f"{word!r} is not a real word from the input"

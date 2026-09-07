@@ -46,6 +46,7 @@ ACCENT = {
     "meeting": PALETTE["meeting"],
     "screenrec": PALETTE["meeting"],
     "reading": PALETTE["done"],
+    "ra_choice": PALETTE["done"],
 }
 
 
@@ -171,6 +172,12 @@ class Overlay:
     def show_screenrec(self) -> None:
         """Show the recording pill. Its clock and buttons poll the recorder."""
         self._q.put(("screenrec", None, ""))
+
+    def show_ra_choice(self, estimate: str, default_mode: str) -> None:
+        """Read all vs Summarise, decided at the moment of reading.
+        `default_mode` (the remembered last choice) only decides which button
+        is highlighted - Enter/the hotkey always resolve to Read all."""
+        self._q.put(("ra_choice", default_mode or "read_all", estimate or ""))
 
     # ---- tkinter thread ---------------------------------------------------
     def _run(self) -> None:
@@ -322,6 +329,13 @@ class Overlay:
                         st["screenrec_phase"] = "recording"
                         resize(WIN_H)
                         reveal()
+                    elif kind == "ra_choice":
+                        st["name"] = "ra_choice"
+                        st["text"] = text or ""
+                        st["ra_choice_default"] = state or "read_all"
+                        st["hide_at"] = 0.0
+                        resize(WIN_H)
+                        reveal()
                     elif kind == "meeting":
                         st["name"] = "meeting"
                         st["text"] = ""
@@ -376,7 +390,7 @@ class Overlay:
                 except Exception:
                     phase = "recording"
                 resize(self.SCREENREC_H.get(phase, WIN_H))
-            elif st["name"] == "reading":
+            elif st["name"] in ("reading", "ra_choice"):
                 resize(self.SCREENREC_H["done"])   # same taller pill, same button row
             if st["visible"]:
                 self._draw(canvas, st)
@@ -409,6 +423,9 @@ class Overlay:
             return
         if st["name"] == "reading":
             self._draw_reading(c, st, H, accent)
+            return
+        if st["name"] == "ra_choice":
+            self._draw_ra_choice(c, st, H, accent)
             return
         self._draw_status(c, st, H, accent)
 
@@ -633,6 +650,8 @@ class Overlay:
     # drawn as the primary action - it's the one you reach for in a hurry.
     READING_BUTTONS = (("ra_pause", "Pause"), ("ra_restart", "Restart"),
                         ("ra_stop", "Stop"))
+    # Read-all-vs-summarise choice, shown once per read before speech starts.
+    RA_CHOICE_BUTTONS = (("ra_read_all", "Read all"), ("ra_summarise", "Summarise"))
     DONE_BTN_H, DONE_BTN_Y = 30, 62
     DONE_GAP, DONE_EDGE = 8, 8
     SCREENREC_H = {"recording": WIN_H, "naming": 88, "working": WIN_H, "done": 100}
@@ -672,12 +691,22 @@ class Overlay:
             # speaker and pushes the real state back via set_reading_paused,
             # so a Space keypress and a button click cannot disagree.
             return self._reading_hit(x, y)
+        if name == "ra_choice":
+            return self._ra_choice_hit(x, y)
         return ""
 
     def _reading_hit(self, x, y) -> str:
         """Which reading-pill button a click at (x, y) landed on, or ""."""
         for index, (action, _label) in enumerate(self.READING_BUTTONS):
             x1, y1, x2, y2 = self._done_button_box(index, self.READING_BUTTONS)
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return action
+        return ""
+
+    def _ra_choice_hit(self, x, y) -> str:
+        """Which read-mode button a click at (x, y) landed on, or ""."""
+        for index, (action, _label) in enumerate(self.RA_CHOICE_BUTTONS):
+            x1, y1, x2, y2 = self._done_button_box(index, self.RA_CHOICE_BUTTONS)
             if x1 <= x <= x2 and y1 <= y <= y2:
                 return action
         return ""
@@ -890,6 +919,33 @@ class Overlay:
                         text="Resume" if st.get("reading_paused") else "Pause")
         c.itemconfigure(items["reading_ra_stop_bg"], fill=accent)
         c.itemconfigure(items["reading_ra_stop_text"], fill="#1a0c0d")
+
+    def _draw_ra_choice(self, c, st, H: int, accent: str) -> None:
+        """Read all vs Summarise, decided at the moment of reading. The
+        remembered last choice is highlighted, but Read all is always what
+        Enter or the hotkey take - the fast path costs no extra decision."""
+        items = self._base_scene(c, st, "ra_choice", H, accent)
+        if "ra_choice_caption" not in items:
+            items["ra_choice_caption"] = c.create_text(
+                24, 22, anchor="w", fill=PALETTE["fg"], font=("Segoe UI Semibold", 10))
+            items["ra_choice_hint"] = c.create_text(
+                24, 40, anchor="w", fill=PALETTE["muted"], font=("Segoe UI", 8),
+                text="Enter or the hotkey reads all")
+            for index, (action, label) in enumerate(self.RA_CHOICE_BUTTONS):
+                x1, y1, x2, y2 = self._done_button_box(index, self.RA_CHOICE_BUTTONS)
+                items[f"{action}_bg"] = self._round_rect(
+                    c, x1, y1, x2, y2, 8, fill=PALETTE["card"], outline="")
+                items[f"{action}_text"] = c.create_text(
+                    (x1 + x2) // 2, (y1 + y2) // 2, text=label,
+                    fill=PALETTE["fg"], font=("Segoe UI", 9))
+        c.itemconfigure(items["ra_choice_caption"],
+                        text=self._fit(st["text"] or "How should this be read?", WIN_W - 48))
+        highlight = "ra_summarise" if st.get("ra_choice_default") == "summarise" else "ra_read_all"
+        for action, _label in self.RA_CHOICE_BUTTONS:
+            c.itemconfigure(items[f"{action}_bg"],
+                            fill=accent if action == highlight else PALETTE["card"])
+            c.itemconfigure(items[f"{action}_text"],
+                            fill="#1a0c0d" if action == highlight else PALETTE["fg"])
 
     def _draw_status(self, c, st, H: int, accent: str) -> None:
         items = self._base_scene(c, st, "status", H, accent)

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import re
 import threading
 import time
 from typing import Callable, Optional
@@ -217,6 +218,85 @@ def ocr_png(png_bytes: bytes, *, language: str = "") -> str:
     return " ".join((text or "").split())
 
 
+# ---- chunking (long text vs. an engine's per-request character cap) -------
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_CLAUSE_SPLIT = re.compile(r"(?<=[,;:])\s+")
+
+
+def duration_estimate(char_count: int) -> str:
+    """A short warning line for a long read - `chars/5/150` minutes at ~150
+    words/minute, 5 characters/word. Empty at/under ~1,000 characters so a
+    short read stays quiet."""
+    if char_count <= 1000:
+        return ""
+    minutes = max(1, round(char_count / 5 / 150))
+    return f"Reading {char_count:,} characters — about {minutes} min"
+
+
+def _pack(pieces: list[str], limit: int) -> list[str]:
+    """Greedily pack already-limit-sized pieces into chunks under `limit`,
+    joined with a single space - the shared last step for both the sentence
+    pass and the clause/word fallback."""
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        candidate = f"{current} {piece}".strip() if current else piece
+        if len(candidate) <= limit:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            current = piece
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _split_long_piece(text: str, limit: int) -> list[str]:
+    """One sentence longer than the limit still has to be spoken: fall back to
+    clause punctuation, then whitespace, then a hard cut. Never drops a chunk."""
+    safe: list[str] = []
+    for part in _CLAUSE_SPLIT.split(text):
+        if len(part) <= limit:
+            safe.append(part)
+            continue
+        # A clause over the limit is still many WORDS. Hard-cutting it here put
+        # a break mid-word, and _pack then rejoined with a space: "MqXXQagO"
+        # came back as "MqXXQ agO", which the voice reads as two words. Go down
+        # to words first.
+        for word in part.split(" "):
+            if len(word) <= limit:
+                safe.append(word)
+            else:
+                # A SINGLE word longer than the limit. Only here is a hard cut
+                # unavoidable, and only here can the text not round-trip.
+                safe.extend(word[i:i + limit] for i in range(0, len(word), limit))
+    return _pack(safe, limit)
+
+
+def split_into_chunks(text: str, limit: Optional[int]) -> list[str]:
+    """Split `text` into pieces each at most `limit` characters, breaking on
+    sentence boundaries first so nothing is cut mid-word. `limit` of None (the
+    Windows voice has no documented cap) returns the whole text as one chunk.
+
+    Concatenating the result with " ".join(...) reproduces the original words
+    in order - nothing is dropped or duplicated, only regrouped."""
+    text = " ".join((text or "").split())
+    if not text:
+        return []
+    if not limit or len(text) <= limit:
+        return [text]
+    sentences = _SENTENCE_SPLIT.split(text)
+    safe: list[str] = []
+    for sentence in sentences:
+        if len(sentence) <= limit:
+            safe.append(sentence)
+        else:
+            safe.extend(_split_long_piece(sentence, limit))
+    return _pack(safe, limit)
+
+
 # ---- speech ----------------------------------------------------------------
 
 class Speaker:
@@ -278,6 +358,41 @@ class Speaker:
                     self._player = None
             self._stop_player(player)
             raise
+
+    def speak_chunks(self, chunks: list[str], player_builder: Callable[[str], object]) -> None:
+        """Speak an ordered sequence of already-chunked pieces back to back
+        through this ONE Speaker, so Stop/Pause govern the whole read rather
+        than one fragment. `player_builder(chunk)` is called lazily, one piece
+        at a time - a stop between pieces breaks the loop before the next one
+        is built (or fetched from a cloud engine), so stopping never starts
+        the next chunk."""
+        chunks = [c for c in (chunks or []) if c]
+        if not chunks:
+            raise ReadAloudError("nothing to read")
+        for chunk in chunks:
+            with self._lock:
+                if self._stopped:
+                    return
+            try:
+                player = player_builder(chunk)
+            except ReadAloudError:
+                raise
+            except Exception as exc:
+                raise ReadAloudError(f"speech unavailable: {exc}") from exc
+            with self._lock:
+                if self._stopped:
+                    self._stop_player(player)
+                    return
+                self._player = player
+            try:
+                self._play(player)
+                self._await_end(player, chunk)
+            except Exception:
+                with self._lock:
+                    if self._player is player:
+                        self._player = None
+                self._stop_player(player)
+                raise
 
     def pause(self) -> None:
         with self._lock:
@@ -486,6 +601,73 @@ def build_speaker(text: str, cfg) -> tuple["Speaker", str]:
                 f"{type(exc).__name__} — using the Windows voice instead")
 
     return Speaker(rate=rate, player_factory=lambda: player), ""
+
+
+def build_chunked_speaker(text: str, cfg) -> tuple["Speaker", list[str], Callable[[str], object], str]:
+    """The chunked sibling of `build_speaker`: same tier dispatch and the same
+    fallback-to-Windows-on-any-failure contract, but for a full read instead of
+    the Settings preview's one fixed sentence. Returns the Speaker, its
+    sentence-safe chunks, a per-chunk player builder (called lazily by
+    `Speaker.speak_chunks`), and a fallback reason (empty on success).
+    """
+    tier = (getattr(cfg, "read_aloud_tts", "") or "windows").strip().lower()
+    rate = getattr(cfg, "read_aloud_rate", 1.0)
+
+    if tier == "windows":
+        speaker = Speaker(voice=getattr(cfg, "read_aloud_voice", ""), rate=rate)
+        return speaker, split_into_chunks(text, None), speaker._build_player, ""
+
+    from . import config as _config
+    from . import tts_cloud
+
+    if tier == "deepgram":
+        limit = tts_cloud.DEEPGRAM_MAX_CHARS
+    elif tier == "elevenlabs":
+        limit = tts_cloud.ELEVENLABS_MAX_CHARS
+    else:
+        speaker = Speaker(voice="", rate=rate)
+        return (speaker, split_into_chunks(text, None), speaker._build_player,
+                f"unknown voice engine {tier!r} — using the Windows voice instead")
+
+    def synth(chunk: str) -> tuple[bytes, str]:
+        if tier == "deepgram":
+            return tts_cloud.deepgram_speak(
+                chunk,
+                getattr(cfg, "read_aloud_voice", "") or tts_cloud.DEFAULT_DEEPGRAM_VOICE,
+                getattr(cfg, "read_aloud_deepgram_key", "") or _config.deepgram_key()), "audio/wav"
+        return tts_cloud.elevenlabs_speak(
+            chunk,
+            getattr(cfg, "read_aloud_elevenlabs_voice_id", ""),
+            getattr(cfg, "read_aloud_elevenlabs_key", "") or _config.elevenlabs_key()), "audio/mpeg"
+
+    chunks = split_into_chunks(text, limit)
+    try:
+        # Synthesize the FIRST chunk now, same as build_speaker, so a dead key
+        # or no network is caught before anything plays rather than mid-read.
+        first_audio, content_type = synth(chunks[0])
+        first_player = _winrt_player_from_bytes(first_audio, content_type)
+    except tts_cloud.CloudTTSError as exc:
+        speaker = Speaker(voice="", rate=rate)
+        return (speaker, split_into_chunks(text, None), speaker._build_player,
+                f"{exc} — using the Windows voice instead")
+    except Exception as exc:
+        log.exception("read-aloud: cloud voice failed, falling back")
+        speaker = Speaker(voice="", rate=rate)
+        return (speaker, split_into_chunks(text, None), speaker._build_player,
+                f"{type(exc).__name__} — using the Windows voice instead")
+
+    served = {"player": first_player}
+
+    def player_builder(chunk: str):
+        # speak_chunks calls this once per chunk, in order - the first call is
+        # always chunks[0], already fetched above to detect a dead key early.
+        if served["player"] is not None:
+            player, served["player"] = served["player"], None
+            return player
+        audio, content_type = synth(chunk)
+        return _winrt_player_from_bytes(audio, content_type)
+
+    return Speaker(rate=rate), chunks, player_builder, ""
 
 
 # ---- screen reader detection (informational only — never gates speaking) -----

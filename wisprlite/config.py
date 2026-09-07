@@ -210,6 +210,7 @@ class Config:
     read_aloud_ocr_language: str = "" # "" = user's profile languages
     read_aloud_clipboard: bool = True # also copy the recognized text; never silent about it
     read_aloud_quiet_with_screenreader: bool = False  # default OFF: speak even with NVDA/JAWS running
+    read_aloud_last_mode: str = "read_all"  # read_all | summarise - remembered, highlighted next time
 
     @property
     def meetings_keep(self) -> int:
