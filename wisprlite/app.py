@@ -407,6 +407,7 @@ class App:
             return
 
         self._read_aloud_last_text = text
+        readaloud.keep_last_text(text, config.config_dir())
         mode = self._ask_read_mode_in_pill(len(text))
         self._read_aloud_speak(text, mode)
 
