@@ -849,7 +849,22 @@ class App:
                 info["paused"] = recording.paused
             except Exception:
                 pass
+            if recording.video_failed.is_set():
+                self._abort_failed_screen_recording(recording)
         return info
+
+    def _abort_failed_screen_recording(self, recording) -> None:
+        """The encoder died mid-recording: stop NOW and say so.
+
+        Called from the pill's redraw, so it runs within a frame of the failure
+        instead of whenever the user next presses Stop. Same finish path as the
+        hotkey, so the error, the saved narration and any waiting agent are all
+        handled in one place.
+        """
+        if self._screenrec is not recording:
+            return
+        log.error("screenrec: video stopped after %.1fs, aborting", recording.elapsed())
+        self.toggle_screen_recording()
 
     def _ask_name_in_pill(self, default: str) -> str:
         """Show the name field IN the pill and wait for Save or Skip.
@@ -998,7 +1013,7 @@ class App:
             self._screenrec_ui.update(phase="working", status="Wrapping up the video\u2026")
             video = recording.stop()
             if video is None:
-                self._fail("screen recording: " + "; ".join(recording.errors[:2]))
+                self._fail("screen recording: " + "; ".join(recording.errors[:3]))
                 return
 
             # Named AFTER the fact: the moment you want to hit record is the

@@ -827,3 +827,61 @@ def test_two_frames_in_the_same_millisecond_get_distinct_timestamps():
     assert seen == sorted(set(seen)), \
         f"timestamps were not strictly increasing: {seen}"
     assert len(set(seen)) == 3, f"a duplicate PTS was emitted: {seen}"
+
+
+# -- a dead encoder must not masquerade as a live recording -------------------
+
+def test_a_grab_loop_crash_flags_video_failed_and_logs_the_traceback(caplog):
+    import logging
+    import types
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        def explode():
+            raise RuntimeError("boom at frame 0")
+
+        fake_mss = types.SimpleNamespace(mss=explode)
+        with patch.dict(sys.modules, {"mss": fake_mss}), \
+                caplog.at_level(logging.INFO, logger="wisprlite"):
+            rec._grab_loop()
+        assert rec.video_failed.is_set()
+        assert any("boom at frame 0" in r.message for r in caplog.records)
+        # The traceback names the raising line; the message alone never did.
+        assert any(r.exc_info and r.exc_info[0] is RuntimeError for r in caplog.records)
+
+
+def test_stop_names_the_saved_narration_when_the_mux_fails():
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        _feed(rec, _frames(3))
+        _write_wav(rec.audio_path, 0.5)
+        with patch.object(rec, "_mux", return_value=None):
+            assert rec.stop() is None
+        assert rec.audio_path.exists()
+        assert any("narration saved" in e and rec.audio_path.name in e for e in rec.errors)
+
+
+def test_the_pill_tick_aborts_a_recording_whose_video_died():
+    import types
+
+    from uistub import install_platform_stubs
+
+    install_platform_stubs()
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    rec = types.SimpleNamespace(
+        elapsed=lambda: 3.2, paused=False, video_failed=threading.Event())
+    app._screenrec = rec
+    app._screenrec_ui = types.SimpleNamespace(snapshot=lambda: {"phase": "recording"})
+    calls = []
+    app.toggle_screen_recording = lambda: calls.append("stop")
+
+    app._screenrec_overlay_state()
+    assert calls == []                     # healthy: nothing happens
+    rec.video_failed.set()
+    app._screenrec_overlay_state()
+    assert calls == ["stop"]
+    app._screenrec = None                  # what the finish path does first
+    app._screenrec_overlay_state()
+    assert calls == ["stop"]               # never a second stop
