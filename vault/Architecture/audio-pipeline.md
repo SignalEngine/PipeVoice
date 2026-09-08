@@ -105,6 +105,26 @@ James's machine.
 
 ## Finishing a screen recording
 
+### A dead encoder must not look like a live recording (v2.49.1)
+
+2026-09-08: an 8-minute narration produced a 3-second clip. The grab loop died
+on frame ~36 with `ArgumentError: Invalid argument ... returned 22` from
+libx264/mp4, the mic kept recording (49 MB wav, intact), and the pill sat on
+"recording" for eight minutes because nothing was watching the grab thread.
+Root cause of the errno 22 is still unknown — the error was logged without a
+traceback. Local repro: only a backwards PTS gives that exact error, and
+`_encode_frame` already clamps PTS strictly increasing.
+
+- `_record_error` logs `exc_info`, so the next failure names the raising line.
+- `ScreenRecording.video_failed` (Event) is set when the grab loop dies. The
+  pill's state provider (`_screenrec_overlay_state`) sees it and runs the
+  normal stop path — same route as the hotkey, so the error, the agent
+  waiter and the saved files are handled in one place.
+- `stop()` appends `narration saved: <wav>` to `errors` when the mux fails
+  but the wav exists. The wav is never deleted on a failed mux; recover with
+  `ffmpeg -i x.wav -af loudnorm -c:a aac x.m4a` and transcribe via Deepgram.
+
+
 The order matters, and it was wrong until v2.42.0.
 
 `_finish_screen_recording` ran **mux → name → transcribe → send → show buttons**
