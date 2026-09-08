@@ -65,6 +65,10 @@ class ScreenRecording:
         self.stem = _stamp()
 
         self._stop = threading.Event()
+        # Set when the grab loop dies. The mic keeps going, so the pill would
+        # otherwise sit on "recording" while nothing is being filmed — that is
+        # how eight minutes of narration once produced a 3-second clip.
+        self.video_failed = threading.Event()
         self._threads: list[threading.Thread] = []
         self._audio_queue: queue.Queue = queue.Queue(maxsize=AUDIO_QUEUE_LIMIT)
         self._wave: wave.Wave_write | None = None
@@ -139,7 +143,11 @@ class ScreenRecording:
         if not self.frames_written:
             self._record_error(RuntimeError("no frames captured"))
             return None
-        return self._mux()
+        video = self._mux()
+        if video is None and self.audio_path.exists():
+            # The narration is intact even when the picture is not; say where.
+            self.errors.append(f"narration saved: {self.audio_path.name}")
+        return video
 
     def rename(self, stem: str) -> None:
         """Give the finished files a new stem, keeping every extension."""
@@ -176,7 +184,9 @@ class ScreenRecording:
     def _record_error(self, exc: Exception) -> None:
         message = f"{type(exc).__name__}: {exc}"
         self.errors.append(message)
-        log.info("screenrec: %s", message)
+        # With the traceback: the message alone ("Invalid argument ... 22")
+        # could not say whether the encoder or the muxer raised it.
+        log.info("screenrec: %s", message, exc_info=exc)
 
     # -- video ---------------------------------------------------------------
 
@@ -276,6 +286,7 @@ class ScreenRecording:
                         next_at = time.monotonic()
         except Exception as exc:
             self._record_error(exc)
+            self.video_failed.set()
             if not self.frames_written:
                 # The container was opened but never took a frame, so stop()
                 # skips the mux and leaves an unplayable stub sitting in the
