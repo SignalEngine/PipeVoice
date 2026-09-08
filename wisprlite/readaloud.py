@@ -739,3 +739,20 @@ def main() -> None:
         except Exception as exc:      # never let reporting change the verdict
             print(f"(could not write {out}: {exc})")
     sys.exit(0 if ok else 1)
+
+
+def keep_last_text(text: str, folder) -> None:
+    """Write what OCR produced to read-aloud-last.txt beside the log.
+
+    When a read comes out as nonsense there is no way to tell whether OCR
+    misread the screen or the voice mangled good text. The file answers that;
+    the log line gives the size without the content.
+    """
+    try:
+        from pathlib import Path
+
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        (Path(folder) / "read-aloud-last.txt").write_text(text, encoding="utf-8")
+        log.info("read-aloud: OCR produced %d chars, %d words", len(text), len(text.split()))
+    except Exception as exc:
+        log.info("read-aloud: could not keep the last text: %s", exc)
