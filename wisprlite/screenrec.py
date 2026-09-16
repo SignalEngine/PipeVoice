@@ -32,6 +32,10 @@ AUDIO_RATE = 48_000
 AUDIO_CHANNELS = 1
 AUDIO_WIDTH = 2
 DEFAULT_FPS = 12
+# Frame timestamps are milliseconds. This is the CODEC's clock and the clock every
+# frame is stamped in; the container's clock is separate and not ours to rely on
+# (see _encode_frame).
+VIDEO_TIME_BASE = Fraction(1, 1000)
 # ~30s of audio in hand before dropping. The mic callback must never block —
 # see feedback_audio_callback_must_not_touch_disk.
 AUDIO_QUEUE_LIMIT = 2_000
@@ -203,7 +207,12 @@ class ScreenRecording:
         # A 30fps stamp on a 16.8fps capture plays 1.79x fast and drifts out of
         # sync with audio for the whole recording - James, 2026-09-05, on a
         # 32-minute take that ended at 17:58 of video against 32:06 of audio.
-        stream.time_base = Fraction(1, 1000)
+        stream.time_base = VIDEO_TIME_BASE
+        # The ENCODER's clock too, not only the container's. PyAV rescales each
+        # frame's PTS into the codec's time_base before x264 sees it, and that
+        # defaulted to 1/fps, so millisecond stamps were being rounded to
+        # 83ms ticks.
+        stream.codec_context.time_base = VIDEO_TIME_BASE
         stream.width, stream.height = width, height
         stream.pix_fmt = "yuv420p"
         # Small enough to send over a phone tether, still readable text.
@@ -235,7 +244,13 @@ class ScreenRecording:
             stamp = self._last_pts + 1
         self._last_pts = stamp
         picture.pts = stamp
-        picture.time_base = self._video_stream.time_base
+        # NOT self._video_stream.time_base. The mp4 muxer rewrites the stream's
+        # clock (to 1/16000) the moment the first packet is written, so from
+        # the second packet on every frame was a millisecond count labelled as
+        # 1/16000ths: PyAV rescaled it down 16x, consecutive frames collapsed
+        # onto one tick, x264 emitted a non-monotonic packet and the muxer
+        # threw errno 22. Every recording after v2.45.7 died this way 1-2s in.
+        picture.time_base = VIDEO_TIME_BASE
         for packet in self._video_stream.encode(picture):
             self._container.mux(packet)
 
