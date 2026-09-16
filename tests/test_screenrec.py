@@ -885,3 +885,32 @@ def test_the_pill_tick_aborts_a_recording_whose_video_died():
     app._screenrec = None                  # what the finish path does first
     app._screenrec_overlay_state()
     assert calls == ["stop"]               # never a second stop
+
+
+# -- the encoder's clock must survive the container writing its header ---------
+
+def test_a_recording_survives_past_the_first_muxed_packet():
+    """Every recording after v2.45.7 died 1-2s in: the mp4 muxer rewrites the
+    stream's time_base when the first packet lands, frames stamped in that
+    clock collapsed onto one tick, and the muxer threw errno 22. Enough
+    frames here for x264's lookahead to emit packets, at real 12fps pacing
+    with the jitter a real grab loop produces."""
+    stamps = [1000 + i * 83 for i in range(20)] + [2661, 2662, 2663] + [2700 + i * 83 for i in range(20)]
+    with tempfile.TemporaryDirectory() as tmp:
+        rec = _recording(tmp)
+        it = iter(stamps)
+        with patch.object(rec, "elapsed", side_effect=lambda: next(it) / 1000):
+            for _ in stamps:
+                with rec._encode_lock:
+                    if rec._container is None:
+                        rec._open_container(REGION[2], REGION[3])
+                    rec._encode_frame(np.zeros((REGION[3], REGION[2], 3), np.uint8))
+                rec.frames_written += 1
+            assert rec._video_stream.codec_context.time_base == screenrec.VIDEO_TIME_BASE
+            out = rec._mux()
+        assert out is not None, rec.errors
+        import av
+
+        with av.open(str(out)) as clip:
+            # Wall-clock span of the stamps, not frames/fps.
+            assert abs(clip.duration / 1e6 - (stamps[-1] - stamps[0]) / 1000) < 0.3
