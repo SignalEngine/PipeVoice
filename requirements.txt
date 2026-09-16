@@ -9,7 +9,10 @@ python-dotenv>=1.0
 # --- Engines ---
 openai>=1.30          # OpenAI Whisper API (default engine)
 deepgram-sdk>=3,<4     # Deepgram streaming (v4+ changed the API; pin to v3)
-faster-whisper>=1.0.2   # Local/offline Whisper (no internet needed)
+faster-whisper>=1.0.2
+# onnxruntime 1.30.0 (2026-09-10) crashes PyInstaller's isolated import
+# (exit 0xC0000005) and killed the v2.49.3 build; 1.29.0 built v2.49.2 fine.
+onnxruntime<1.30   # Local/offline Whisper (no internet needed)
 
 # --- Screen recorder ---
 mss>=9.0              # grabs a screen region; ~0.1 MB
