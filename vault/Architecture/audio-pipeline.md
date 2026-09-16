@@ -111,9 +111,21 @@ James's machine.
 on frame ~36 with `ArgumentError: Invalid argument ... returned 22` from
 libx264/mp4, the mic kept recording (49 MB wav, intact), and the pill sat on
 "recording" for eight minutes because nothing was watching the grab thread.
-Root cause of the errno 22 is still unknown — the error was logged without a
-traceback. Local repro: only a backwards PTS gives that exact error, and
-`_encode_frame` already clamps PTS strictly increasing.
+Root cause (found 2026-09-16 from the v2.49.1 traceback, v2.49.3): TWO wrong
+clocks, both introduced by the real-PTS change in v2.45.7. (1) The codec's
+`time_base` was left at 1/fps, so PyAV rounded millisecond stamps to 83ms
+ticks. (2) Frames took `time_base` from the STREAM, and the mp4 muxer rewrites
+the stream's clock to 1/16000 when it writes the header at the first packet —
+from then on every millisecond stamp was read as 1/16000ths, rescaled 16x
+down, consecutive frames collapsed onto one tick, x264 emitted a non-monotonic
+packet, and the muxer threw errno 22. That is why it always died 1-2s in (x264
+lookahead = the first emitted packet). Both use `VIDEO_TIME_BASE` now.
+Reproduced deterministically under PyAV 17.1.0 and 18.1.0; the test drives the
+real encode path past the first packets. Lesson: never read a clock back from
+the container after `start_encoding`; the muxer owns it. And "no recorder
+code changed since the last success" was wrong — the last success was 27
+minutes before v2.45.7 shipped. Check tag times against the log before
+claiming that.
 
 - `_record_error` logs `exc_info`, so the next failure names the raising line.
 - `ScreenRecording.video_failed` (Event) is set when the grab loop dies. The
