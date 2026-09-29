@@ -1806,3 +1806,47 @@ def test_sending_a_recording_never_freezes_the_window(tmp_path, monkeypatch):
         assert send.cget("text") == "Send" and str(send.cget("state")) == "normal"
     finally:
         root.destroy()
+
+
+def test_closing_the_window_mid_send_still_delivers_the_clip(tmp_path):
+    """review-gate 2026-09-29: Send then Close must not abandon the upload.
+    Runs in its own process so the interpreter actually exits."""
+    _skip_if_headless()
+    import subprocess
+    import textwrap
+
+    marker = tmp_path / "delivered"
+    script = textwrap.dedent(f"""
+        import sys, time, pathlib, tkinter as tk
+        from tkinter import ttk
+        from unittest import mock
+        sys.path.insert(0, {str(pathlib.Path(__file__).resolve().parent.parent)!r})
+        sys.path.insert(0, {str(pathlib.Path(__file__).resolve().parent)!r})
+        from uistub import install_platform_stubs
+        install_platform_stubs()
+        import os
+        from wisprlite import config, screenrec, screenrec_tab
+        base = pathlib.Path({str(tmp_path)!r})
+        (base / "2026-09-29 10-20-46.mp4").write_bytes(b"video")
+        os.environ["PV_SELECT"] = "2026-09-29 10-20-46"
+        screenrec_tab.recordings_dir = lambda cfg=None: base
+        config.Config.load = classmethod(lambda cls: mock.Mock(screenrec_destination="x:/y/"))
+        def send(files, dest):
+            time.sleep(1.0)
+            pathlib.Path({str(marker)!r}).write_text("ok")
+            return True, "sent"
+        screenrec.send = send
+        root = tk.Tk()
+        frame = ttk.Frame(root); frame.pack()
+        screenrec_tab.build(frame, root)
+        stack, btn = [root], None
+        while stack:
+            w = stack.pop(); stack.extend(w.winfo_children())
+            if isinstance(w, ttk.Button) and w.cget("text") == "Send":
+                btn = w
+        btn.invoke()
+        root.destroy()   # the user clicks Close straight after Send
+    """)
+    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert marker.exists(), "closing the window abandoned the upload"

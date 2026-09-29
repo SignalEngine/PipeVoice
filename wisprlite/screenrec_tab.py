@@ -341,9 +341,14 @@ def build(container, root, wheel=None, with_settings=False):
                 ok, message = False, f"{type(exc).__name__}: {exc}"
             took = time.monotonic() - t0
             log.info("recordings: send %s in %.1fs (%s)", "ok" if ok else "FAILED", took, message)
-            root.after(0, lambda: finished(ok, message))
+            try:
+                root.after(0, lambda: finished(ok, message))
+            except Exception:
+                pass   # window closed mid-upload; the upload itself still finished
 
-        threading.Thread(target=work, daemon=True).start()
+        # NOT a daemon: closing the window mid-upload must not kill the scp.
+        # The settings process returns from mainloop and Python waits here.
+        threading.Thread(target=work).start()
 
     def _delete_selected():
         item = _need_selection()
