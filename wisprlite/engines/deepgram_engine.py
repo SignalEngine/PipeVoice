@@ -157,13 +157,21 @@ class _DeepgramSession(Session):
                 self._pending.clear()
                 return
             log.info("Deepgram connected in %.2fs", time.monotonic() - t0)
-            if self._closed:   # released/cancelled while we were connecting
-                _quiet(self.conn.finish)
-                return
-            for chunk in self._pending:
+        # Flush the backlog OUTSIDE the lock: feed() runs in the mic callback,
+        # and seconds of queued frames sent under the lock would stall it into
+        # an input overflow. Drain in batches; go live only once the queue is
+        # empty, so frames still arriving land behind the backlog, in order.
+        while True:
+            with self._lock:
+                if self._closed:   # released/cancelled while we were connecting
+                    break
+                batch, self._pending = self._pending, []
+                if not batch:
+                    self._live = True
+                    return
+            for chunk in batch:
                 _quiet(self.conn.send, chunk)
-            self._pending.clear()
-            self._live = True
+        _quiet(self.conn.finish)
 
     def feed(self, pcm_int16: bytes) -> None:
         with self._lock:
