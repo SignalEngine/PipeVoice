@@ -1750,3 +1750,59 @@ def test_about_tab_scroll_content_tracks_the_canvas_width():
         assert seen[0][0] != seen[1][0], "the two geometries produced the same canvas width"
     finally:
         root.destroy()
+
+
+def test_sending_a_recording_never_freezes_the_window(tmp_path, monkeypatch):
+    """James, 2026-09-29: "when clicking play in recordings area it freezes and
+    is not sending the video". Send ran scp on the Tk thread with a 300s
+    timeout, so the whole window hung for the length of the upload."""
+    _skip_if_headless()
+    import time
+    import tkinter as tk
+    from tkinter import ttk
+    from unittest import mock
+    from wisprlite import config, screenrec, screenrec_tab
+
+    (tmp_path / "2026-09-29 10-20-46.mp4").write_bytes(b"video")
+    monkeypatch.setattr(screenrec_tab, "recordings_dir", lambda cfg=None: tmp_path)
+    monkeypatch.setenv("PV_SELECT", "2026-09-29 10-20-46")
+    monkeypatch.setattr(config.Config, "load",
+                        classmethod(lambda cls: mock.Mock(screenrec_destination="root@vps:/inbox/")))
+    monkeypatch.setattr(screenrec, "send", lambda files, dest: (time.sleep(1.0), (True, "sent"))[1])
+
+    root = tk.Tk()
+    try:
+        frame = ttk.Frame(root)
+        frame.pack()
+        screenrec_tab.build(frame, root)
+        buttons = []
+        stack = [root]
+        while stack:
+            w = stack.pop()
+            stack.extend(w.winfo_children())
+            if isinstance(w, ttk.Button):
+                buttons.append(w)
+        send = next(b for b in buttons if b.cget("text") == "Send")
+
+        with mock.patch("tkinter.messagebox.showinfo") as info, \
+                mock.patch("tkinter.messagebox.showerror"):
+            t0 = time.monotonic()
+            send.invoke()
+            assert time.monotonic() - t0 < 0.3, "Send blocked the Tk thread for the upload"
+            assert str(send.cget("state")) == "disabled", "no sign an upload is running"
+            # A real mainloop, as in the app: after() from a worker thread
+            # needs one running.
+            deadline = time.monotonic() + 5
+
+            def check():
+                if info.called or time.monotonic() > deadline:
+                    root.quit()
+                else:
+                    root.after(20, check)
+
+            root.after(20, check)
+            root.mainloop()
+        assert info.called, "the result was never reported"
+        assert send.cget("text") == "Send" and str(send.cget("state")) == "normal"
+    finally:
+        root.destroy()

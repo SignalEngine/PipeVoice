@@ -10,15 +10,20 @@ are my recordings" across two tabs is the jumping-around this exists to stop.
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 from . import config
 from .history import _copy_to_clipboard
 from .meetings_tab import _open_folder, format_duration
 from .winui import PALETTE, collapsible_settings, tooltip
+
+log = logging.getLogger("wisprlite")
 
 BG = PALETTE["bg"]
 CARD = PALETTE["card"]
@@ -105,7 +110,11 @@ def read_transcript(item: dict) -> str:
 
 
 def _play(path: Path) -> None:
-    """Open the clip in whatever the user plays video with."""
+    """Open the clip in whatever the user plays video with.
+
+    Called off the Tk thread: os.startfile can sit for seconds while Windows
+    resolves the file association, and on the Tk thread that froze the window.
+    """
     try:
         if sys.platform == "win32":
             os.startfile(str(path))          # noqa: S606 - the user's own file
@@ -114,7 +123,7 @@ def _play(path: Path) -> None:
         else:
             subprocess.Popen(["xdg-open", str(path)])
     except Exception:
-        pass
+        log.exception("recordings: could not open %s", path)
 
 
 def build(container, root, wheel=None, with_settings=False):
@@ -277,7 +286,7 @@ def build(container, root, wheel=None, with_settings=False):
     def _play_selected():
         item = _need_selection()
         if item:
-            _play(item["path"])
+            threading.Thread(target=_play, args=(item["path"],), daemon=True).start()
 
     def _folder_selected():
         item = _need_selection()
@@ -310,12 +319,31 @@ def build(container, root, wheel=None, with_settings=False):
         files = [item["path"]]
         if item["transcript_path"]:
             files.append(item["transcript_path"])
-        ok, message = screenrec.send(files, destination)
-        if ok:
-            messagebox.showinfo("Send", f"Sent to {destination}")
-        else:
-            # Never claim it arrived, and never remove the local copy on failure.
-            messagebox.showerror("Send failed", message)
+        # scp runs off the Tk thread. It used to run here, on the button click,
+        # with a 300s timeout: an upload or a stalled connection froze the whole
+        # window until it finished, and a frozen window gets killed mid-upload.
+        send_btn = action_buttons["Send"]
+        send_btn.configure(text="Sending…", state="disabled")
+
+        def finished(ok, message):
+            send_btn.configure(text="Send", state="normal")
+            if ok:
+                messagebox.showinfo("Send", f"Sent to {destination}")
+            else:
+                # Never claim it arrived, and never remove the local copy on failure.
+                messagebox.showerror("Send failed", message)
+
+        def work():
+            t0 = time.monotonic()
+            try:
+                ok, message = screenrec.send(files, destination)
+            except Exception as exc:   # never leave the button stuck on "Sending…"
+                ok, message = False, f"{type(exc).__name__}: {exc}"
+            took = time.monotonic() - t0
+            log.info("recordings: send %s in %.1fs (%s)", "ok" if ok else "FAILED", took, message)
+            root.after(0, lambda: finished(ok, message))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _delete_selected():
         item = _need_selection()
