@@ -48,6 +48,7 @@ def _session_with(model, start_results):
     with mock.patch.dict(sys.modules, {"deepgram": fake}):
         engine.client.listen.websocket.v.return_value = conn
         session = dg._DeepgramSession(engine, None)
+    session._connector.join(timeout=5)
     return session, seen
 
 
@@ -72,5 +73,72 @@ def test_a_genuinely_dead_connection_still_raises():
     """The retry must not mask being offline or having a bad key."""
     import pytest
 
+    session, _ = _session_with("nova-3", [False, False])
     with pytest.raises(RuntimeError, match="failed to start"):
-        _session_with("nova-3", [False, False])
+        session.finish(None)
+
+
+def test_a_slow_failure_is_not_retried(monkeypatch):
+    """A timeout is the network, not the word list: retrying doubled the wait."""
+    monkeypatch.setattr(dg, "REJECT_WINDOW", 0.0)
+    session, seen = _session_with("nova-3", [False])
+    assert len(seen) == 1, "a timeout was retried as if the word list were rejected"
+
+
+def test_the_press_does_not_wait_for_the_socket_and_no_audio_is_lost():
+    """2026-09-29 log: the hotkey thread blocked on connect, so a press on a
+    slow network looked ignored and the first words were never recorded."""
+    import threading
+
+    gate = threading.Event()
+    sent = []
+    conn = mock.Mock()
+    conn.start.side_effect = lambda options: gate.wait(5)
+    conn.send.side_effect = sent.append
+    engine = mock.Mock(model="nova-3", language="en-US", keywords=None)
+    fake = mock.Mock(LiveOptions=dict, LiveTranscriptionEvents=mock.Mock())
+    with mock.patch.dict(sys.modules, {"deepgram": fake}):
+        engine.client.listen.websocket.v.return_value = conn
+        session = dg._DeepgramSession(engine, None)   # returns while start() is blocked
+
+    session.feed(b"1")
+    session.feed(b"2")
+    assert sent == [], "audio was sent before the socket opened"
+    gate.set()
+    session._connector.join(timeout=5)
+    session.feed(b"3")
+    assert sent == [b"1", b"2", b"3"], f"early audio lost or reordered: {sent}"
+
+
+def test_flushing_the_backlog_does_not_stall_the_mic_callback():
+    """feed() runs in the audio callback. Sending seconds of queued frames
+    while holding its lock froze the callback into an input overflow."""
+    import threading
+    import time
+
+    gate, flushing = threading.Event(), threading.Event()
+    sent = []
+
+    def slow_send(chunk):
+        flushing.set()
+        time.sleep(0.2)
+        sent.append(chunk)
+
+    conn = mock.Mock()
+    conn.start.side_effect = lambda options: gate.wait(5)
+    conn.send.side_effect = slow_send
+    engine = mock.Mock(model="nova-3", language="en-US", keywords=None)
+    fake = mock.Mock(LiveOptions=dict, LiveTranscriptionEvents=mock.Mock())
+    with mock.patch.dict(sys.modules, {"deepgram": fake}):
+        engine.client.listen.websocket.v.return_value = conn
+        session = dg._DeepgramSession(engine, None)
+
+    for i in range(5):
+        session.feed(bytes([i]))
+    gate.set()
+    assert flushing.wait(5)
+    t0 = time.monotonic()
+    session.feed(b"late")
+    assert time.monotonic() - t0 < 0.1, "feed() blocked behind the backlog flush"
+    session._connector.join(timeout=5)
+    assert sent == [bytes([i]) for i in range(5)] + [b"late"], f"order broken: {sent}"

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Optional
 
 import numpy as np
@@ -19,6 +20,21 @@ from .base import Engine, OnPartial, Session
 log = logging.getLogger("wisprlite")
 
 SAMPLE_RATE = 16_000
+
+# A failed start faster than this is Deepgram rejecting an option (400), not
+# the network timing out, so it is worth one retry without term biasing.
+REJECT_WINDOW = 3.0
+# How long release waits for a still-opening socket before falling back to
+# local Whisper. Above the websocket open timeout (10s) so a slow-but-working
+# connection is not abandoned.
+CONNECT_WAIT = 12.0
+
+
+def _quiet(fn, *args) -> None:
+    try:
+        fn(*args)
+    except Exception:
+        pass
 
 
 # nova-3 replaced `keywords` with `keyterm`, and rejects the old parameter
@@ -107,41 +123,83 @@ class _DeepgramSession(Session):
         except TypeError:
             opts.pop(bias_key, None)   # some SDK versions reject unknown kwargs
             options = LiveOptions(**opts)
-        if not self.conn.start(options):
-            # A rejected biasing option must NEVER cost you dictation. Deepgram
-            # 400s the whole connection when the parameter does not suit the
-            # model, and the user just sees "connection failed to start" with no
-            # idea a word list caused it. Drop the biasing and try once more:
-            # slightly worse recognition beats no recognition.
-            if engine.keywords:
-                log.warning("Deepgram rejected %s; retrying without term biasing", bias_key)
-                opts.pop(bias_key, None)
-                self._retried_without_bias = True
-                if self.conn.start(LiveOptions(**opts)):
+        # Connect in the background. This used to block the hotkey thread: no
+        # beep, no overlay, no recording until the socket opened, so on a slow
+        # network a press looked ignored and the first words were lost. Frames
+        # that arrive before the socket is up are buffered and flushed in order.
+        self._lock = threading.Lock()
+        self._pending: list[bytes] = []
+        self._live = False
+        self._closed = False
+        self._start_error: Optional[str] = None
+        self._connector = threading.Thread(
+            target=self._connect, args=(engine, opts, bias_key, options, LiveOptions), daemon=True)
+        self._connector.start()
+
+    def _connect(self, engine, opts, bias_key, options, LiveOptions) -> None:
+        t0 = time.monotonic()
+        ok = self.conn.start(options)
+        # A rejected biasing option must NEVER cost you dictation. Deepgram
+        # 400s the whole connection when the parameter does not suit the model.
+        # Drop the biasing and try once more - but only if the failure came
+        # back fast. A 400 is immediate; a slow failure is the network timing
+        # out, and retrying that just doubled the wait (log, 2026-09-26/28).
+        if (not ok and engine.keywords and bias_key in opts
+                and time.monotonic() - t0 < REJECT_WINDOW):
+            log.warning("Deepgram rejected %s; retrying without term biasing", bias_key)
+            opts.pop(bias_key, None)
+            self._retried_without_bias = True
+            ok = self.conn.start(LiveOptions(**opts))
+        with self._lock:
+            if not ok:
+                log.error("Deepgram connection failed to start after %.1fs", time.monotonic() - t0)
+                self._start_error = "Deepgram connection failed to start"
+                self._pending.clear()
+                return
+            log.info("Deepgram connected in %.2fs", time.monotonic() - t0)
+        # Flush the backlog OUTSIDE the lock: feed() runs in the mic callback,
+        # and seconds of queued frames sent under the lock would stall it into
+        # an input overflow. Drain in batches; go live only once the queue is
+        # empty, so frames still arriving land behind the backlog, in order.
+        while True:
+            with self._lock:
+                if self._closed:   # released/cancelled while we were connecting
+                    break
+                batch, self._pending = self._pending, []
+                if not batch:
+                    self._live = True
                     return
-            raise RuntimeError("Deepgram connection failed to start")
+            for chunk in batch:
+                _quiet(self.conn.send, chunk)
+        _quiet(self.conn.finish)
 
     def feed(self, pcm_int16: bytes) -> None:
-        try:
-            self.conn.send(pcm_int16)
-        except Exception:
-            pass
+        with self._lock:
+            if self._live:
+                _quiet(self.conn.send, pcm_int16)
+            elif not self._closed and self._start_error is None:
+                self._pending.append(pcm_int16)
 
     def finish(self, audio: np.ndarray) -> str:
-        try:
-            self.conn.finish()
-        except Exception:
-            pass
+        # Raising hands the full clip to app._fallback (local Whisper), so a
+        # connection that never opened still gets transcribed.
+        self._connector.join(timeout=CONNECT_WAIT)
+        with self._lock:
+            if not self._live:
+                self._closed = True
+                raise RuntimeError(self._start_error or "Deepgram still connecting")
+        _quiet(self.conn.finish)
         self._done.wait(timeout=self._finish_timeout)
         if self._error:
             raise RuntimeError(self._error)
         return " ".join(self._finals).strip()
 
     def cancel(self) -> None:
-        try:
-            self.conn.finish()
-        except Exception:
-            pass
+        with self._lock:
+            self._closed = True
+            live = self._live
+        if live:
+            _quiet(self.conn.finish)
 
 
 class DeepgramEngine(Engine):
