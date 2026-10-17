@@ -6,3 +6,4 @@ Orientation page. Maps: [[Architecture]], [[Operations]], [[Plans]].
 - [[audio-pipeline]] — the three capture paths, why dictation is 16 kHz and
   recordings are 48 kHz, normalisation, and the mic picker.
 - [[read-aloud]] — screenshot to speech: the design the panel cut, and what six CI builds taught about gating a frozen exe.
+- [[after-call-answers]] — post-meeting questions answered from your docs: BM25 + verbatim-quote check + optional Jev, and the G8 test on real calls that decides live cards.
