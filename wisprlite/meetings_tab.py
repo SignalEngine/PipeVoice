@@ -774,7 +774,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         container,
         text="Press your meeting hotkey to record a call \u2014 your microphone and the "
              "computer's audio are captured separately, so nobody gets mixed up. Then "
-             "transcribe it, name the speakers, and turn it into notes.",
+             "transcribe it, name the speakers, turn it into notes, and see their "
+             "questions answered from your docs.",
         bg=BG, fg=MUTED, anchor="w", justify="left", wraplength=900,
         font=("Segoe UI", 9), padx=18,
     )
