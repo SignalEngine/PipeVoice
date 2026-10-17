@@ -14,6 +14,9 @@ faster-whisper>=1.0.2   # Local/offline Whisper (no internet needed)
 # (exit 0xC0000005) and killed the v2.49.3 build; 1.29.0 built v2.49.2 fine.
 onnxruntime<1.30
 
+# --- After-call answers (PDF text from the user's docs folder) ---
+pypdf>=4
+
 # --- Screen recorder ---
 mss>=9.0              # grabs a screen region; ~0.1 MB
 # H.264 encoding uses PyAV, which faster-whisper already pulls in (av>=11) and

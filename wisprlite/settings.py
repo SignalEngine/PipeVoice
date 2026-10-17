@@ -800,6 +800,8 @@ def main(first_run: bool = False) -> None:
     meeting_max_minutes_var = tk.StringVar(value=str(cfg.meeting_max_minutes))
     meetings_keep_var = tk.StringVar(value=str(cfg.meetings_keep))
     meetings_dir_var = tk.StringVar(value=cfg.meetings_dir)
+    knowledge_dir_var = tk.StringVar(value=cfg.knowledge_dir)
+    knowledge_url_var = tk.StringVar(value=cfg.knowledge_url)
     paste_speed_var = tk.StringVar(value=dict(PASTE_SPEEDS).get(cfg.paste_speed, PASTE_SPEEDS[1][1]))
     speech_notes_var = tk.StringVar(value=cfg.speech_notes)
     overlay_var = tk.BooleanVar(value=cfg.overlay)
@@ -1882,6 +1884,24 @@ def main(first_run: bool = False) -> None:
     ttk.Button(_mr, text="Browse", width=8,
                command=_browse_meetings).pack(side="left", padx=(8, 0))
 
+    _kr = row(c, "Docs folder",
+              "Markdown, text or PDF files. Meetings can answer the other side's questions from them.")
+    entry(_kr, knowledge_dir_var, width=30)
+
+    def _browse_knowledge():
+        from tkinter import filedialog
+        chosen = filedialog.askdirectory(
+            parent=root, title="Folder with your docs",
+            initialdir=knowledge_dir_var.get().strip() or os.path.expanduser("~"),
+        )
+        if chosen:
+            knowledge_dir_var.set(chosen)
+
+    ttk.Button(_kr, text="Browse", width=8,
+               command=_browse_knowledge).pack(side="left", padx=(8, 0))
+    entry(row(c, "Docs web page", "One page, e.g. your pricing or FAQ. Optional."),
+          knowledge_url_var, width=30)
+
     # --- Save / Cancel (live in the fixed footer) ---
     def value_for(var, table):
         label_to_value = {l: k for k, l in table}
@@ -1977,6 +1997,8 @@ def main(first_run: bool = False) -> None:
         except ValueError:
             pass
         cfg.meetings_dir = meetings_dir_var.get().strip()
+        cfg.knowledge_dir = knowledge_dir_var.get().strip()
+        cfg.knowledge_url = knowledge_url_var.get().strip()
         cfg.paste_speed = value_for(paste_speed_var, PASTE_SPEEDS)
         cfg.speech_notes = speech_notes_var.get().strip()
         cfg.replacements = fixes_from_lines(fixes_list.get(0, "end"))
