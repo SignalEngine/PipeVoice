@@ -1917,3 +1917,107 @@ def test_a_held_press_with_zero_mic_frames_says_so(caplog):
     App._finish(app, np.empty((0,), dtype="float32"), 2.0)
     app.overlay.set_state.assert_called_with("done", "Mic sent no audio - check input device")
     session.cancel.assert_called_once_with()
+
+
+def test_every_api_key_box_has_a_get_a_key_button():
+    """Sign-up links lived only in the Guide tab, so an empty key box on the
+    Settings tab gave no clue where a key comes from."""
+    _skip_if_headless()
+    import os
+    import tkinter as tk
+    from wisprlite import settings
+
+    texts = []
+    real_mainloop = tk.Misc.mainloop
+    real_tab = os.environ.get("PV_TAB")
+    os.environ["PV_TAB"] = "Settings"
+
+    def drive(self, _n=0):
+        self.update_idletasks()
+
+        def walk(w):
+            for ch in w.winfo_children():
+                if ch.winfo_class() == "TButton":
+                    texts.append(str(ch.cget("text")))
+                walk(ch)
+
+        walk(self)
+        self.destroy()
+
+    from unittest import mock
+    from wisprlite import updater
+
+    tk.Misc.mainloop = drive
+    try:
+        # The About tab fetches releases on a thread; destroying the window under
+        # it aborts Tcl and takes the whole test run down.
+        with mock.patch.object(updater, "recent_releases", return_value=[]):
+            settings.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+        if real_tab is None:
+            os.environ.pop("PV_TAB", None)
+        else:
+            os.environ["PV_TAB"] = real_tab
+
+    assert texts.count("Get a free key ↗") == 3, texts   # Gemini, Groq, OpenRouter
+    assert texts.count("Get a key ↗") >= 3, texts        # Deepgram, OpenAI, ElevenLabs
+    assert "Download Ollama ↗" in texts
+
+
+def test_new_installs_paste_and_get_discoverable_hotkeys():
+    from wisprlite import config, welcome
+    cfg = config.Config()
+    assert cfg.output_mode == "paste"
+    assert (cfg.meeting_hotkey, cfg.bookmark_hotkey, cfg.screenrec_hotkey) == (
+        "ctrl+alt+m", "ctrl+alt+b", "ctrl+alt+r")
+    # Teams' mute is Ctrl+Shift+M and the hook does not suppress keys.
+    assert "ctrl+shift+m" not in (cfg.meeting_hotkey.lower(), cfg.bookmark_hotkey.lower())
+    rows = dict(welcome.hotkey_rows(cfg))
+    assert rows["Ctrl + Alt + M"] == "start / stop recording a meeting"
+    assert "Ctrl + Alt + R" in rows and "Ctrl + Alt + B" in rows
+
+
+def test_an_existing_install_moves_to_paste_once_then_respects_a_choice():
+    from wisprlite import config
+    cfg = config.Config(output_mode="type")          # saved by an old version
+    assert cfg.migrate_paste_default() is True
+    assert cfg.output_mode == "paste" and cfg.paste_default_migrated
+    cfg.output_mode = "type"                          # user picks type again
+    assert cfg.migrate_paste_default() is False
+    assert cfg.output_mode == "type"
+
+
+def test_migration_runs_through_load_and_persists(tmp_path, monkeypatch):
+    import json
+    from wisprlite import config
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"output_mode": "type", "starter_vocab_seeded": True}))
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    assert config.Config.load().output_mode == "paste"
+    saved = json.loads(path.read_text())
+    assert saved["output_mode"] == "paste" and saved["paste_default_migrated"] is True
+
+
+def test_paste_never_overwrites_a_copied_image(monkeypatch):
+    """Review P1: paste saved/restored only text, so dictating after copying a
+    screenshot replaced the image and 'restored' empty text."""
+    import sys
+    import types
+    from wisprlite import typer
+
+    calls = []
+    fake_clip = types.SimpleNamespace(paste=lambda: "", copy=lambda t: calls.append(("copy", t)))
+    monkeypatch.setitem(sys.modules, "pyperclip", fake_clip)
+    monkeypatch.setattr(typer, "keyboard", types.SimpleNamespace(
+        write=lambda t, delay=0: calls.append(("write", t)),
+        send=lambda k: calls.append(("send", k))))
+
+    monkeypatch.setattr(typer, "_clipboard_holds_non_text", lambda: True)
+    typer.type_text("hello", mode="paste")
+    assert calls == [("write", "hello")], calls       # typed; clipboard untouched
+
+    calls.clear()
+    monkeypatch.setattr(typer, "_clipboard_holds_non_text", lambda: False)
+    typer.type_text("hello", mode="paste")
+    assert ("copy", "hello") in calls and ("send", "ctrl+v") in calls

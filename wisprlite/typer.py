@@ -57,13 +57,33 @@ PASTE_TIMINGS = {
 }
 
 
+def _clipboard_holds_non_text() -> bool:
+    """True when the clipboard holds something pyperclip cannot put back.
+
+    pyperclip saves and restores TEXT only. Pasting over a screenshot or copied
+    files replaced them with the dictation and then "restored" empty text, so
+    the image was simply gone. Safe = empty, or has a text form we restore.
+    An allowlist of image formats missed browsers' registered "PNG" format.
+    # ponytail: text-with-formatting comes back as plain text; snapshot every
+    # format via EnumClipboardFormats if anyone misses the formatting.
+    """
+    try:
+        import ctypes
+        u32 = ctypes.windll.user32
+        if u32.CountClipboardFormats() == 0:
+            return False
+        return not u32.IsClipboardFormatAvailable(13)   # CF_UNICODETEXT
+    except Exception:
+        return False   # not Windows / no clipboard API: nothing pyperclip would lose
+
+
 def type_text(text: str, mode: str = "type", press_enter: bool = False,
               paste_speed: str = "normal") -> None:
     if not text and not press_enter:
         return
     pre_ms, restore_ms, enter_ms = PASTE_TIMINGS.get(paste_speed, PASTE_TIMINGS["normal"])
 
-    if text and mode == "paste":
+    if text and mode == "paste" and not _clipboard_holds_non_text():
         try:
             import pyperclip
 
