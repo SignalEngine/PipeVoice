@@ -1917,3 +1917,43 @@ def test_a_held_press_with_zero_mic_frames_says_so(caplog):
     App._finish(app, np.empty((0,), dtype="float32"), 2.0)
     app.overlay.set_state.assert_called_with("done", "Mic sent no audio - check input device")
     session.cancel.assert_called_once_with()
+
+
+def test_every_api_key_box_has_a_get_a_key_button():
+    """Sign-up links lived only in the Guide tab, so an empty key box on the
+    Settings tab gave no clue where a key comes from."""
+    _skip_if_headless()
+    import os
+    import tkinter as tk
+    from wisprlite import settings
+
+    texts = []
+    real_mainloop = tk.Misc.mainloop
+    real_tab = os.environ.get("PV_TAB")
+    os.environ["PV_TAB"] = "Settings"
+
+    def drive(self, _n=0):
+        self.update_idletasks()
+
+        def walk(w):
+            for ch in w.winfo_children():
+                if ch.winfo_class() == "TButton":
+                    texts.append(str(ch.cget("text")))
+                walk(ch)
+
+        walk(self)
+        self.destroy()
+
+    tk.Misc.mainloop = drive
+    try:
+        settings.main()
+    finally:
+        tk.Misc.mainloop = real_mainloop
+        if real_tab is None:
+            os.environ.pop("PV_TAB", None)
+        else:
+            os.environ["PV_TAB"] = real_tab
+
+    assert texts.count("Get a free key ↗") == 3, texts   # Gemini, Groq, OpenRouter
+    assert texts.count("Get a key ↗") >= 3, texts        # Deepgram, OpenAI, ElevenLabs
+    assert "Download Ollama ↗" in texts

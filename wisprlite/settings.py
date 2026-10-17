@@ -176,6 +176,7 @@ _URLS = {
     "gemini": "https://aistudio.google.com/apikey",
     "openrouter": "https://openrouter.ai/keys",
     "ollama": "https://ollama.com/download",
+    "elevenlabs": "https://elevenlabs.io/app/settings/api-keys",
     "github": "https://github.com/Powleads/PipeVoice",
 }
 
@@ -1231,9 +1232,11 @@ def main(first_run: bool = False) -> None:
             read_aloud_voice_var.set(_tts_cloud.DEEPGRAM_VOICES[i][0])
     dg_combo.bind("<<ComboboxSelected>>", _pick_deepgram_voice)
 
-    entry(row(elevenlabs_group, "ElevenLabs API key",
-              "Saved" if config.elevenlabs_key() else "Not set"),
-          eleven_key_var, width=26, show="•")
+    _eleven_key_row = row(elevenlabs_group, "ElevenLabs API key",
+                          "Saved" if config.elevenlabs_key() else "Not set")
+    entry(_eleven_key_row, eleven_key_var, width=26, show="•")
+    ttk.Button(_eleven_key_row, text="Get a key ↗",
+               command=lambda: webbrowser.open(_URLS["elevenlabs"])).pack(side="left", padx=(8, 0))
     eleven_id_row = row(
         elevenlabs_group, "ElevenLabs voice ID",
         "Search the Voice Library for a character or accent, add it to your "
@@ -1540,21 +1543,28 @@ def main(first_run: bool = False) -> None:
     # --- API keys ---
     c = card("API keys", "Stored locally in your .env, never uploaded. Leave a field blank to keep its current key.")
 
-    def key_row(name, var, present):
-        entry(row(c, name + " key", "Saved" if present else "Not set"), var, width=26, show="•")
+    # The sign-up links used to live only in the Guide tab, so someone staring at
+    # an empty key box here had no idea where a key comes from.
+    def key_row(name, var, present, url_key, link_text="Get a key ↗"):
+        r = row(c, name + " key", "Saved" if present else "Not set")
+        entry(r, var, width=26, show="•")
+        ttk.Button(r, text=link_text,
+                   command=lambda: webbrowser.open(_URLS[url_key])).pack(side="left", padx=(8, 0))
 
-    key_row("Gemini", gem_key_var, config.gemini_key())
-    key_row("Groq", groq_key_var, config.groq_key())
-    key_row("Deepgram", dg_key_var, config.deepgram_key())
-    key_row("OpenAI", oai_key_var, config.openai_key())
-    key_row("OpenRouter", or_key_var, config.openrouter_key())
+    key_row("Gemini", gem_key_var, config.gemini_key(), "gemini", "Get a free key ↗")
+    key_row("Groq", groq_key_var, config.groq_key(), "groq", "Get a free key ↗")
+    key_row("Deepgram", dg_key_var, config.deepgram_key(), "deepgram")
+    key_row("OpenAI", oai_key_var, config.openai_key(), "openai")
+    key_row("OpenRouter", or_key_var, config.openrouter_key(), "openrouter", "Get a free key ↗")
 
     # --- Polish & text ---
     c = card("Polish & text", "Clean up and shape what gets typed.")
     check(c, "Polish with AI (Flow mode)", ai_cleanup_var,
           "Tidies filler words, punctuation and casing after transcription.")
-    combo(row(c, "Cleanup with", "OpenAI, free Google Gemini, OpenRouter, or fully offline Ollama."),
-          cleanup_var, [l for _, l in CLEANUP_PROVIDERS])
+    _cleanup_row = row(c, "Cleanup with", "OpenAI, free Google Gemini, OpenRouter, or fully offline Ollama.")
+    combo(_cleanup_row, cleanup_var, [l for _, l in CLEANUP_PROVIDERS])
+    ttk.Button(_cleanup_row, text="Download Ollama ↗",
+               command=lambda: webbrowser.open(_URLS["ollama"])).pack(side="left", padx=(8, 0))
     entry(row(c, "Cleanup model", "Blank uses the provider's default."), cleanup_model_var, width=22)
     combo(row(c, "Polish style", "Tidy keeps your words; Prompt rewrites rambling into a clear AI instruction; Email/Code comment/Meeting actions reshape it for that context; Custom uses your own instruction."),
           cleanup_style_var, [l for _, l in STYLES])
