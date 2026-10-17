@@ -365,9 +365,10 @@ def _build_guide(parent, wheel) -> None:
     body("Pipevoice can record a whole call — both sides — and turn it into a transcript, "
          "then into notes and action items. Nothing is uploaded unless you choose a cloud "
          "engine; the recordings stay on your machine.")
-    item("1 · Set a meeting hotkey",
-         "Settings → Hotkeys → Meeting hotkey → Capture. Tap it once to start recording, "
-         "tap it again to stop. It's off until you set one.", badge="START HERE", badge_color=GOOD)
+    item("1 · Press Ctrl + Alt + M",
+         "Tap it once to start recording, tap it again to stop. That's the default on a new "
+         "install; change it (or clear it to turn it off) in Settings → Hotkeys → Meeting hotkey.",
+         badge="START HERE", badge_color=GOOD)
     item("2 · It records both sides",
          "Your microphone and your computer's own audio are captured separately — so what "
          "you said and what they said never get mixed up. A REC bar shows the elapsed time "
