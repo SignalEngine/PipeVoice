@@ -109,3 +109,53 @@ def test_answers_roundtrip_and_vote(tmp_path):
     assert k.set_vote(tmp_path, 0, "up")
     assert k.load_answers(tmp_path)["items"][0]["vote"] == "up"
     assert not k.set_vote(tmp_path, 5, "up")
+
+
+def test_describe_item_helper():
+    assert k.describe_item({"status": "not_found"}) == ("Not in your docs", "")
+    head, detail = k.describe_item({"status": "doubtful", "headline": "Yes", "quote": "Q.", "source": "a.md"})
+    assert head == "Yes" and "a.md" in detail and "may not answer" in detail
+
+
+def test_answers_panel_is_mounted_for_a_transcribed_meeting_and_hidden_otherwise(tmp_path):
+    import tkinter as tk
+
+    from wisprlite import meeting, meetings_tab
+
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        return  # headless without xvfb
+    base = tmp_path / "meetings"
+    folder = base / "meeting-20260722-120000"
+    folder.mkdir(parents=True)
+    (folder / "meta.json").write_text(json.dumps(
+        {"started_at": "2026-07-22T12:00:00", "stopped_at": "2026-07-22T12:05:00"}))
+    (folder / "transcript.json").write_text(json.dumps(
+        {"segments": [{"t": 5, "speaker": "Them", "text": "Is SSO included?"}]}))
+    (folder / "answers.json").write_text(json.dumps({
+        "built_at": "x", "sources": {"ok": ["plans.md"], "failed": []},
+        "items": [{"t": 5, "question": "Is SSO included?", "headline": "Yes", "quote": QUOTE,
+                   "source": "plans.md", "jev_p": None, "status": "answered", "vote": None}]}))
+    orig = (meeting.meetings_dir, meetings_tab.meetings_dir)
+    meeting.meetings_dir = meetings_tab.meetings_dir = lambda: base
+    try:
+        frame = tk.Frame(root)
+        frame.pack(fill="both", expand=True)
+        meetings_tab.build(frame, root)
+        root.update()
+        panels = [w for w in _walk(frame) if isinstance(w, tk.Label)
+                  and w.cget("text") == "Their questions"]
+        assert panels, "answers panel was never built"
+        assert any("Yes" == w.cget("text") for w in _walk(frame) if isinstance(w, tk.Label)), \
+            "saved answers.json was not rendered when the meeting was selected"
+        assert panels[0].master.winfo_ismapped()
+    finally:
+        meeting.meetings_dir, meetings_tab.meetings_dir = orig
+        root.destroy()
+
+
+def _walk(widget):
+    yield widget
+    for child in widget.winfo_children():
+        yield from _walk(child)

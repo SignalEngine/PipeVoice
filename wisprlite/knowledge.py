@@ -347,6 +347,16 @@ def set_vote(session_dir: str | Path, index: int, vote: str | None) -> bool:
     return True
 
 
+def describe_item(item: dict) -> tuple[str, str]:
+    """(headline, detail) for one answers.json item, as the panel shows it."""
+    if item.get("status") == "not_found" or not item.get("quote"):
+        return "Not in your docs", ""
+    detail = f"\u201c{item['quote']}\u201d \u2014 {item.get('source', '')}"
+    if item.get("status") == "doubtful":
+        detail += "\n(may not answer this)"
+    return str(item.get("headline") or ""), detail
+
+
 # --- orchestration -----------------------------------------------------------
 
 def build_answers(

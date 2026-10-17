@@ -196,6 +196,8 @@ class Config:
     hands_free_silence_ms: int = 800  # trailing silence that ends a hands-free capture
     transcribe_model_size: str = ""   # blank = reuse local_model_size
     meetings_dir: str = ""            # where recordings are stored; blank = machine-local default
+    knowledge_dir: str = ""           # docs folder (MD/TXT/PDF) for after-call answers
+    knowledge_url: str = ""           # one web page of docs for after-call answers
     update_channel: str = "stable"    # stable | beta — beta also sees prereleases
     pipefocus: bool = False           # live focus nudges during a meeting (Deepgram only)
     # Screen recorder — off until a hotkey is set, like meeting capture.

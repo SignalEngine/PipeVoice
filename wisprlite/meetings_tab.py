@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import config
+from . import knowledge
 from .history import _copy_to_clipboard
 from .meeting import (
     apply_speaker_map,
@@ -997,6 +998,28 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     summary_text.pack(side="left", fill="both", expand=True)
     wheel(summary_text)
 
+    # After-call answers: the other side's questions, answered from the user's
+    # docs. Built on demand (one button), never during the live call.
+    answers_panel = tk.Frame(right, bg=CARD)
+    tk.Label(answers_panel, text="Their questions", bg=CARD, fg=FG, anchor="w",
+             font=("Segoe UI", 9, "bold"), padx=10, pady=7).pack(fill="x")
+    answers_notes = tk.Text(answers_panel, bg=CARD, fg=FG, height=3, wrap="word",
+                            relief="flat", highlightthickness=1,
+                            highlightbackground=MUTED, font=("Segoe UI", 9))
+    answers_notes.pack(fill="x", padx=10)
+    tk.Label(answers_panel, text="Call notes (optional): paste this meeting's brief.",
+             bg=CARD, fg=MUTED, anchor="w", font=("Segoe UI", 8),
+             padx=10).pack(fill="x")
+    answers_bar = tk.Frame(answers_panel, bg=CARD)
+    answers_bar.pack(fill="x", padx=10, pady=(4, 4))
+    answers_btn = ttk.Button(answers_bar, text="Answer from my docs")
+    answers_btn.pack(side="left")
+    answers_status = tk.Label(answers_bar, text="", bg=CARD, fg=MUTED, anchor="w",
+                              justify="left", wraplength=480, font=("Segoe UI", 8))
+    answers_status.pack(side="left", padx=(8, 0))
+    answers_list = tk.Frame(answers_panel, bg=CARD)
+    answers_list.pack(fill="x", padx=10, pady=(0, 8))
+
     transcript_wrap = tk.Frame(right, bg=CARD)
     transcript_wrap.pack(fill="both", expand=True)
     transcript = tk.Text(
@@ -1928,9 +1951,11 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                     text=session["error"] or "",
                     fg=ACCENT if session["error"] else MUTED,
                 )
+            show_answers(session)
         else:
             state["summary_ready"] = False
             summarise_controls.pack_forget()
+            answers_panel.pack_forget()
             status_label.config(
                 text=session["error"] or "",
                 fg=ACCENT if session["error"] else MUTED,
@@ -2104,6 +2129,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             status_label.config(text="")
             summarise_controls.pack_forget()
             summary_panel.pack_forget()
+            answers_panel.pack_forget()
             # Delete the only untranscribed session and these stayed on screen,
             # advertising a recording that no longer exists.
             needs_transcribe.pack_forget()
@@ -2326,6 +2352,122 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         path = selected_path()
         if path is not None:
             select_by_path(path)
+
+    def render_answers(path) -> None:
+        for child in answers_list.winfo_children():
+            child.destroy()
+        data = knowledge.load_answers(path)
+        if not data:
+            answers_status.config(text="")
+            return
+        src = data.get("sources", {})
+        parts = [f"Used: {', '.join(src.get('ok', [])) or 'nothing'}."]
+        if src.get("failed"):
+            parts.append("Couldn't read: " + "; ".join(src["failed"]))
+        if not data.get("items"):
+            parts.append("No questions found.")
+        answers_status.config(text=" ".join(parts), fg=MUTED)
+        for index, item in enumerate(data.get("items", [])):
+            head, detail = knowledge.describe_item(item)
+            dim = item.get("status") != "answered"
+            box = tk.Frame(answers_list, bg=CARD)
+            box.pack(fill="x", pady=3)
+            tk.Label(box, text=f"{format_bookmark_time(item.get('t') or 0)}  {item.get('question', '')}",
+                     bg=CARD, fg=MUTED, anchor="w", justify="left", wraplength=520,
+                     font=("Segoe UI", 8)).pack(fill="x")
+            row_ = tk.Frame(box, bg=CARD)
+            row_.pack(fill="x")
+            text_col = tk.Frame(row_, bg=CARD)
+            text_col.pack(side="left", fill="x", expand=True)
+            tk.Label(text_col, text=head, bg=CARD, fg=MUTED if dim else FG, anchor="w",
+                     justify="left", wraplength=470,
+                     font=("Segoe UI", 9, "bold")).pack(fill="x")
+            if detail:
+                tk.Label(text_col, text=detail, bg=CARD, fg=MUTED, anchor="w",
+                         justify="left", wraplength=470, font=("Segoe UI", 8)).pack(fill="x")
+            for mark, vote in (("\U0001F44D", "up"), ("\U0001F44E", "down")):
+                def click(i=index, v=vote, cur=item.get("vote")):
+                    knowledge.set_vote(path, i, None if cur == v else v)
+                    render_answers(path)
+                tk.Button(row_, text=mark, command=click, relief="flat", borderwidth=0,
+                          bg=ACCENT if item.get("vote") == vote else CARD, fg=FG,
+                          cursor="hand2").pack(side="right", padx=2)
+
+    def show_answers(session) -> None:
+        path = session["path"]
+        answers_panel.pack(fill="x", pady=(0, 8), before=transcript_wrap)
+        answers_notes.delete("1.0", "end")
+        notes = Path(path) / "call_notes.md"
+        if notes.is_file():
+            answers_notes.insert("1.0", notes.read_text(encoding="utf-8", errors="replace"))
+        cfg = config.Config.load()
+        has_docs = bool(cfg.knowledge_dir.strip() or cfg.knowledge_url.strip())
+        ready = provider_ready(cfg.cleanup_provider)
+        answers_btn.config(state="normal" if ready and not state["busy"] else "disabled")
+        if knowledge.load_answers(path):
+            render_answers(path)
+        else:
+            for child in answers_list.winfo_children():
+                child.destroy()
+            if not ready:
+                answers_status.config(
+                    text="Unavailable: configure an API key or choose local Ollama.", fg=ACCENT)
+            elif not has_docs and not answers_notes.get("1.0", "end").strip():
+                answers_status.config(
+                    text="Add a docs folder or web page in Settings \u2192 Meetings, or type call notes.",
+                    fg=MUTED)
+            else:
+                answers_status.config(text="", fg=MUTED)
+
+    def do_answers() -> None:
+        path = selected_path()
+        if path is None or state["busy"]:
+            return
+        cfg = config.Config.load()
+        notes = answers_notes.get("1.0", "end").strip()
+        notes_file = Path(path) / "call_notes.md"
+        try:
+            if notes:
+                notes_file.write_text(notes, encoding="utf-8")
+            elif notes_file.exists():
+                notes_file.unlink()
+        except OSError:
+            pass
+        if not (cfg.knowledge_dir.strip() or cfg.knowledge_url.strip() or notes):
+            answers_status.config(
+                text="Add a docs folder or web page in Settings \u2192 Meetings, or type call notes.",
+                fg=ACCENT)
+            return
+        set_busy(True)
+        answers_btn.config(state="disabled")
+        answers_status.config(text="Reading your docs and the call\u2026", fg=MUTED)
+
+        def back_on_ui(callback, value=None) -> None:
+            try:
+                root.after(0, lambda: callback(value))
+            except Exception:
+                pass
+
+        def done(_value) -> None:
+            set_busy(False)
+            answers_btn.config(state="normal")
+            render_answers(path)
+
+        def failed(message) -> None:
+            set_busy(False)
+            answers_btn.config(state="normal")
+            answers_status.config(text=f"Failed: {message}", fg=ACCENT)
+
+        def work() -> None:
+            try:
+                knowledge.build_answers(path, cfg.knowledge_dir, cfg.knowledge_url,
+                                        cfg.cleanup_provider, cfg.cleanup_model)
+            except Exception as exc:
+                back_on_ui(failed, str(exc))
+                return
+            back_on_ui(done)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def do_summarise() -> None:
         path = selected_path()
@@ -2625,6 +2767,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     transcribe_btn.config(command=do_transcribe)
     transcribe_cta.config(command=do_transcribe)
     summarise_btn.config(command=do_summarise)
+    answers_btn.config(command=do_answers)
     polish_btn.config(command=do_polish)
     toggle_polish_btn.config(command=toggle_polish)
     summary_copy_btn.config(command=do_summary_copy)
