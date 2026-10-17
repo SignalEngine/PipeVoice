@@ -57,13 +57,28 @@ PASTE_TIMINGS = {
 }
 
 
+# Clipboard formats pyperclip cannot save or restore: bitmaps, metafiles and
+# copied files. Pasting over them would replace a screenshot with dictation and
+# "restore" empty text - the image is just gone.
+_NON_TEXT_FORMATS = (2, 8, 14, 15, 17)   # CF_BITMAP, CF_DIB, CF_ENHMETAFILE, CF_HDROP, CF_DIBV5
+
+
+def _clipboard_holds_non_text() -> bool:
+    try:
+        import ctypes
+        avail = ctypes.windll.user32.IsClipboardFormatAvailable
+        return any(avail(f) for f in _NON_TEXT_FORMATS)
+    except Exception:
+        return False   # not Windows / no clipboard API: nothing pyperclip would lose
+
+
 def type_text(text: str, mode: str = "type", press_enter: bool = False,
               paste_speed: str = "normal") -> None:
     if not text and not press_enter:
         return
     pre_ms, restore_ms, enter_ms = PASTE_TIMINGS.get(paste_speed, PASTE_TIMINGS["normal"])
 
-    if text and mode == "paste":
+    if text and mode == "paste" and not _clipboard_holds_non_text():
         try:
             import pyperclip
 
