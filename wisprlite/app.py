@@ -631,7 +631,11 @@ class App:
                         self._session.cancel()
                     except Exception:
                         log.exception("cancel failed on short press")
-                self.overlay.hide()
+                if duration >= self.cfg.min_seconds:   # held long enough, mic sent no frames
+                    log.info("empty recording: %.1fs held, 0 frames from the mic", duration)
+                    self.overlay.set_state("done", "Mic sent no audio - check input device")
+                else:
+                    self.overlay.hide()
                 self._set_icon("idle")
                 return
 

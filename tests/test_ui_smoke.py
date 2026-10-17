@@ -1908,3 +1908,12 @@ def test_local_fallback_that_hears_nothing_still_explains(caplog):
     app._fallback = lambda audio, err: ""
     App._finish(app, np.full(32000, 0.2, dtype="float32"), 2.0)
     app.overlay.set_state.assert_called_with("done", "Nothing heard")
+
+
+def test_a_held_press_with_zero_mic_frames_says_so(caplog):
+    import numpy as np
+    App, app = _empty_transcript_app(caplog)
+    session = app._session
+    App._finish(app, np.empty((0,), dtype="float32"), 2.0)
+    app.overlay.set_state.assert_called_with("done", "Mic sent no audio - check input device")
+    session.cancel.assert_called_once_with()
