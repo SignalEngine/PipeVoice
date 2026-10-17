@@ -63,6 +63,7 @@ pyinstaller==6.22.3
 pyinstaller-hooks-contrib==2026.7
 pyjwt==2.15.1
 pyperclip==1.11.0
+pypdf==6.21.1
 pystray==0.19.5
 python-dotenv==1.2.3
 python-multipart==0.0.32
