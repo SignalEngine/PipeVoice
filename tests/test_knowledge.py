@@ -30,7 +30,7 @@ def session(tmp_path, segments=None):
     return tmp_path
 
 
-def run(tmp_path, answer, jev=lambda q, quote: None, segments=None):
+def run(tmp_path, answer, jev=lambda *a: None, segments=None):
     s = session(tmp_path, segments)
     return k.build_answers(s, str(s), "", "openai", "", completion=qa_completion(answer), jev=jev)
 
@@ -66,14 +66,47 @@ def test_malformed_json_is_not_found_no_crash(tmp_path):
     assert r["items"][0]["status"] == "not_found"
 
 
-def test_them_only_reach_question_prompt():
+def test_them_only_questions_come_out_but_you_lines_give_context():
+    """Review P2: dropping You lines lost what 'that' meant. Context goes in;
+    a question the model attributes to a You line is dropped in code."""
+    seen = []
+    def call(messages):
+        seen.append(messages[1]["content"])
+        return json.dumps([{"t": 1, "question": "my own question?", "keywords": []},
+                           {"t": 2, "question": "Will the SOC 2 audit cover vendors?", "keywords": []}])
+    out = k.extract_questions([{"t": 1, "speaker": "You", "text": "Our SOC 2 audit finishes in June"},
+                               {"t": 2, "speaker": "Them 2", "text": "Will that cover vendors?"}], call)
+    assert "Our SOC 2 audit finishes in June" in seen[0]
+    assert [q["question"] for q in out] == ["Will the SOC 2 audit cover vendors?"]
+
+
+def test_cjk_doc_is_kept_not_dropped_as_empty(tmp_path):
+    (tmp_path / "ja.md").write_text("料金プランには監査ログが含まれます。", encoding="utf-8")
+    docs, src = k.load_sources(str(tmp_path))
+    assert src["ok"] == ["ja.md"] and docs
+
+
+def test_transcript_corrections_are_applied_before_questions(tmp_path):
+    from wisprlite import meeting
+    (tmp_path / "transcript.json").write_text(json.dumps({"segments": [
+        {"t": 3, "speaker": "Them", "text": "Does sock too apply?"}]}))
+    meeting.save_corrections(tmp_path, {"sock too": "SOC 2"})
     seen = []
     def call(messages):
         seen.append(messages[1]["content"])
         return "[]"
-    k.extract_questions([{"t": 1, "speaker": "You", "text": "my secret pitch"},
-                         {"t": 2, "speaker": "Them 2", "text": "what does it cost?"}], call)
-    assert "my secret pitch" not in seen[0] and "what does it cost?" in seen[0]
+    k.build_answers(tmp_path, "", "", "gemini", "", completion=call, jev=lambda *a: None)
+    assert "Does SOC 2 apply?" in seen[0]
+
+
+def test_jev_is_given_the_headline_too():
+    bodies = []
+    def post(body):
+        bodies.append(json.loads(body))
+        return {"answers": {"answers": {"type": "noul", "noul": 0.1}}}
+    assert k.jev_check("Is SSO included?", "SSO is not included in any plan.",
+                       "Yes, SSO is included", api_key="x", post=post) == 0.1
+    assert bodies[0]["state"]["headline"] == "Yes, SSO is included"
 
 
 def test_failed_source_zero_word_pdf_and_bad_url_reported(tmp_path):
@@ -94,7 +127,7 @@ def test_jev_no_key_gives_none(monkeypatch):
 
 def test_jev_doubtful_when_low(tmp_path):
     r = run(tmp_path, {"headline": "Yes", "quote": QUOTE, "source": "plans.md"},
-            jev=lambda q, quote: 0.2)
+            jev=lambda q, quote, headline=None: 0.2)
     assert r["items"][0]["status"] == "doubtful" and r["items"][0]["jev_p"] == 0.2
 
 

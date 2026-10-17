@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from .cleanup import chat_completion
+from .meeting import apply_corrections, load_corrections
 from .summarise import _chunks
 
 log = logging.getLogger("wisprlite")
@@ -33,7 +34,10 @@ def _norm(text: str) -> str:
 
 
 def _words(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9']+", str(text or "").lower())
+    # Unicode letters/digits, not ASCII only: a Japanese or Chinese doc matched
+    # nothing and was dropped as "no text found".
+    # ponytail: CJK has no spaces, so a run is one token; per-char n-grams if recall matters
+    return re.findall(r"[^\W_]+(?:'[^\W_]+)*", str(text or "").lower())
 
 
 # --- 1. load sources ---------------------------------------------------------
@@ -221,7 +225,9 @@ def _default_completion(provider: str, model: str):
 
 _Q_PROMPT = (
     "Below is part of a call transcript, one line per remark as '[seconds] Speaker: text'. "
-    "List ONLY the sincere questions the remote speakers (Them) want answered. Skip rhetorical "
+    "You = the user; use their lines only as context. "
+    "List ONLY the sincere questions the remote speakers (Them) want answered, with the "
+    "[seconds] of the Them line that asked it. Skip rhetorical "
     "questions and filler ('you know?', 'right?', 'make sense?'). Rewrite each into a standalone "
     "question that makes sense without the transcript. For each give 3-8 search keywords, "
     "INCLUDING synonyms and alternate wording. Reply with JSON only: "
@@ -230,11 +236,13 @@ _Q_PROMPT = (
 
 
 def extract_questions(segments: list[dict], completion: Callable) -> list[dict]:
-    """Only `Them*` segments are sent to the model."""
-    them = [s for s in segments if str(s.get("speaker", "")).startswith("Them")]
+    """The whole conversation goes in as context ("Will THAT cover vendors?" needs
+    the user's previous line), but only questions on a Them line come out: an item
+    whose [seconds] is not a Them line is dropped in code, not left to the prompt."""
+    them_ts = {int(s.get("t") or 0) for s in segments if str(s.get("speaker", "")).startswith("Them")}
     found: list[dict] = []
     seen: set[str] = set()
-    for chunk in _chunks(them, QUESTION_CHUNK, QUESTION_OVERLAP):
+    for chunk in _chunks(segments, QUESTION_CHUNK, QUESTION_OVERLAP):
         lines = "\n".join(
             f"[{int(s.get('t') or 0)}] {s.get('speaker')}: {s.get('text', '')}" for s in chunk
         )
@@ -245,6 +253,9 @@ def extract_questions(segments: list[dict], completion: Callable) -> list[dict]:
         items = _parse_json(reply, list) or []
         for item in items:
             if not isinstance(item, dict) or not isinstance(item.get("question"), str):
+                continue
+            t = item.get("t")
+            if not isinstance(t, (int, float)) or int(t) not in them_ts:
                 continue
             key = _norm(item["question"])
             if not key or key in seen:
@@ -293,17 +304,21 @@ def answer_question(q: dict, index: BM25, docs: list[dict], completion: Callable
 
 # --- 7. Jev answer check -----------------------------------------------------
 
-def jev_check(question: str, quote: str, *, api_key: str | None = None, post=None) -> float | None:
-    """P(quote directly answers question) from Jev; None when skipped or failed."""
+def jev_check(question: str, quote: str, headline: str = "", *, api_key: str | None = None,
+              post=None) -> float | None:
+    """P(the quote supports the headline as an answer to the question) from Jev;
+    None when skipped or failed. The headline is checked too: the quote-exists
+    test passes "Yes, SSO is included" over a doc saying it is not."""
     key = os.environ.get("TYPESAFE_API_KEY", "").strip() if api_key is None else api_key
     if not key:
         return None
     body = json.dumps({
-        "state": {"question": question, "quote": quote},
+        "state": {"question": question, "quote": quote, "headline": headline},
         "model": "jev-latest",
         "questions": {"answers": {
             "type": "noul",
-            "instructions": "Does `quote` directly answer `question`?",
+            "instructions": "Does `quote` directly answer `question`, and does it support "
+                            "`headline` as that answer?",
         }},
     }).encode("utf-8")
     try:
@@ -367,7 +382,7 @@ def build_answers(
     model: str,
     *,
     completion: Callable | None = None,
-    jev: Callable[[str, str], float | None] = jev_check,
+    jev: Callable[[str, str, str], float | None] = jev_check,
     pdf_reader: Callable[[Path], str] = _pdf_text,
     fetch: Callable[[str], str] = _fetch_url,
 ) -> dict:
@@ -377,6 +392,8 @@ def build_answers(
         segments = json.loads((session_dir / "transcript.json").read_text(encoding="utf-8")).get("segments") or []
     except (OSError, ValueError):
         segments = []
+    # The wording fixes the user made on screen ("sock too" -> "SOC 2").
+    segments = apply_corrections(segments, load_corrections(session_dir))
     docs, sources = load_sources(
         folder, url, session_dir / "call_notes.md", pdf_reader=pdf_reader, fetch=fetch
     )
@@ -384,7 +401,7 @@ def build_answers(
     items = []
     for q in extract_questions(segments, completion):
         ans = answer_question(q, index, docs, completion)
-        jev_p = jev(q["question"], ans["quote"]) if ans["quote"] else None
+        jev_p = jev(q["question"], ans["quote"], ans["headline"]) if ans["quote"] else None
         if not ans["quote"]:
             status = "not_found"
         elif jev_p is not None and jev_p < JEV_THRESHOLD:
