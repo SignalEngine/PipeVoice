@@ -31,7 +31,13 @@ jobs:
           # and the build broke with no code change — first seen 2026-07-27,
           # last green build was v2.30.3 on 2026-06-25.
           # requirements.txt pins mcp<2; the [cli] extra must not override it.
-          pip install -r requirements.txt pyinstaller "mcp[cli]<2"
+          pip install -r requirements.txt -c constraints.txt "mcp[cli]<2"
+          # Compile PyInstaller's bootloader (the stub that IS Pipevoice.exe) from
+          # source. The prebuilt one is byte-identical in every PyInstaller app,
+          # malware included, so Defender's ML flags it on sight: v2.49.6 was
+          # quarantined as Trojan:Win32/Bearfoos.B!ml on 2026-10-17.
+          $env:PYINSTALLER_COMPILE_BOOTLOADER = "1"
+          pip install --no-binary pyinstaller -c constraints.txt pyinstaller
 
       - name: Generate icon
         run: python assets/make_icon.py
