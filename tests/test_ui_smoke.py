@@ -2021,3 +2021,55 @@ def test_paste_never_overwrites_a_copied_image(monkeypatch):
     monkeypatch.setattr(typer, "_clipboard_holds_non_text", lambda: False)
     typer.type_text("hello", mode="paste")
     assert ("copy", "hello") in calls and ("send", "ctrl+v") in calls
+
+
+def test_about_tab_shows_what_it_does_and_the_release_notes():
+    """The feature list and the notes share one scroll area. The notes render
+    from a callback whose errors are swallowed, so assert they actually arrive."""
+    _skip_if_headless()
+    import time
+    import tkinter as tk
+    from unittest import mock
+
+    from wisprlite import about, updater
+
+    root = tk.Tk()
+    try:
+        container = tk.Frame(root)
+        container.pack(fill="both", expand=True)
+        rels = [{"tag": "v9.9.9", "published_at": "2026-10-17T21:50:00Z",
+                 "body": "- Who spoke shows names"}]
+        class _Inline:
+            # The fetch runs on a thread that hands back via root.after; without a
+            # mainloop that hand-off never lands, so run it inline instead.
+            def __init__(self, target=None, **_kw):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with mock.patch.object(updater, "recent_releases", return_value=rels), \
+             mock.patch.object(updater, "current_version", return_value="9.9.9"), \
+             mock.patch.object(about.threading, "Thread", _Inline):
+            about.build(container, root, wheel=lambda _c: None)
+            deadline = time.time() + 5
+            texts = []
+            while time.time() < deadline:
+                root.update()
+
+                def walk(widget):
+                    for child in widget.winfo_children():
+                        if isinstance(child, tk.Label):
+                            yield str(child.cget("text"))
+                        yield from walk(child)
+
+                texts = list(walk(container))
+                if "v9.9.9" in texts:
+                    break
+                time.sleep(0.05)
+        assert "WHAT IT DOES" in texts
+        assert "Meetings" in texts
+        assert "v9.9.9" in texts, "release notes never rendered"
+        assert any("Who spoke shows names" in t for t in texts)
+    finally:
+        root.destroy()

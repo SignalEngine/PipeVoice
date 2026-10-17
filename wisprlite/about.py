@@ -26,6 +26,23 @@ RELEASES_URL = "https://github.com/Powleads/PipeVoice/releases"
 GITHUB_URL = "https://github.com/Powleads/PipeVoice"
 
 
+
+FEATURES = (
+    ("Dictation", "Hold your hotkey (Ctrl + \\ by default), talk, let go: your words "
+                  "land wherever the cursor is."),
+    ("Meetings", "The meeting hotkey (Ctrl + Alt + M by default) records both sides of a "
+                 "call. Then transcribe it, name the speakers, get notes and actions, and "
+                 "see their questions answered from your docs. Meetings tab; "
+                 "Guide \u2192 Meetings shows how."),
+    ("Show a bug", "The recording hotkey (Ctrl + Alt + R by default): drag a box and talk "
+                   "it through. You get an .mp4 plus a transcript of what you said. "
+                   "Recordings tab."),
+    ("Read aloud", "Box anything on screen and hear it. Set its hotkey under "
+                   "Settings \u2192 Hotkeys."),
+    ("Voices", "Different styles per app or hotkey. Voices tab."),
+)
+
+
 def _open_feedback() -> None:
     import os
     import subprocess
@@ -110,9 +127,6 @@ def build(container, root, wheel=None) -> None:
     fb.pack(side="left", padx=(16, 0))
     fb.bind("<Button-1>", lambda e: _open_feedback())
 
-    tk.Label(container, text="WHAT'S NEW", bg=BG, fg=ACCENT,
-             font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=28, pady=(20, 8))
-
     bodyf = tk.Frame(container, bg=BG)
     bodyf.pack(fill="both", expand=True)
     canvas = tk.Canvas(bodyf, bg=BG, highlightthickness=0, width=480, height=280)
@@ -130,6 +144,33 @@ def build(container, root, wheel=None) -> None:
     # and a maximised window is the normal case now, not an edge case.
     winui.fit_scroll_body(canvas, inner_window)
     wheel(canvas)
+
+    # What the app does and where each part lives. Release notes below say what
+    # CHANGED; this says what is THERE, which the notes never do.
+    does = tk.Frame(inner, bg=BG, padx=28)
+    does.pack(fill="x", pady=(6, 0))
+    tk.Label(does, text="WHAT IT DOES", bg=BG, fg=ACCENT,
+             font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 6))
+    for name, what in FEATURES:
+        row = tk.Frame(does, bg=BG)
+        row.pack(fill="x", pady=1)
+        tk.Label(row, text=name, bg=BG, fg=FG, width=16, anchor="w",
+                 font=("Segoe UI", 10, "bold")).pack(side="left", anchor="n")
+        what_label = tk.Label(row, text=what, bg=BG, fg=MUTED, anchor="w", justify="left",
+                              wraplength=320, font=("Segoe UI", 10))
+        what_label.pack(side="left", fill="x")
+        # Wrap to the window, not a fixed width: a fixed 760px stopped the
+        # whole tab from narrowing.
+        row.bind("<Configure>", lambda e, lab=what_label: lab.config(
+            wraplength=max(200, min(760, e.width - 150))), add="+")
+
+    tk.Label(inner, text="WHAT'S NEW", bg=BG, fg=ACCENT,
+             font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=28, pady=(20, 8))
+
+    # Release notes load later and replace only this frame, not the block above.
+    notes = tk.Frame(inner, bg=BG)
+    notes.pack(fill="x")
+
 
     def _exit_for_install():
         # This window runs as its own process and, in the onedir build, holds an
@@ -208,14 +249,14 @@ def build(container, root, wheel=None) -> None:
         threading.Thread(target=work, daemon=True).start()
 
     def render_changelog(rels):
-        for w in inner.winfo_children():
+        for w in notes.winfo_children():
             w.destroy()
         if not rels:
-            tk.Label(inner, text="Could not load release notes.", bg=BG, fg=MUTED,
+            tk.Label(notes, text="Could not load release notes.", bg=BG, fg=MUTED,
                      font=("Segoe UI", 10), padx=28, pady=10).pack(anchor="w")
             return
         for rel in rels:
-            card = tk.Frame(inner, bg=CARD, padx=15, pady=12)
+            card = tk.Frame(notes, bg=CARD, padx=15, pady=12)
             card.pack(fill="x", padx=24, pady=6)
             top = tk.Frame(card, bg=CARD)
             top.pack(fill="x")
@@ -227,11 +268,11 @@ def build(container, root, wheel=None) -> None:
             dt = _date(rel.get("published_at", ""))
             if dt:
                 tk.Label(top, text=dt, bg=CARD, fg=MUTED, font=("Consolas", 8)).pack(side="right")
-            notes = _clean_notes(rel.get("body", "")) or "No notes for this release."
-            tk.Label(card, text=notes, bg=CARD, fg=MUTED, font=("Segoe UI", 9),
+            note_text = _clean_notes(rel.get("body", "")) or "No notes for this release."
+            tk.Label(card, text=note_text, bg=CARD, fg=MUTED, font=("Segoe UI", 9),
                      anchor="w", justify="left", wraplength=430).pack(fill="x", pady=(7, 0))
 
-    tk.Label(inner, text="Loading release notes…", bg=BG, fg=MUTED,
+    tk.Label(notes, text="Loading release notes…", bg=BG, fg=MUTED,
              font=("Segoe UI", 10), padx=28, pady=10).pack(anchor="w")
     load()
 
