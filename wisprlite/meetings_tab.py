@@ -1897,7 +1897,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         else:
             needs_transcribe.pack_forget()
 
-        who_spoke = render_stats(raw_segments) if raw_segments else ""
+        who_spoke = render_stats(raw_segments, state["speaker_map"]) if raw_segments else ""
         if who_spoke:
             stats_text.config(text=who_spoke)
             stats_panel.pack(fill="x", pady=(0, 8), before=transcript_wrap)

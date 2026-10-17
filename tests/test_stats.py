@@ -87,6 +87,14 @@ def test_the_stats_panel_is_actually_wired_into_the_meetings_tab():
     from wisprlite import meetings_tab
 
     source = inspect.getsource(meetings_tab.build)
-    assert "render_stats(raw_segments)" in source, "the stats must be computed"
+    assert "render_stats(raw_segments, state[\"speaker_map\"])" in source, "the stats must be computed, with the names"
     assert "stats_panel.pack(" in source, "and actually packed"
     assert "stats_panel.pack_forget()" in source, "and cleared when there is no session"
+
+
+def test_named_speakers_show_by_name():
+    # Naming "Them 1" in the Meetings tab has to reach this panel too.
+    segments = [_seg("You", "hello there"), _seg("Them 1", "hi, is SSO included?")]
+    text = stats.render_stats(segments, {"Them 1": "Priya"})
+    assert "Priya" in text and "Them 1" not in text
+    assert "Them 1" in stats.render_stats(segments)

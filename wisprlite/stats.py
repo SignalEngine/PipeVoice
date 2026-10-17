@@ -84,9 +84,15 @@ def speaking_stats(segments: list[dict]) -> list[dict]:
     return out
 
 
-def render_stats(segments: list[dict]) -> str:
-    """A short plain-text block, or "" when there is nothing worth showing."""
+def render_stats(segments: list[dict], speaker_map: dict[str, str] | None = None) -> str:
+    """A short plain-text block, or "" when there is nothing worth showing.
+
+    ``speaker_map`` is the names given in the Meetings tab ("Them 1" -> "Priya"),
+    applied to the labels only, so the figures still come from the raw transcript.
+    """
     rows = speaking_stats(segments)
+    for row in rows:
+        row["speaker"] = (speaker_map or {}).get(row["speaker"], row["speaker"])
     if len(rows) < 2:
         # One voice is not a comparison. Reporting "You: 100%" is noise.
         return ""
