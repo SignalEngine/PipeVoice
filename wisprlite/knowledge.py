@@ -239,12 +239,14 @@ def extract_questions(segments: list[dict], completion: Callable) -> list[dict]:
     """The whole conversation goes in as context ("Will THAT cover vendors?" needs
     the user's previous line), but only questions on a Them line come out: an item
     whose [seconds] is not a Them line is dropped in code, not left to the prompt."""
-    them_ts = {int(s.get("t") or 0) for s in segments if str(s.get("speaker", "")).startswith("Them")}
+    # Tenths, not whole seconds: You at 5.1 and Them at 5.9 must not share a key.
+    them_ts = {round(float(s.get("t") or 0), 1) for s in segments
+               if str(s.get("speaker", "")).startswith("Them")}
     found: list[dict] = []
     seen: set[str] = set()
     for chunk in _chunks(segments, QUESTION_CHUNK, QUESTION_OVERLAP):
         lines = "\n".join(
-            f"[{int(s.get('t') or 0)}] {s.get('speaker')}: {s.get('text', '')}" for s in chunk
+            f"[{float(s.get('t') or 0):.1f}] {s.get('speaker')}: {s.get('text', '')}" for s in chunk
         )
         reply = completion([
             {"role": "system", "content": _Q_PROMPT},
@@ -255,7 +257,7 @@ def extract_questions(segments: list[dict], completion: Callable) -> list[dict]:
             if not isinstance(item, dict) or not isinstance(item.get("question"), str):
                 continue
             t = item.get("t")
-            if not isinstance(t, (int, float)) or int(t) not in them_ts:
+            if not isinstance(t, (int, float)) or round(float(t), 1) not in them_ts:
                 continue
             key = _norm(item["question"])
             if not key or key in seen:

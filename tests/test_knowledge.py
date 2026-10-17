@@ -80,6 +80,12 @@ def test_them_only_questions_come_out_but_you_lines_give_context():
     assert [q["question"] for q in out] == ["Will the SOC 2 audit cover vendors?"]
 
 
+def test_same_whole_second_you_question_is_still_dropped():
+    call = lambda m: json.dumps([{"t": 5.1, "question": "Will SSO be free?", "keywords": []}])
+    assert k.extract_questions([{"t": 5.1, "speaker": "You", "text": "Will SSO be free?"},
+                                {"t": 5.9, "speaker": "Them", "text": "I will send the plan."}], call) == []
+
+
 def test_cjk_doc_is_kept_not_dropped_as_empty(tmp_path):
     (tmp_path / "ja.md").write_text("料金プランには監査ログが含まれます。", encoding="utf-8")
     docs, src = k.load_sources(str(tmp_path))
