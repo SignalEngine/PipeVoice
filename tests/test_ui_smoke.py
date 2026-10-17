@@ -1957,3 +1957,37 @@ def test_every_api_key_box_has_a_get_a_key_button():
     assert texts.count("Get a free key ↗") == 3, texts   # Gemini, Groq, OpenRouter
     assert texts.count("Get a key ↗") >= 3, texts        # Deepgram, OpenAI, ElevenLabs
     assert "Download Ollama ↗" in texts
+
+
+def test_new_installs_paste_and_get_discoverable_hotkeys():
+    from wisprlite import config, welcome
+    cfg = config.Config()
+    assert cfg.output_mode == "paste"
+    assert (cfg.meeting_hotkey, cfg.bookmark_hotkey, cfg.screenrec_hotkey) == (
+        "ctrl+alt+m", "ctrl+alt+b", "ctrl+alt+r")
+    # Teams' mute is Ctrl+Shift+M and the hook does not suppress keys.
+    assert "ctrl+shift+m" not in (cfg.meeting_hotkey.lower(), cfg.bookmark_hotkey.lower())
+    rows = dict(welcome.hotkey_rows(cfg))
+    assert rows["Ctrl + Alt + M"] == "start / stop recording a meeting"
+    assert "Ctrl + Alt + R" in rows and "Ctrl + Alt + B" in rows
+
+
+def test_an_existing_install_moves_to_paste_once_then_respects_a_choice():
+    from wisprlite import config
+    cfg = config.Config(output_mode="type")          # saved by an old version
+    assert cfg.migrate_paste_default() is True
+    assert cfg.output_mode == "paste" and cfg.paste_default_migrated
+    cfg.output_mode = "type"                          # user picks type again
+    assert cfg.migrate_paste_default() is False
+    assert cfg.output_mode == "type"
+
+
+def test_migration_runs_through_load_and_persists(tmp_path, monkeypatch):
+    import json
+    from wisprlite import config
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"output_mode": "type", "starter_vocab_seeded": True}))
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    assert config.Config.load().output_mode == "paste"
+    saved = json.loads(path.read_text())
+    assert saved["output_mode"] == "paste" and saved["paste_default_migrated"] is True

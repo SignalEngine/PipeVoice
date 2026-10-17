@@ -30,6 +30,20 @@ GROQ_URL = "https://console.groq.com/keys"
 OLLAMA_URL = "https://ollama.com/download"
 
 
+def _pretty(combo: str) -> str:
+    """"ctrl+alt+m" -> "Ctrl + Alt + M"."""
+    return " + ".join(k.upper() if len(k) == 1 else k.title() for k in combo.split("+"))
+
+
+def hotkey_rows(cfg) -> list[tuple[str, str]]:
+    """(combo, what it does) for each extra hotkey that is set; blank = off, so skipped."""
+    rows = [(cfg.clipboard_hotkey, "dictate to the clipboard instead of typing"),
+            (cfg.meeting_hotkey, "start / stop recording a meeting"),
+            (cfg.bookmark_hotkey, "bookmark the moment while a meeting records"),
+            (cfg.screenrec_hotkey, "record a screen region with narration")]
+    return [(_pretty(c), w) for c, w in rows if c]
+
+
 def show_welcome() -> bool:
     """Display the welcome/tutorial. Returns True to continue to Settings."""
     try:
@@ -38,6 +52,7 @@ def show_welcome() -> bool:
         return True  # no Tk (headless) -> just go straight to settings
 
     result = {"go": False}
+    cfg = config.Config.load()
 
     root = tk.Tk()
     root.title("Welcome to Pipevoice")
@@ -77,6 +92,18 @@ def show_welcome() -> bool:
         tk.Label(row, text=f"  {title}", bg=BG, fg=FG,
                  font=("Segoe UI", 10, "bold")).pack(side="left")
         tk.Label(row, text=f"  — {sub}", bg=BG, fg=MUTED,
+                 font=("Segoe UI", 9)).pack(side="left")
+
+    # The other hotkeys. Nobody finds a feature whose shortcut lives only in
+    # Settings, so name them on the first screen anyone sees.
+    tk.Label(wrap, text="MORE SHORTCUTS", bg=BG, fg=ACCENT,
+             font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(14, 4))
+    for combo, what in hotkey_rows(cfg):
+        row = tk.Frame(wrap, bg=BG)
+        row.pack(anchor="w", fill="x", pady=2)
+        tk.Label(row, text=f" {combo} ", bg=CARD, fg=FG,
+                 font=("Consolas", 9, "bold")).pack(side="left")
+        tk.Label(row, text=f"  {what}", bg=BG, fg=MUTED,
                  font=("Segoe UI", 9)).pack(side="left")
 
     # --- choose an engine (speed!) ---

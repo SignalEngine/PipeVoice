@@ -140,14 +140,17 @@ class Config:
     mode: str = "ptt"               # ptt | toggle
     hotkey: str = "ctrl+\\"          # any key/combo, e.g. "ctrl+alt", "f9"
     clipboard_hotkey: str = "right ctrl+right shift"  # 2nd hotkey -> dictate to clipboard (no typing); safe to hold. "" = off
-    meeting_hotkey: str = ""        # toggle meeting capture; "" = disabled
-    bookmark_hotkey: str = ""       # mark the current moment while a meeting records
+    # Defaults, not blanks: shipped as "" these features were invisible to anyone
+    # who never opened Settings. Ctrl+Alt, not Ctrl+Shift+M (Teams mute; the
+    # hook does not suppress keys, so it would mute you as it started recording).
+    meeting_hotkey: str = "ctrl+alt+m"   # toggle meeting capture; "" = disabled
+    bookmark_hotkey: str = "ctrl+alt+b"  # mark the current moment while a meeting records
     bookmark_acoustic: bool = False # double-snap detector, opt-in
     bookmark_sensitivity: float = 0.5
     bookmark_phrases: str = DEFAULT_BOOKMARK_PHRASES
     meeting_max_minutes: int = 240  # safety cap for an unattended meeting capture
     meeting_retention_sessions: int = 20  # newest local meeting sessions to keep
-    output_mode: str = "type"       # type | paste
+    output_mode: str = "paste"      # type | paste (paste restores your clipboard after)
     language: str = ""              # "" = auto-detect; else ISO code e.g. "en"
     device: str = ""                # mic index or name substring; "" = default
     gemini_model: str = "gemini-3.1-flash-lite"   # free tier; one key also powers AI polish
@@ -182,6 +185,7 @@ class Config:
     deepgram_finish_timeout: float = 6.0  # seconds to wait for Deepgram's final words
     paste_speed: str = "normal"       # fast | normal | slow — clipboard-paste timing
     last_version: str = ""            # app version last run, to detect a fresh update
+    paste_default_migrated: bool = False  # one-time type -> paste move for existing installs
     launches: int = 0                 # count of app starts (for the one-time star nudge)
     star_prompt_shown: bool = False   # one-time "star us on GitHub" nudge already shown
     profiles: list = field(default_factory=list)  # per-app behaviour overrides
@@ -195,7 +199,7 @@ class Config:
     update_channel: str = "stable"    # stable | beta — beta also sees prereleases
     pipefocus: bool = False           # live focus nudges during a meeting (Deepgram only)
     # Screen recorder — off until a hotkey is set, like meeting capture.
-    screenrec_hotkey: str = ""        # drag a region, record it with narration
+    screenrec_hotkey: str = "ctrl+alt+r"  # drag a region, record it with narration
     screenrec_destination: str = ""   # scp target, e.g. root@host:/path/inbox-files/
     screenrec_keep_local: bool = True # keep the files after a successful send
     screenrec_dir: str = ""           # blank = %USERPROFILE%\\Videos\\PipeVoice
@@ -242,7 +246,9 @@ class Config:
                 pass
             # An existing install has never seen the starter vocabulary, and the
             # 1,760 of them are most of the users. Seed once here too.
-            if cfg.apply_starter_vocab():
+            changed = cfg.apply_starter_vocab()
+            changed = cfg.migrate_paste_default() or changed
+            if changed:
                 cfg.save()
         else:
             # First run: seed a few settings from the environment, then persist.
@@ -253,8 +259,24 @@ class Config:
             cfg.device = os.getenv("WISPRLITE_DEVICE", cfg.device)
             cfg.openai_model = os.getenv("WISPRLITE_MODEL", cfg.openai_model)
             cfg.apply_starter_vocab()
+            cfg.paste_default_migrated = True   # born on paste; nothing to migrate
             cfg.save()   # marker included, so it never runs twice
         return cfg
+
+    def migrate_paste_default(self) -> bool:
+        """Move an existing install from letter-by-letter typing to paste, ONCE.
+
+        "type" was the default, and config.json saves every field, so a saved
+        "type" cannot be told apart from a deliberate choice. Switch it once,
+        marked by `paste_default_migrated`; pick "type" again afterwards and it
+        stays. True if anything changed.
+        """
+        if self.paste_default_migrated:
+            return False
+        self.paste_default_migrated = True
+        if self.output_mode == "type":
+            self.output_mode = "paste"
+        return True
 
     def apply_starter_vocab(self) -> bool:
         """Seed the dev terms every engine mishears. True if anything changed.
