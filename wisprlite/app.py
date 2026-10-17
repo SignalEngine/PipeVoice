@@ -663,7 +663,19 @@ class App:
                 return
 
             if not text:
-                self.overlay.hide()
+                # Used to hide the overlay and log nothing, so a dead or wrong
+                # mic looked exactly like a missed hotkey press. Peak level
+                # tells the two apart: ~0 means the mic sent silence.
+                peak = float(abs(audio).max()) if audio.size else 0.0
+                try:
+                    import sounddevice as sd
+                    mic = sd.query_devices(self.recorder.device, "input")["name"]
+                except Exception:
+                    mic = "unknown"
+                log.info("empty transcript: %.1fs, peak %.3f, mic=%s (engine=%s)",
+                         duration, peak, mic, self.cfg.engine)
+                self.overlay.set_state("done", "Mic silent - check input device" if peak < 0.01
+                                       else "Nothing heard")
                 self._set_icon("idle")
                 return
 

@@ -1850,3 +1850,41 @@ def test_closing_the_window_mid_send_still_delivers_the_clip(tmp_path):
     done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
     assert done.returncode == 0, done.stderr[-2000:]
     assert marker.exists(), "closing the window abandoned the upload"
+
+
+def _empty_transcript_app(caplog):
+    import logging
+    import types
+    from unittest import mock
+    from wisprlite.app import App
+
+    caplog.set_level(logging.INFO, logger="wisprlite")
+    app = App.__new__(App)
+    app.cfg = types.SimpleNamespace(min_seconds=0.35, engine="deepgram")
+    app._session = mock.Mock()
+    app._session.finish.return_value = ""
+    app._pending_agent_listen = None
+    app.recorder = types.SimpleNamespace(device=None)
+    app.overlay = mock.Mock()
+    app._set_icon = mock.Mock()
+    app._release = mock.Mock()
+    app._active = {}
+    app._fg_ctx = {}
+    return App, app
+
+
+def test_an_empty_transcript_from_a_silent_mic_says_so(caplog):
+    """A dead/wrong input device returned "" and the pill just vanished with no
+    log line - indistinguishable from a missed hotkey press."""
+    App, app = _empty_transcript_app(caplog)
+    App._finish(app, _np_zeros(32000), 2.0)
+    app.overlay.set_state.assert_called_with("done", "Mic silent - check input device")
+    assert "empty transcript: 2.0s, peak 0.000" in caplog.text
+
+
+def test_an_empty_transcript_with_sound_says_nothing_heard(caplog):
+    import numpy as np
+    App, app = _empty_transcript_app(caplog)
+    App._finish(app, np.full(32000, 0.2, dtype="float32"), 2.0)
+    app.overlay.set_state.assert_called_with("done", "Nothing heard")
+    assert "peak 0.200" in caplog.text
