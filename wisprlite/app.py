@@ -80,6 +80,9 @@ class ScreenrecUI:
             return name
 
 
+# The after-call pill's second line: what the primary button will do.
+AFTER_CALL_PROMPT = "Answer their questions from your docs?"
+
 class App:
     def __init__(self) -> None:
         self.cfg = config.Config.load()
@@ -158,6 +161,7 @@ class App:
         self._read_aloud_last_mode = "read_all"   # so Restart repeats the same mode
         self._ra_choice_event = None      # set while the Read all/Summarise pill is up
         self._ra_choice_result = None
+        self._last_meeting_dir = None     # newest stopped meeting, for the after-call pill
 
         self._screenrec = None        # the live ScreenRecording, None when idle
         self._screenrec_selecting = False   # the region selector is open
@@ -910,6 +914,14 @@ class App:
         if action in ("ra_read_all", "ra_summarise"):
             self._ra_choice_answer("read_all" if action == "ra_read_all" else "summarise")
             return
+        if action == "md_answer":
+            self.open_settings(tab="Meetings", select=str(self._last_meeting_dir),
+                               auto="answer")
+            self.overlay.hide()
+            return
+        if action == "md_later":
+            self.overlay.hide()
+            return
         if action in ("ra_pause", "ra_stop", "ra_restart"):
             speaker = self._read_aloud_speaker
             if action == "ra_pause":
@@ -1383,8 +1395,14 @@ class App:
                 self._stop_pipefocus()
                 self._meeting_active = False
                 self._meeting_degraded = False
-                if getattr(self, "overlay", None) is not None:
-                    self.overlay.hide()
+                overlay = getattr(self, "overlay", None)
+                if overlay is not None:
+                    session = getattr(self._meeting, "session_dir", None)
+                    if self.cfg.overlay and session and Path(session).exists():
+                        self._last_meeting_dir = Path(session)
+                        overlay.show_meeting_done(AFTER_CALL_PROMPT)
+                    else:
+                        overlay.hide()
                 self._set_icon("idle")
                 self.tray.update()
             return
@@ -1651,7 +1669,7 @@ class App:
             self.stop_mcp_bridge()
         self.tray.update()
 
-    def open_settings(self, tab: str = "", select: str = "") -> None:
+    def open_settings(self, tab: str = "", select: str = "", auto: str = "") -> None:
         import os
         import subprocess
 
@@ -1662,6 +1680,8 @@ class App:
             env["PV_TAB"] = tab
         if select:
             env["PV_SELECT"] = select
+        if auto:
+            env["PV_AUTO"] = auto
         try:
             if getattr(sys, "frozen", False):
                 subprocess.Popen([sys.executable, "--settings"], env=env)

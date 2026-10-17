@@ -47,6 +47,7 @@ ACCENT = {
     "screenrec": PALETTE["meeting"],
     "reading": PALETTE["done"],
     "ra_choice": PALETTE["done"],
+    "meeting_done": PALETTE["done"],
 }
 
 
@@ -178,6 +179,11 @@ class Overlay:
         `default_mode` (the remembered last choice) only decides which button
         is highlighted - Enter/the hotkey always resolve to Read all."""
         self._q.put(("ra_choice", default_mode or "read_all", estimate or ""))
+
+    def show_meeting_done(self, subtitle: str) -> None:
+        """After a meeting stops: offer to transcribe it and answer their
+        questions from the docs. Clicks go to `on_screenrec_action`."""
+        self._q.put(("meeting_done", None, subtitle or ""))
 
     # ---- tkinter thread ---------------------------------------------------
     def _run(self) -> None:
@@ -336,6 +342,12 @@ class Overlay:
                         st["hide_at"] = 0.0
                         resize(WIN_H)
                         reveal()
+                    elif kind == "meeting_done":
+                        st["name"] = "meeting_done"
+                        st["text"] = text or ""
+                        st["hide_at"] = time.time() + self.MEETING_DONE_TIMEOUT
+                        resize(WIN_H)
+                        reveal()
                     elif kind == "meeting":
                         st["name"] = "meeting"
                         st["text"] = ""
@@ -390,7 +402,7 @@ class Overlay:
                 except Exception:
                     phase = "recording"
                 resize(self.SCREENREC_H.get(phase, WIN_H))
-            elif st["name"] in ("reading", "ra_choice"):
+            elif st["name"] in ("reading", "ra_choice", "meeting_done"):
                 resize(self.SCREENREC_H["done"])   # same taller pill, same button row
             if st["visible"]:
                 self._draw(canvas, st)
@@ -426,6 +438,9 @@ class Overlay:
             return
         if st["name"] == "ra_choice":
             self._draw_ra_choice(c, st, H, accent)
+            return
+        if st["name"] == "meeting_done":
+            self._draw_meeting_done(c, st, H, accent)
             return
         self._draw_status(c, st, H, accent)
 
@@ -652,6 +667,9 @@ class Overlay:
                         ("ra_stop", "Stop"))
     # Read-all-vs-summarise choice, shown once per read before speech starts.
     RA_CHOICE_BUTTONS = (("ra_read_all", "Read all"), ("ra_summarise", "Summarise"))
+    # After-call prompt. Transcribe + answer is the primary button.
+    MEETING_DONE_BUTTONS = (("md_answer", "Transcribe + answer"), ("md_later", "Later"))
+    MEETING_DONE_TIMEOUT = 30.0   # seconds with no click before the pill hides
     DONE_BTN_H, DONE_BTN_Y = 30, 62
     DONE_GAP, DONE_EDGE = 8, 8
     SCREENREC_H = {"recording": WIN_H, "naming": 88, "working": WIN_H, "done": 100}
@@ -693,6 +711,8 @@ class Overlay:
             return self._reading_hit(x, y)
         if name == "ra_choice":
             return self._ra_choice_hit(x, y)
+        if name == "meeting_done":
+            return self._meeting_done_hit(x, y)
         return ""
 
     def _reading_hit(self, x, y) -> str:
@@ -707,6 +727,14 @@ class Overlay:
         """Which read-mode button a click at (x, y) landed on, or ""."""
         for index, (action, _label) in enumerate(self.RA_CHOICE_BUTTONS):
             x1, y1, x2, y2 = self._done_button_box(index, self.RA_CHOICE_BUTTONS)
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return action
+        return ""
+
+    def _meeting_done_hit(self, x, y) -> str:
+        """Which after-call button a click at (x, y) landed on, or ""."""
+        for index, (action, _label) in enumerate(self.MEETING_DONE_BUTTONS):
+            x1, y1, x2, y2 = self._done_button_box(index, self.MEETING_DONE_BUTTONS)
             if x1 <= x <= x2 and y1 <= y <= y2:
                 return action
         return ""
@@ -946,6 +974,26 @@ class Overlay:
                             fill=accent if action == highlight else PALETTE["card"])
             c.itemconfigure(items[f"{action}_text"],
                             fill="#1a0c0d" if action == highlight else PALETTE["fg"])
+
+    def _draw_meeting_done(self, c, st, H: int, accent: str) -> None:
+        """Meeting saved - offer Transcribe + answer (primary) or Later."""
+        items = self._base_scene(c, st, "meeting_done", H, accent)
+        if "md_caption" not in items:
+            items["md_caption"] = c.create_text(
+                24, 22, anchor="w", fill=PALETTE["fg"], font=("Segoe UI Semibold", 10),
+                text="Meeting saved")
+            items["md_sub"] = c.create_text(
+                24, 40, anchor="w", fill=PALETTE["muted"], font=("Segoe UI", 8))
+            for index, (action, label) in enumerate(self.MEETING_DONE_BUTTONS):
+                x1, y1, x2, y2 = self._done_button_box(index, self.MEETING_DONE_BUTTONS)
+                primary = action == "md_answer"
+                items[f"{action}_bg"] = self._round_rect(
+                    c, x1, y1, x2, y2, 8,
+                    fill=accent if primary else PALETTE["card"], outline="")
+                items[f"{action}_text"] = c.create_text(
+                    (x1 + x2) // 2, (y1 + y2) // 2, text=label,
+                    fill="#1a0c0d" if primary else PALETTE["fg"], font=("Segoe UI", 9))
+        c.itemconfigure(items["md_sub"], text=self._fit(st["text"], WIN_W - 48))
 
     def _draw_status(self, c, st, H: int, accent: str) -> None:
         items = self._base_scene(c, st, "status", H, accent)

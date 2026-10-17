@@ -415,6 +415,8 @@ def _build_guide(parent, wheel) -> None:
          "Choose Bullets, To-dos or Actions and press Summarise. Actions lists tasks with "
          "an owner — which is why naming people first is worth the ten seconds.")
     item("7 · Their questions, answered from your docs",
+         "When you stop a meeting, the pill offers Transcribe + answer: one click does both. "
+         "If no docs are set, press Choose docs folder… in the Their questions panel. "
          "Point Pipevoice at your docs first: a folder (PDF, Markdown or text) or a web page "
          "under Settings → Meetings, or paste this call's brief into Call notes. Then press "
          "Answer from my docs. You get every question the other side asked, each with a "

@@ -1018,6 +1018,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     answers_status = tk.Label(answers_bar, text="", bg=CARD, fg=MUTED, anchor="w",
                               justify="left", wraplength=480, font=("Segoe UI", 8))
     answers_status.pack(side="left", padx=(8, 0))
+    pick_docs_btn = ttk.Button(answers_panel, text="Choose docs folder\u2026")
     answers_list = tk.Frame(answers_panel, bg=CARD)
     answers_list.pack(fill="x", padx=10, pady=(0, 8))
 
@@ -2287,9 +2288,12 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             set_busy(False)
             refresh(preferred=path)
             status_label.config(text="Transcription complete.", fg=GOOD)
+            if state.pop("auto_answer", False):
+                do_answers()
 
         def failed(exc) -> None:
             set_busy(False)
+            state.pop("auto_answer", None)
             refresh(preferred=path)
             status_label.config(text=f"Transcription failed: {exc}", fg=ACCENT)
 
@@ -2394,6 +2398,24 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                           bg=ACCENT if item.get("vote") == vote else CARD, fg=FG,
                           cursor="hand2").pack(side="right", padx=2)
 
+    def need_docs() -> None:
+        """No docs, page or notes yet: say so and offer the folder picker."""
+        answers_status.config(text="Pick a docs folder (PDF, Markdown, text), or type call notes above.", fg=MUTED)
+        if not pick_docs_btn.winfo_ismapped():
+            # Its own row: beside the status text the pair overflows a narrow
+            # pane and the status gets clipped away entirely.
+            pick_docs_btn.pack(anchor="w", padx=10, pady=(0, 4), before=answers_list)
+
+    def pick_docs() -> None:
+        chosen = filedialog.askdirectory(title="Choose your docs folder")
+        if not chosen:
+            return
+        cfg = config.Config.load()
+        cfg.knowledge_dir = chosen
+        cfg.save()
+        pick_docs_btn.pack_forget()
+        do_answers()
+
     def show_answers(session) -> None:
         path = session["path"]
         answers_panel.pack(fill="x", pady=(0, 8), before=transcript_wrap)
@@ -2411,13 +2433,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             for child in answers_list.winfo_children():
                 child.destroy()
             if not ready:
+                pick_docs_btn.pack_forget()   # a folder is no use until an engine is ready
                 answers_status.config(
                     text="Unavailable: configure an API key or choose local Ollama.", fg=ACCENT)
             elif not has_docs and not answers_notes.get("1.0", "end").strip():
-                answers_status.config(
-                    text="Add a docs folder or web page in Settings \u2192 Meetings, or type call notes.",
-                    fg=MUTED)
+                need_docs()
             else:
+                pick_docs_btn.pack_forget()
                 answers_status.config(text="", fg=MUTED)
 
     def do_answers() -> None:
@@ -2435,10 +2457,9 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         except OSError:
             pass
         if not (cfg.knowledge_dir.strip() or cfg.knowledge_url.strip() or notes):
-            answers_status.config(
-                text="Add a docs folder or web page in Settings \u2192 Meetings, or type call notes.",
-                fg=ACCENT)
+            need_docs()
             return
+        pick_docs_btn.pack_forget()
         set_busy(True)
         answers_btn.config(state="disabled")
         answers_status.config(text="Reading your docs and the call\u2026", fg=MUTED)
@@ -2778,7 +2799,19 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     export_btn.config(command=do_export)
     folder_btn.config(command=do_open_folder)
     delete_btn.config(command=do_delete)
-    refresh()
+    pick_docs_btn.config(command=pick_docs)
+    # Opened from the after-call pill: land on that meeting, and with
+    # PV_AUTO=answer transcribe it if needed, then answer their questions.
+    wanted = os.environ.get("PV_SELECT", "").strip()
+    refresh(preferred=Path(wanted) if wanted else None)
+    chosen_now = state["selected"]
+    if (os.environ.get("PV_AUTO") == "answer" and wanted and chosen_now
+            and chosen_now["path"] == Path(wanted)):
+        if chosen_now["can_transcribe"]:
+            state["auto_answer"] = True
+            do_transcribe()
+        elif (chosen_now["path"] / "transcript.json").is_file():
+            do_answers()
     container.bind("<Destroy>", stop_polling, add="+")
     state["poll_after"] = root.after(2000, poll_sessions)
     return settings_panel
