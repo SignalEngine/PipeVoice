@@ -1888,3 +1888,23 @@ def test_an_empty_transcript_with_sound_says_nothing_heard(caplog):
     App._finish(app, np.full(32000, 0.2, dtype="float32"), 2.0)
     app.overlay.set_state.assert_called_with("done", "Nothing heard")
     assert "peak 0.200" in caplog.text
+
+
+def test_an_engine_error_is_not_overwritten_by_nothing_heard(caplog):
+    """Review P2: _fallback already put the error on the pill; the empty-text
+    branch must not replace it with 'Nothing heard'."""
+    import numpy as np
+    App, app = _empty_transcript_app(caplog)
+    app._session.finish.side_effect = RuntimeError("Whisper model unavailable")
+    app._fallback = lambda audio, err: None
+    App._finish(app, np.full(32000, 0.2, dtype="float32"), 2.0)
+    app.overlay.set_state.assert_called_once_with("transcribing", "Transcribing…")
+
+
+def test_local_fallback_that_hears_nothing_still_explains(caplog):
+    import numpy as np
+    App, app = _empty_transcript_app(caplog)
+    app._session.finish.side_effect = RuntimeError("cloud down")
+    app._fallback = lambda audio, err: ""
+    App._finish(app, np.full(32000, 0.2, dtype="float32"), 2.0)
+    app.overlay.set_state.assert_called_with("done", "Nothing heard")

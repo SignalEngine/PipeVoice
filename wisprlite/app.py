@@ -636,11 +636,13 @@ class App:
                 return
 
             self.overlay.set_state("transcribing", "Transcribing…")
+            failed = False
             try:
                 text = self._session.finish(audio) if self._session else ""
             except Exception as exc:
                 log.exception("transcription failed (engine=%s)", self.cfg.engine)
                 text = self._fallback(audio, exc)
+                failed = text is None
 
             text = (text or "").strip()
 
@@ -662,6 +664,10 @@ class App:
                 self._set_icon("idle")
                 return
 
+            if not text and failed:
+                self._set_icon("idle")   # _fallback already showed the error
+                return
+
             if not text:
                 # Used to hide the overlay and log nothing, so a dead or wrong
                 # mic looked exactly like a missed hotkey press. Peak level
@@ -673,7 +679,7 @@ class App:
                 except Exception:
                     mic = "unknown"
                 log.info("empty transcript: %.1fs, peak %.3f, mic=%s (engine=%s)",
-                         duration, peak, mic, self.cfg.engine)
+                         duration, peak, mic, self._active.get("engine") or self.cfg.engine)
                 self.overlay.set_state("done", "Mic silent - check input device" if peak < 0.01
                                        else "Nothing heard")
                 self._set_icon("idle")
@@ -771,13 +777,14 @@ class App:
                     self._fail(f"couldn't type that: {exc}")
                 return False
 
-    def _fallback(self, audio, err) -> str:
-        """If a cloud engine failed (e.g. offline), try local Whisper once."""
+    def _fallback(self, audio, err):
+        """If a cloud engine failed (e.g. offline), try local Whisper once.
+        None = it failed too and the error is already on the overlay."""
         # Use the engine actually active this utterance (a profile may override it).
         active_engine = self._active.get("engine") or self.cfg.engine
         if active_engine == "local":
             self._fail(str(err))
-            return ""
+            return None
         try:
             self.overlay.set_state("transcribing", "Cloud failed — using local…")
             # Through the CACHE, not a fresh LocalEngine. Building one loads the
@@ -789,7 +796,7 @@ class App:
             return local.start_session(on_partial=self.overlay.set_text).finish(audio)
         except Exception as exc:
             self._fail(f"{err} (local fallback: {exc})")
-            return ""
+            return None
 
     # ---- tray actions -----------------------------------------------------
     def set_engine(self, name: str) -> None:
