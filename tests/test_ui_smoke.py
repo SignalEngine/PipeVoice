@@ -1944,9 +1944,15 @@ def test_every_api_key_box_has_a_get_a_key_button():
         walk(self)
         self.destroy()
 
+    from unittest import mock
+    from wisprlite import updater
+
     tk.Misc.mainloop = drive
     try:
-        settings.main()
+        # The About tab fetches releases on a thread; destroying the window under
+        # it aborts Tcl and takes the whole test run down.
+        with mock.patch.object(updater, "recent_releases", return_value=[]):
+            settings.main()
     finally:
         tk.Misc.mainloop = real_mainloop
         if real_tab is None:
@@ -2003,8 +2009,9 @@ def test_paste_never_overwrites_a_copied_image(monkeypatch):
     calls = []
     fake_clip = types.SimpleNamespace(paste=lambda: "", copy=lambda t: calls.append(("copy", t)))
     monkeypatch.setitem(sys.modules, "pyperclip", fake_clip)
-    monkeypatch.setattr(typer.keyboard, "write", lambda t, delay=0: calls.append(("write", t)))
-    monkeypatch.setattr(typer.keyboard, "send", lambda k: calls.append(("send", k)))
+    monkeypatch.setattr(typer, "keyboard", types.SimpleNamespace(
+        write=lambda t, delay=0: calls.append(("write", t)),
+        send=lambda k: calls.append(("send", k))))
 
     monkeypatch.setattr(typer, "_clipboard_holds_non_text", lambda: True)
     typer.type_text("hello", mode="paste")
