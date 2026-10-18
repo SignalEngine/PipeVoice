@@ -107,7 +107,8 @@ def main(session_dir, pump_until=None) -> None:
 
     ttk.Button(body, text="Add file…", command=add_files).pack(anchor="w", pady=(6, 0))
     if folder:
-        ttk.Checkbutton(body, text=f"Also use my docs folder ({count_docs(folder)} files)",
+        n_docs = count_docs(folder)
+        ttk.Checkbutton(body, text=f"Also use my docs folder ({n_docs} file{'' if n_docs == 1 else 's'})",
                         variable=use_folder).pack(anchor="w", pady=(8, 0))
 
     def finish(prep: dict) -> None:
