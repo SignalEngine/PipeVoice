@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
+
+log = logging.getLogger("wisprlite")
 
 try:
     import keyboard
@@ -60,12 +63,9 @@ PASTE_TIMINGS = {
 def _clipboard_holds_non_text() -> bool:
     """True when the clipboard holds something pyperclip cannot put back.
 
-    pyperclip saves and restores TEXT only. Pasting over a screenshot or copied
-    files replaced them with the dictation and then "restored" empty text, so
-    the image was simply gone. Safe = empty, or has a text form we restore.
-    An allowlist of image formats missed browsers' registered "PNG" format.
-    # ponytail: text-with-formatting comes back as plain text; snapshot every
-    # format via EnumClipboardFormats if anyone misses the formatting.
+    pyperclip saves and restores TEXT only. A copied screenshot or files would
+    be replaced by the dictation, so `type_text` handles those itself.
+    Safe = empty, or has a text form we restore.
     """
     try:
         import ctypes
@@ -77,38 +77,86 @@ def _clipboard_holds_non_text() -> bool:
         return False   # not Windows / no clipboard API: nothing pyperclip would lose
 
 
-def type_text(text: str, mode: str = "type", press_enter: bool = False,
+def _grab_clipboard_image():
+    """The image on the clipboard as a PIL image, else None (files, other formats)."""
+    try:
+        from PIL import ImageGrab
+
+        grabbed = ImageGrab.grabclipboard()
+    except Exception:
+        return None
+    return grabbed if hasattr(grabbed, "save") else None
+
+
+def _restore_clipboard_image(image) -> None:
+    """Put a PIL image back on the clipboard as CF_DIB (Windows)."""
+    import ctypes
+    import io
+    from ctypes import wintypes
+
+    buf = io.BytesIO()
+    image.convert("RGB").save(buf, "BMP")
+    dib = buf.getvalue()[14:]                      # BMP file header is not part of a DIB
+    k32, u32 = ctypes.windll.kernel32, ctypes.windll.user32
+    k32.GlobalAlloc.restype = wintypes.HANDLE
+    k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    k32.GlobalLock.restype = ctypes.c_void_p
+    k32.GlobalLock.argtypes = [wintypes.HANDLE]
+    k32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+    u32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    handle = k32.GlobalAlloc(0x0002, len(dib))     # GMEM_MOVEABLE
+    ptr = k32.GlobalLock(handle)
+    ctypes.memmove(ptr, dib, len(dib))
+    k32.GlobalUnlock(handle)
+    if not u32.OpenClipboard(None):
+        raise OSError("could not open the clipboard to restore the image")
+    try:
+        u32.EmptyClipboard()
+        u32.SetClipboardData(8, handle)            # CF_DIB; the clipboard owns the handle now
+    finally:
+        u32.CloseClipboard()
+
+
+def type_text(text: str, mode: str = "paste", press_enter: bool = False,
               paste_speed: str = "normal") -> None:
+    """Paste `text` at the cursor (copy + Ctrl+V). Never types keystrokes.
+
+    `mode` is kept for callers; "clipboard" is handled by the caller before this.
+    Raises when copy/paste fails, so the caller can save the words elsewhere.
+    """
     if not text and not press_enter:
         return
     pre_ms, restore_ms, enter_ms = PASTE_TIMINGS.get(paste_speed, PASTE_TIMINGS["normal"])
 
-    if text and mode == "paste" and not _clipboard_holds_non_text():
-        try:
-            import pyperclip
+    if text:
+        import pyperclip
 
+        image, prev = None, None
+        if _clipboard_holds_non_text():
+            image = _grab_clipboard_image()
+            if image is None:
+                # ponytail: copied files are not restored; CF_HDROP if anyone misses it
+                log.info("clipboard: non-text, non-image contents not restored")
+        else:
             try:
                 prev = pyperclip.paste()
             except Exception:
                 prev = None
-            pyperclip.copy(text)
-            time.sleep(pre_ms)
-            keyboard.send("ctrl+v")
-            if prev is not None:
-                time.sleep(restore_ms)
-                try:
-                    pyperclip.copy(prev)
-                except Exception:
-                    pass
-            if press_enter:
-                time.sleep(enter_ms)
-                keyboard.send("enter")
-            return
-        except Exception:
-            pass  # pyperclip missing or failed -> fall through to typing
-
-    if text:
-        keyboard.write(text, delay=0)
+        pyperclip.copy(text)
+        time.sleep(pre_ms)
+        keyboard.send("ctrl+v")
+        if image is not None:
+            time.sleep(restore_ms)
+            try:
+                _restore_clipboard_image(image)
+            except Exception as exc:     # the paste landed; only the screenshot is lost
+                log.info("clipboard: image not restored: %s", exc)
+        elif prev is not None:
+            time.sleep(restore_ms)
+            try:
+                pyperclip.copy(prev)
+            except Exception:
+                pass
     if press_enter:
         time.sleep(enter_ms)
         keyboard.send("enter")

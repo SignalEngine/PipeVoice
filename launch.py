@@ -13,6 +13,13 @@ import sys
 
 if "--settings" in sys.argv:
     from wisprlite.settings import main
+elif "--prep" in sys.argv:
+    from wisprlite.prep_window import main as _prep_main
+
+    def main() -> None:
+        i = sys.argv.index("--prep")
+        if i + 1 < len(sys.argv):
+            _prep_main(sys.argv[i + 1])
 elif "--history" in sys.argv:
     from wisprlite.history import main
 elif "--meetings" in sys.argv:

@@ -41,3 +41,23 @@ James: "The live answers during the call is the entire feature." Plan: [[2026-10
 - **Settings:** "Your docs" is the first card in Meetings → Settings ⚙. It holds the folder, the web page, and "Show answers during the call".
   - Settings save keeps a folder picked from the Meetings tab when the form's field was untouched. Before this, saving the form reverted it to the stale value.
 - **Not proven on the server:** a real Deepgram socket or a real LLM in the live path. The overlay card, the stream wiring, the notes move and the gate were exercised under Xvfb with a fake LLM.
+
+## Prep pop-up, chosen documents, paste-only (v2.49.13)
+James on v2.49.12: a folder of CV PDFs plus a job-ad page, and "why would this job suit you?" got a quote from the ad. BM25 matched "job", and the prompt could only quote. Plan: [[2026-10-18-prep-popup-and-paste-only]].
+- **Prep pop-up:** `prep_window.py` (`--prep <session_dir>`). It's spawned after a meeting starts when live answers are on and a Deepgram stream exists. Recording is already running behind it.
+  - It writes `session_dir/prep.json` (title, notes, chosen files, use_folder, or skip) and appends the title + notes to `call_notes.md`.
+  - `LiveAnswerer` waits up to 600 s for `prep.json`, then builds from just those files (plus the folder if ticked). Without the file it builds from the folder.
+  - When no pop-up opens, the app adopts `next_call_notes.md` itself.
+  - The window sets position only, never size; a fixed height hid Start/Skip once a file was added.
+- **Answers:** `knowledge.answer_live` + `build_context`.
+  - Docs of 6000 words or fewer go in WHOLE, so a CV with no shared words is still read. Bigger sets get the BM25 top-k plus each source's best chunk.
+  - The reply is a headline (what to say) + up to 2 points + a verbatim quote, and the quote check still applies.
+  - Small-doc mode skips the word-overlap gate. The after-call `answer_question` is unchanged.
+- **Paste only:** `typer.type_text` never types (no `keyboard.write`).
+  - An image on the clipboard is grabbed (PIL) and restored as CF_DIB after the paste. A failed restore is logged and doesn't fail the paste.
+  - Copied files are pasted over (ponytail).
+  - "type" maps to "paste" in config load, `_eff` and `set_output`. The Output setting and the tray menu are gone.
+- **Verified under Xvfb:**
+  - A real pop-up, a CV PDF made with fpdf and parsed by pypdf: only the chosen file was loaded, and the CV text was in the LLM context.
+  - A card with points rendered next to the REC pill.
+- **Not verified:** the image restore on Windows, and a real LLM's answer.

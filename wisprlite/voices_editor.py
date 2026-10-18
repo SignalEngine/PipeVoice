@@ -24,7 +24,7 @@ STYLES = [("tidy", "Tidy — clean up"),
           ("custom", "Custom…")]
 ENGINES = [("", "(leave as-is)"), ("gemini", "Gemini"), ("groq", "Groq"),
            ("deepgram", "Deepgram"), ("local", "Local")]
-OUTPUTS = [("", "(leave as-is)"), ("type", "Type"), ("paste", "Paste"),
+OUTPUTS = [("", "(leave as-is)"), ("paste", "Paste"),
            ("clipboard", "Clipboard")]
 AUTO = [("leave", "(leave as-is)"), ("yes", "Yes"), ("no", "No")]
 CLEANUP = [("leave", "(leave as-is)"), ("on", "On"), ("off", "Off")]

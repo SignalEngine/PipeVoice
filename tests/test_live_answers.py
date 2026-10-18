@@ -71,6 +71,7 @@ def test_you_lines_never_call_completion(tmp_path):
 def test_low_bm25_score_skips_the_llm(tmp_path):
     calls, cards = [], []
     a = _answerer(tmp_path, lambda m: calls.append(m) or _reply(), cards)
+    a._small = False                 # big doc set: the word-overlap gate is on
     a.on_line("Them", "did anybody watch the football last night?")
     _drain(a)
     assert calls == [] and cards == []
@@ -82,7 +83,7 @@ def test_good_doc_gives_one_card_and_a_repeat_is_suppressed(tmp_path):
                   log_path=tmp_path / "live.json")
     a.on_line("Them", "do you support single sign-on SAML?")
     _drain(a)
-    assert cards == [("SSO is on the Team plan", QUOTE, "faq.md")]
+    assert cards == [("SSO is on the Team plan", [], QUOTE, "faq.md")]
     a.on_line("Them", "Do you support single sign-on SAML?")
     _drain(a)
     assert len(cards) == 1
@@ -213,11 +214,11 @@ def test_answers_off_and_pipefocus_off_means_no_session(tmp_path, monkeypatch):
     assert a._meeting.focus_session is None and made == {}
 
 
-def test_answers_without_any_docs_or_notes_means_no_session(tmp_path, monkeypatch):
+def test_answers_without_any_docs_still_start_a_session_for_the_popup(tmp_path, monkeypatch):
     a = _app(tmp_path, monkeypatch, live_answers=True, pipefocus=False)
     made = _capture_session(monkeypatch)
     a._start_pipefocus()
-    assert a._meeting.focus_session is None and made == {}
+    assert a._meeting.focus_session is not None and made["them_only"] is True
 
 
 def test_other_engines_never_start_a_session(tmp_path, monkeypatch):
@@ -228,11 +229,27 @@ def test_other_engines_never_start_a_session(tmp_path, monkeypatch):
     assert a._meeting.focus_session is None and made == {}
 
 
-def test_next_call_notes_move_into_the_session(tmp_path, monkeypatch):
+def test_start_leaves_next_call_notes_for_the_popup(tmp_path, monkeypatch):
     session = tmp_path / "meeting-1"
     session.mkdir()
     (tmp_path / "next_call_notes.md").write_text("Call with Acme about SSO", encoding="utf-8")
     a = _app(tmp_path, monkeypatch, live_answers=True, knowledge_dir=str(tmp_path))
+    a._meeting.session_dir = session
+    a._meeting.focus_session = object()
+    a._answers_on = True
+    monkeypatch.setattr(live_answers.LiveAnswerer, "start", lambda self: None)
+    a._start_live_answers()
+    assert not (session / "call_notes.md").exists()
+    assert (tmp_path / "next_call_notes.md").exists()   # the pop-up moves it, on Start
+
+
+def test_without_a_popup_the_next_call_notes_are_adopted_at_start(tmp_path, monkeypatch):
+    # Answers off (or no Deepgram stream): no pop-up opens, so nothing else
+    # would ever move the notes and after-call answers would never see them.
+    session = tmp_path / "meeting-1"
+    session.mkdir()
+    (tmp_path / "next_call_notes.md").write_text("Call with Acme about SSO", encoding="utf-8")
+    a = _app(tmp_path, monkeypatch, live_answers=False)
     a._meeting.session_dir = session
     a._answers_on = False
     a._start_live_answers()
@@ -266,14 +283,15 @@ def test_start_builds_and_stop_stops_the_answerer(tmp_path, monkeypatch):
     a._start_live_answers()
     assert made["started"] and a._live_answers is made["self"]
     assert made["kw"]["log_path"] == session / "live_answers.json"
+    assert made["kw"]["prep_path"] == session / "prep.json"
     a._stop_pipefocus()
     assert made["stopped"] and a._live_answers is None
 
 
 def test_a_card_goes_to_the_overlay(tmp_path, monkeypatch):
     a = _app(tmp_path, monkeypatch)
-    a._show_answer_card("h", "q", "s.md")
-    a.overlay.show_answer_card.assert_called_once_with("h", "q", "s.md")
+    a._show_answer_card("h", ["p"], "q", "s.md")
+    a.overlay.show_answer_card.assert_called_once_with("h", ["p"], "q", "s.md")
 
 
 # ---- overlay ----------------------------------------------------------------
@@ -287,10 +305,10 @@ def test_show_answer_card_queues_the_tuple_and_the_loop_routes_it():
 
     ov = Overlay.__new__(Overlay)
     ov._q = queue.Queue()
-    ov.show_answer_card("Head", "The quote", "faq.md")
+    ov.show_answer_card("Head", ["One", "Two"], "The quote", "faq.md")
     kind, head, rest = ov._q.get_nowait()
     assert (kind, head) == ("answer_card", "Head")
-    assert rest.split(overlay.CARD_SEP) == ["The quote", "faq.md"]
+    assert rest.split(overlay.CARD_SEP) == ["The quote", "faq.md", "One", "Two"]
     # routed next to focus_tip in the drain loop
     assert 'kind == "answer_card"' in inspect.getsource(Overlay.start) or \
         'kind == "answer_card"' in inspect.getsource(overlay)
@@ -384,8 +402,9 @@ def test_ask_saves_the_notes_and_shows_the_headline(tmp_path, monkeypatch):
 
     docs = _docs(tmp_path)
     monkeypatch.setattr(knowledge, "_default_completion", lambda p, m: (lambda msgs: ""))
-    monkeypatch.setattr(knowledge, "answer_question", lambda q, i, d, c: {
-        "headline": "SSO is on the Team plan", "quote": QUOTE, "source": "faq.md"})
+    monkeypatch.setattr(knowledge, "answer_live", lambda q, i, d, c: {
+        "headline": "SSO is on the Team plan", "points": ["Say it is on Team"],
+        "quote": QUOTE, "source": "faq.md"})
     state = {}
 
     def until(root):
@@ -412,8 +431,8 @@ def test_ask_says_not_in_your_docs_when_nothing_grounds(tmp_path, monkeypatch):
     from wisprlite import knowledge
 
     monkeypatch.setattr(knowledge, "_default_completion", lambda p, m: (lambda msgs: ""))
-    monkeypatch.setattr(knowledge, "answer_question", lambda q, i, d, c: {
-        "headline": None, "quote": None, "source": None})
+    monkeypatch.setattr(knowledge, "answer_live", lambda q, i, d, c: {
+        "headline": None, "points": None, "quote": None, "source": None})
     state = {}
 
     def until(root):

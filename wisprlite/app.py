@@ -245,7 +245,8 @@ class App:
 
     def _eff(self, key):
         """Effective value for this utterance: a per-app profile override, else the setting."""
-        return self._active.get(key, getattr(self.cfg, key))
+        value = self._active.get(key, getattr(self.cfg, key))
+        return "paste" if key == "output_mode" and value == "type" else value
 
     def _prewarm(self) -> None:
         def work():
@@ -819,7 +820,7 @@ class App:
         self.tray.update()
 
     def set_output(self, mode: str) -> None:
-        self.cfg.output_mode = mode
+        self.cfg.output_mode = "paste" if mode == "type" else mode
         self.cfg.save()
         self.tray.update()
 
@@ -1424,6 +1425,8 @@ class App:
             self.tray.update()
             return
         self._start_live_answers()
+        if getattr(self, "_answers_on", False):
+            self._open_prep(getattr(self._meeting, "session_dir", None))
         if getattr(self, "overlay", None) is not None:
             self.overlay.show_meeting()
         self._set_icon("meeting")
@@ -1472,33 +1475,45 @@ class App:
             self._meeting.focus_session = None
 
     def _answers_wanted(self) -> bool:
-        """Live answers on, with something to answer from (docs, page or notes)."""
-        cfg = self.cfg
-        if not getattr(cfg, "live_answers", False):
-            return False
-        if (cfg.knowledge_dir or "").strip() or (cfg.knowledge_url or "").strip():
-            return True
+        """Live answers on. With no docs set the pop-up is where you add a file."""
+        return bool(getattr(self.cfg, "live_answers", False))
+
+    def _open_prep(self, session_dir) -> None:
+        """The 'Prepare for this call' pop-up, a separate process like settings."""
+        import os
+        import subprocess
+
+        if not session_dir or getattr(self._meeting, "focus_session", None) is None:
+            return
         try:
-            return (meetings_dir() / "next_call_notes.md").is_file()
-        except Exception:
-            return False
+            if getattr(sys, "frozen", False):
+                subprocess.Popen([sys.executable, "--prep", str(session_dir)])
+            else:
+                from .autostart import _pythonw
+
+                parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                subprocess.Popen([_pythonw(), "-m", "wisprlite", "--prep", str(session_dir)],
+                                 cwd=parent)
+        except Exception as exc:
+            log.info("prep pop-up unavailable: %s", exc)
 
     def _start_live_answers(self) -> None:
-        """Adopt the next-call notes, then arm the answerer. Never costs the recording."""
+        """Arm the answerer; the pop-up supplies the notes. Never costs the recording."""
         try:
             session_dir = getattr(self._meeting, "session_dir", None)
             if not session_dir or not Path(session_dir).exists():
                 return
             session_dir = Path(session_dir)
             notes = session_dir / "call_notes.md"
-            pending = meetings_dir() / "next_call_notes.md"
-            if pending.is_file() and not notes.exists():
-                notes.write_text(pending.read_text(encoding="utf-8", errors="replace"),
-                                 encoding="utf-8")
-                pending.unlink()
-            if not getattr(self, "_answers_on", False):
-                return
-            if getattr(self._meeting, "focus_session", None) is None:
+            if not getattr(self, "_answers_on", False) or \
+                    getattr(self._meeting, "focus_session", None) is None:
+                # No pop-up opens, so adopt the next-call notes here, or the
+                # after-call answers never see them.
+                pending = meetings_dir() / "next_call_notes.md"
+                if pending.is_file() and not notes.exists():
+                    notes.write_text(pending.read_text(encoding="utf-8", errors="replace"),
+                                     encoding="utf-8")
+                    pending.unlink()
                 return
             from . import knowledge, live_answers
 
@@ -1508,6 +1523,9 @@ class App:
                 knowledge._default_completion(cfg.cleanup_provider, cfg.cleanup_model),
                 self._show_answer_card,
                 log_path=session_dir / "live_answers.json",
+                prep_path=session_dir / "prep.json",
+                on_ready=lambda n: self._show_focus_tip(
+                    f"Live answers ready \u2014 {n} document{'' if n == 1 else 's'}", ""),
             )
             answerer.start()
             self._live_answers = answerer
@@ -1520,10 +1538,10 @@ class App:
         if answerer is not None:
             answerer.on_line(speaker, text)
 
-    def _show_answer_card(self, headline: str, quote: str, source: str) -> None:
+    def _show_answer_card(self, headline: str, points, quote: str, source: str) -> None:
         overlay = getattr(self, "overlay", None)
         if overlay is not None and hasattr(overlay, "show_answer_card"):
-            overlay.show_answer_card(headline, quote, source)
+            overlay.show_answer_card(headline, points, quote, source)
 
     def _stop_pipefocus(self) -> None:
         answerer, self._live_answers = getattr(self, "_live_answers", None), None

@@ -1999,30 +1999,6 @@ def test_migration_runs_through_load_and_persists(tmp_path, monkeypatch):
     assert saved["output_mode"] == "paste" and saved["paste_default_migrated"] is True
 
 
-def test_paste_never_overwrites_a_copied_image(monkeypatch):
-    """Review P1: paste saved/restored only text, so dictating after copying a
-    screenshot replaced the image and 'restored' empty text."""
-    import sys
-    import types
-    from wisprlite import typer
-
-    calls = []
-    fake_clip = types.SimpleNamespace(paste=lambda: "", copy=lambda t: calls.append(("copy", t)))
-    monkeypatch.setitem(sys.modules, "pyperclip", fake_clip)
-    monkeypatch.setattr(typer, "keyboard", types.SimpleNamespace(
-        write=lambda t, delay=0: calls.append(("write", t)),
-        send=lambda k: calls.append(("send", k))))
-
-    monkeypatch.setattr(typer, "_clipboard_holds_non_text", lambda: True)
-    typer.type_text("hello", mode="paste")
-    assert calls == [("write", "hello")], calls       # typed; clipboard untouched
-
-    calls.clear()
-    monkeypatch.setattr(typer, "_clipboard_holds_non_text", lambda: False)
-    typer.type_text("hello", mode="paste")
-    assert ("copy", "hello") in calls and ("send", "ctrl+v") in calls
-
-
 def test_about_tab_shows_what_it_does_and_the_release_notes():
     """The feature list and the notes share one scroll area. The notes render
     from a callback whose errors are swallowed, so assert they actually arrive."""

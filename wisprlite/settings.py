@@ -23,7 +23,6 @@ ENGINES = [("gemini", "Gemini — free, one key does it all"),
            ("deepgram", "Deepgram — fastest, live streaming"),
            ("local", "Local Whisper — private & free, slower")]
 MODES = [("ptt", "Push-to-talk (hold)"), ("toggle", "Toggle (tap on/off)")]
-OUTPUTS = [("type", "Type keystrokes"), ("paste", "Clipboard + Ctrl+V")]
 PASTE_SPEEDS = [("fast", "Fast"), ("normal", "Normal"), ("slow", "Slow")]
 CLEANUP_PROVIDERS = [("openai", "OpenAI"), ("gemini", "Google Gemini (free tier)"),
                      ("openrouter", "OpenRouter (free models)"), ("ollama", "Local — Ollama (offline)")]
@@ -753,7 +752,6 @@ def main(first_run: bool = False) -> None:
         engine_opts.append((cfg.engine, f"{cfg.engine} (current)"))
     engine_var = tk.StringVar(value=dict(engine_opts).get(cfg.engine, engine_opts[0][1]))
     mode_var = tk.StringVar(value=dict(MODES).get(cfg.mode, MODES[0][1]))
-    output_var = tk.StringVar(value=dict(OUTPUTS).get(cfg.output_mode, OUTPUTS[0][1]))
     hotkey_var = tk.StringVar(value=cfg.hotkey)
     clip_hotkey_var = tk.StringVar(value=cfg.clipboard_hotkey)
     meeting_hotkey_var = tk.StringVar(value=cfg.meeting_hotkey)
@@ -878,8 +876,6 @@ def main(first_run: bool = False) -> None:
           engine_var, [l for _, l in engine_opts])
     combo(row(c, "Mode", "Push-to-talk holds the key; toggle taps it on and off."),
           mode_var, [l for _, l in MODES])
-    combo(row(c, "Output", "Type the keystrokes, or paste from the clipboard."),
-          output_var, [l for _, l in OUTPUTS])
 
     # --- Hotkeys ---
     c = card("Hotkeys")
@@ -1941,7 +1937,7 @@ def main(first_run: bool = False) -> None:
             pass
         cfg.engine = value_for(engine_var, engine_opts)
         cfg.mode = value_for(mode_var, MODES)
-        cfg.output_mode = value_for(output_var, OUTPUTS)
+        cfg.output_mode = "clipboard" if cfg.output_mode == "clipboard" else "paste"
         cfg.hotkey = hotkey_var.get().strip() or "right ctrl"
         cfg.clipboard_hotkey = clip_hotkey_var.get().strip()
         cfg.meeting_hotkey = meeting_hotkey_var.get().strip()

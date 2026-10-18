@@ -65,14 +65,6 @@ class Tray:
                 radio=True,
             )
 
-        def output_item(name, label):
-            return Item(
-                label,
-                lambda icon, item: app.set_output(name),
-                checked=lambda item: app.cfg.output_mode == name,
-                radio=True,
-            )
-
         menu = Menu(
             Item("Pipevoice", None, enabled=False),
             Menu.SEPARATOR,
@@ -85,10 +77,6 @@ class Tray:
             Item("Mode", Menu(
                 mode_item("ptt", "Push-to-talk"),
                 mode_item("toggle", "Toggle"),
-            )),
-            Item("Output", Menu(
-                output_item("type", "Type"),
-                output_item("paste", "Paste"),
             )),
             Menu.SEPARATOR,
             Item("Settings…", lambda i, it: app.open_settings(), default=True),
