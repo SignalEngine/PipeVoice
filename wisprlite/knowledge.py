@@ -85,6 +85,7 @@ def load_sources(
     folder: str = "",
     url: str = "",
     notes_path: Path | None = None,
+    files: list[str] | None = None,
     *,
     pdf_reader: Callable[[Path], str] = _pdf_text,
     fetch: Callable[[str], str] = _fetch_url,
@@ -101,22 +102,27 @@ def load_sources(
         docs.append({"source": name, "text": text})
         ok.append(name)
 
+    def add_file(path: Path) -> None:
+        suffix = path.suffix.lower()
+        try:
+            if suffix in _TEXT_SUFFIXES:
+                add(path.name, path.read_text(encoding="utf-8", errors="replace"))
+            elif suffix == ".pdf":
+                add(path.name, pdf_reader(path), " (scanned?)")
+        except Exception as exc:  # one bad file must not hide the rest
+            failed.append(f"{path.name} ({exc})")
+
+    for chosen in files or []:
+        add_file(Path(chosen))
     if folder.strip():
         root = Path(folder.strip())
         try:
-            files = sorted(p for p in root.iterdir() if p.is_file())
+            in_folder = sorted(p for p in root.iterdir() if p.is_file())
         except OSError as exc:
             failed.append(f"{folder} ({exc.strerror or exc})")
-            files = []
-        for path in files:
-            suffix = path.suffix.lower()
-            try:
-                if suffix in _TEXT_SUFFIXES:
-                    add(path.name, path.read_text(encoding="utf-8", errors="replace"))
-                elif suffix == ".pdf":
-                    add(path.name, pdf_reader(path), " (scanned?)")
-            except Exception as exc:  # one bad file must not hide the rest
-                failed.append(f"{path.name} ({exc})")
+            in_folder = []
+        for path in in_folder:
+            add_file(path)
     if url.strip():
         try:
             add(url.strip(), fetch(url.strip()))
@@ -194,6 +200,34 @@ class BM25:
         scored = [s for s in scored if s[0] > 0]
         scored.sort(key=lambda s: (-s[0], s[1]))
         return [self.chunks[i] for _s, i in scored[:k]]
+
+
+FULL_TEXT_WORDS = 6000
+
+
+def doc_words(docs: list[dict]) -> int:
+    return sum(len(_words(d["text"])) for d in docs)
+
+
+def build_context(question: str, index: BM25, docs: list[dict]) -> str:
+    """What the model reads. Small doc sets go in whole, so a CV that shares no
+    words with "why would this job suit you?" is still seen. Bigger sets get the
+    BM25 top hits plus each source's best chunk, so one source cannot crowd out
+    the rest."""
+    if doc_words(docs) <= FULL_TEXT_WORDS:
+        return "\n\n".join(f"[{d['source']}]\n{d['text']}" for d in docs)
+    hits = index.top(question)
+    taken = {id(h) for h in hits}
+    scored = sorted(((index.score(question, i), i) for i in range(len(index.chunks))),
+                    key=lambda s: (-s[0], s[1]))
+    seen = {h["source"] for h in hits}
+    for score, i in scored:
+        chunk = index.chunks[i]
+        if score <= 0 or chunk["source"] in seen or id(chunk) in taken:
+            continue
+        seen.add(chunk["source"])
+        hits.append(chunk)
+    return "\n\n".join(f"[{h['source']}]\n{h['text']}" for h in hits)
 
 
 # --- LLM helpers -------------------------------------------------------------
@@ -302,6 +336,42 @@ def answer_question(q: dict, index: BM25, docs: list[dict], completion: Callable
     if text is None or _norm(quote) not in _norm(text):  # existence check only
         return out
     return {"headline": headline.strip(), "quote": quote.strip(), "source": source}
+
+
+_LIVE_PROMPT = (
+    "Someone on a call just asked me this. Using ONLY these documents (they can include my "
+    "CV, my notes, their job ad, my product docs), tell me what to say. Reply with JSON only: "
+    '{"headline": "<what to say, 12 words max>", "points": ["<short point>", "<short point>"], '
+    '"quote": "<one supporting sentence copied word for word from one document>", '
+    '"source": "<that document\'s file name>"}. '
+    'If the documents do not help, reply {"headline": null, "points": null, "quote": null, '
+    '"source": null}.'
+)
+
+
+def answer_live(question: str, index: BM25, docs: list[dict], completion: Callable) -> dict:
+    out = {"headline": None, "points": None, "quote": None, "source": None}
+    if not docs:
+        return out
+    reply = completion([
+        {"role": "system", "content": _LIVE_PROMPT},
+        {"role": "user", "content": f"Question: {question}\n\nDocuments:\n"
+                                    f"{build_context(question, index, docs)}"},
+    ])
+    data = _parse_json(reply, dict)
+    if not data:
+        return out
+    headline, quote, source = data.get("headline"), data.get("quote"), data.get("source")
+    if not all(isinstance(v, str) and v.strip() for v in (headline, quote, source)):
+        return out
+    text = next((d["text"] for d in docs if d["source"] == source), None)
+    if text is None or _norm(quote) not in _norm(text):  # existence check only
+        return out
+    raw = data.get("points")
+    points = [p.strip()[:120] for p in raw if isinstance(p, str) and p.strip()][:2] \
+        if isinstance(raw, list) else []
+    return {"headline": headline.strip(), "points": points, "quote": quote.strip(),
+            "source": source}
 
 
 # --- 7. Jev answer check -----------------------------------------------------

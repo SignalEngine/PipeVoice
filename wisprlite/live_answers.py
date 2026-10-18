@@ -30,6 +30,7 @@ _FILLER = frozenset(
 # Deepgram finalises on short pauses, so "Do you guys support" and "SSO on the
 # team plan?" can arrive as two lines. A Them line this recent is joined on.
 JOIN_SECONDS = 4.0
+PREP_WAIT = 600          # seconds _build waits for the prep pop-up's prep.json
 _QUESTION_WORDS = frozenset(
     "what how why when where which who do does did can could is are will would "
     "should have has".split()
@@ -52,8 +53,12 @@ def _norm(text: str) -> str:
 class LiveAnswerer:
     def __init__(self, folder, url, notes_path, completion, on_card, *,
                  clock=time.monotonic, deadline=8.0, log_path=None,
-                 load=knowledge.load_sources):
+                 load=knowledge.load_sources, files=None, prep_path=None, on_ready=None):
         self._folder, self._url, self._notes = folder, url, notes_path
+        self._files = list(files or [])
+        self._prep_path = Path(prep_path) if prep_path else None
+        self._on_ready = on_ready
+        self._small = False
         self._completion, self._on_card = completion, on_card
         self._clock, self._deadline = clock, float(deadline)
         self._log_path = Path(log_path) if log_path else None
@@ -80,12 +85,39 @@ class LiveAnswerer:
         with self._cond:
             self._cond.notify_all()
 
+    def _wait_prep(self) -> dict | None:
+        """prep.json from the pop-up; None if it never shows up or we were stopped."""
+        deadline = time.monotonic() + PREP_WAIT
+        while not self._stop.is_set() and time.monotonic() < deadline:
+            try:
+                data = json.loads(self._prep_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except (OSError, ValueError):
+                pass
+            self._stop.wait(0.5)
+        return None
+
     def _build(self) -> None:
         try:
-            docs, _report = self._load(self._folder or "", self._url or "", self._notes)
+            folder, files = self._folder or "", self._files
+            if self._prep_path is not None:
+                prep = self._wait_prep()
+                if self._stop.is_set():
+                    return
+                if prep is not None:
+                    if prep.get("skip"):
+                        return                       # stays not ready: no cards
+                    files = [str(f) for f in prep.get("files") or []]
+                    if not prep.get("use_folder"):
+                        folder = ""
+            docs, _report = self._load(folder, self._url or "", self._notes, files=files)
             self._docs = docs
             self._index = knowledge.BM25(knowledge.chunk_docs(docs))
+            self._small = knowledge.doc_words(docs) <= knowledge.FULL_TEXT_WORDS
             self._ready.set()
+            if self._on_ready is not None:
+                self._on_ready(len(docs))
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             log.info("live answers: index failed: %s", exc)
@@ -129,13 +161,12 @@ class LiveAnswerer:
         index = self._index
         if index is None or not index.chunks:
             return
-        terms = {w for w in knowledge._words(question)
-                 if len(w) >= 4 and w not in _QUESTION_WORDS and w not in _FILLER}
-        if not terms & index.idf.keys():
-            return                                   # small talk: no LLM call
-        ans = knowledge.answer_question(
-            {"question": question, "keywords": []}, index, self._docs, self._completion
-        )
+        if not self._small:
+            terms = {w for w in knowledge._words(question)
+                     if len(w) >= 4 and w not in _QUESTION_WORDS and w not in _FILLER}
+            if not terms & index.idf.keys():
+                return                               # small talk: no LLM call
+        ans = knowledge.answer_live(question, index, self._docs, self._completion)
         if not ans["quote"]:
             self._record(asked_at, question, ans, False)
             return
@@ -145,14 +176,14 @@ class LiveAnswerer:
         show = not late and not repeat
         if show:
             self._shown += [qn, quote_n]
-            self._on_card(ans["headline"], ans["quote"], ans["source"])
+            self._on_card(ans["headline"], ans["points"], ans["quote"], ans["source"])
         self._record(asked_at, question, ans, show)
 
     def _record(self, asked_at, question, ans, shown) -> None:
         if self._log_path is None:
             return
         self._log.append({"t_asked": asked_at, "question": question,
-                          "headline": ans["headline"], "quote": ans["quote"],
+                          "headline": ans["headline"], "points": ans["points"], "quote": ans["quote"],
                           "source": ans["source"], "shown": shown})
         try:
             self._log_path.write_text(json.dumps(self._log, indent=2), encoding="utf-8")

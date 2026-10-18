@@ -251,6 +251,9 @@ class Config:
             # 1,760 of them are most of the users. Seed once here too.
             changed = cfg.apply_starter_vocab()
             changed = cfg.migrate_paste_default() or changed
+            if cfg.output_mode == "type":   # typing is gone; every load, not once
+                cfg.output_mode = "paste"
+                changed = True
             if changed:
                 cfg.save()
         else:

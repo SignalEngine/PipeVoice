@@ -293,8 +293,8 @@ class Overlay:
                         # which is the only one allowed to touch Tk.
                         self._render_focus_tip(canvas, state, text)
                     if kind == "answer_card":
-                        quote, _sep, source = text.partition(CARD_SEP)
-                        self._render_answer_card(canvas, state, quote, source)
+                        quote, source, *points = text.split(CARD_SEP)
+                        self._render_answer_card(canvas, state, quote, source, points)
                     if kind == "click":
                         if st["name"] == "meeting" and self.on_meeting_click:
                             callback = self.on_meeting_click
@@ -1186,7 +1186,8 @@ class Overlay:
         except Exception:
             pass          # a nudge must never disturb the meeting it comments on
 
-    def _render_answer_card(self, canvas, headline: str, quote: str, source: str) -> None:
+    def _render_answer_card(self, canvas, headline: str, quote: str, source: str,
+                            points=()) -> None:
         """A live answer from the user's docs. Same rules as a focus tip."""
         try:
             import tkinter as tk
@@ -1201,6 +1202,10 @@ class Overlay:
             tk.Label(frame, text=headline, bg=PALETTE["card"], fg=PALETTE["fg"],
                      font=("Segoe UI", 10, "bold"), wraplength=380,
                      justify="left").pack(anchor="w")
+            for point in points:
+                tk.Label(frame, text=f"\u2022 {point}", bg=PALETTE["card"],
+                         fg=PALETTE["fg"], font=("Segoe UI", 9), wraplength=380,
+                         justify="left").pack(anchor="w", pady=(4, 0))
             tk.Label(frame, text=f"\u201c{quote}\u201d", bg=PALETTE["card"],
                      fg=PALETTE["fg"], font=("Segoe UI", 9, "italic"),
                      wraplength=380, justify="left").pack(anchor="w", pady=(4, 0))
@@ -1216,11 +1221,12 @@ class Overlay:
         except Exception:
             pass          # a card must never disturb the call it answers
 
-    def show_answer_card(self, headline: str, quote: str, source: str) -> None:
+    def show_answer_card(self, headline: str, points, quote: str, source: str) -> None:
         """Queue a live answer card (called off the overlay thread, so no Tk)."""
         try:
             self._q.put(("answer_card", str(headline or ""),
-                         f"{quote or ''}{CARD_SEP}{source or ''}"))
+                         CARD_SEP.join([str(quote or ""), str(source or ""),
+                                        *(str(p) for p in points or [])])))
         except Exception:
             pass
 

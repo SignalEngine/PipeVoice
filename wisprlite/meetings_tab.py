@@ -894,11 +894,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                 docs, _report = knowledge.load_sources(
                     cfg.knowledge_dir, cfg.knowledge_url, notes)
                 index = knowledge.BM25(knowledge.chunk_docs(docs))
-                ans = knowledge.answer_question(
-                    {"question": question, "keywords": []}, index, docs,
+                ans = knowledge.answer_live(
+                    question, index, docs,
                     knowledge._default_completion(cfg.cleanup_provider, cfg.cleanup_model))
                 if ans["quote"]:
-                    text = f"{ans['headline']}\n\u201c{ans['quote']}\u201d\n{ans['source']}"
+                    bullets = "".join(f"\n\u2022 {p}" for p in ans["points"])
+                    text = (f"{ans['headline']}{bullets}\n"
+                            f"\u201c{ans['quote']}\u201d\n{ans['source']}")
                 else:
                     text = "Not in your docs"
             except Exception as exc:
