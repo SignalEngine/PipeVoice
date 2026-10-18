@@ -244,8 +244,11 @@ class FocusSession:
     """
 
     def __init__(self, connect, *, completion=None, on_tip=None,
-                 policy: "FocusPolicy | None" = None, clock=time.monotonic):
+                 policy: "FocusPolicy | None" = None, clock=time.monotonic,
+                 them_only: bool = False, on_line=None):
         self._connect = connect
+        self._them_only = bool(them_only)
+        self._on_line = on_line
         self._completion = completion
         self._on_tip = on_tip
         self._policy = policy or FocusPolicy()
@@ -268,7 +271,13 @@ class FocusSession:
     def feed(self, label: str, pcm: bytes) -> None:
         """Enqueue audio. NEVER blocks and never raises into the audio thread."""
         try:
-            stereo = self._interleaver.add(label, pcm)
+            if self._them_only:
+                # Far side only, mono: no interleaver, mic never leaves the box.
+                if label != "desktop" or not pcm:
+                    return
+                stereo = pcm
+            else:
+                stereo = self._interleaver.add(label, pcm)
             if not stereo:
                 return
             try:
@@ -287,8 +296,14 @@ class FocusSession:
         line = " ".join(str(text or "").split())
         if not line:
             return
+        speaker = "Them" if self._them_only else channel_speaker(channel)
         with self._lock:
-            self._chunks.append(f"{channel_speaker(channel)}: {line}")
+            self._chunks.append(f"{speaker}: {line}")
+        if self._on_line is not None:
+            try:
+                self._on_line(speaker, line)
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
 
     def transcript(self) -> str:
         with self._lock:
@@ -362,6 +377,8 @@ class FocusSession:
     # -- the policy loop ------------------------------------------------------
 
     def _maybe_analyse(self) -> None:
+        if self._completion is None:
+            return                      # live answers only: no PipeFocus, no tips
         text = self.transcript()
         now = self._clock()
         if not self._policy.should_analyse(len(text.split()), now):

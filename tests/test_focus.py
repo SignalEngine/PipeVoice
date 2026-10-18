@@ -442,3 +442,49 @@ def test_a_different_failure_still_gets_logged(caplog):
 
     msgs = [r.getMessage() for r in caplog.records if "connect failed" in r.getMessage()]
     assert len(msgs) == 2, msgs
+
+
+# ---- live answers: far side only ---------------------------------------------
+
+def test_them_only_feeds_only_desktop_pcm_unmodified():
+    session = focus.FocusSession(connect=lambda t: _FakeConn(t), them_only=True)
+    session.feed("mic", b"\x09\x09" * 40)
+    session.feed("desktop", _pcm())
+    assert session._queue.qsize() == 1
+    assert session._queue.get_nowait() == _pcm()      # mono, no interleaving
+
+
+def test_lines_reach_on_line_as_them():
+    seen = []
+    session = focus.FocusSession(connect=lambda t: _FakeConn(t), them_only=True,
+                                 on_line=lambda who, text: seen.append((who, text)))
+    session.on_text("do you support SSO", None)        # Deepgram's mono path passes None
+    assert seen == [("Them", "do you support SSO")]
+    assert session.transcript() == "Them: do you support SSO"
+
+
+def test_a_failing_on_line_never_escapes():
+    def boom(who, text):
+        raise RuntimeError("x")
+
+    session = focus.FocusSession(connect=lambda t: _FakeConn(t), on_line=boom)
+    session.on_text("hello there", 1)
+    assert "RuntimeError" in session.last_error
+
+
+def test_no_completion_never_spawns_analysis():
+    session = focus.FocusSession(connect=lambda t: _FakeConn(t), them_only=True)
+    session.on_text(" ".join(f"w{i}" for i in range(focus.MIN_NEW_WORDS + 50)), None)
+    before = threading.active_count()
+    session._maybe_analyse()
+    assert session.analyses == 0 and threading.active_count() == before
+
+
+def test_the_focus_stream_takes_a_channel_count():
+    import inspect
+
+    from wisprlite.engines import deepgram_engine
+
+    assert inspect.signature(deepgram_engine.focus_stream).parameters["channels"].default == 2
+    source = inspect.getsource(deepgram_engine.focus_stream)
+    assert "channels=channels" in source and "multichannel=False" in source

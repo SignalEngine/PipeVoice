@@ -220,7 +220,7 @@ class DeepgramEngine(Engine):
         return _DeepgramSession(self, on_partial)
 
 
-def focus_stream(cfg, on_text, *, sample_rate=16_000):
+def focus_stream(cfg, on_text, *, sample_rate=16_000, channels=2):
     """Open a MULTICHANNEL live connection for PipeFocus.
 
     channels=2 with multichannel=True means Deepgram reports which channel each
@@ -269,7 +269,7 @@ def focus_stream(cfg, on_text, *, sample_rate=16_000):
         language=getattr(cfg, "language", "") or "en-US",
         encoding="linear16",
         sample_rate=sample_rate,
-        channels=2,
+        channels=channels,
         multichannel=False,
         interim_results=False,
         smart_format=True,

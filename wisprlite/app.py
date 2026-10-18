@@ -1423,6 +1423,7 @@ class App:
             self._fail(f"meeting: {exc}")
             self.tray.update()
             return
+        self._start_live_answers()
         if getattr(self, "overlay", None) is not None:
             self.overlay.show_meeting()
         self._set_icon("meeting")
@@ -1438,7 +1439,9 @@ class App:
         """
         self._meeting.focus_session = None
         cfg = self.cfg
-        if not getattr(cfg, "pipefocus", False) or cfg.engine != "deepgram":
+        answers_wanted = self._answers_wanted()
+        self._answers_on = answers_wanted
+        if cfg.engine != "deepgram" or not (getattr(cfg, "pipefocus", False) or answers_wanted):
             return
         try:
             from . import cleanup, focus, meeting
@@ -1449,12 +1452,18 @@ class App:
                     messages, cfg.cleanup_provider, cfg.cleanup_model
                 )
 
+            # Live answers send ONLY the far side, mono: our own questions cannot
+            # trigger a card and it stays one billed channel. PipeFocus, if also
+            # on, shares this same stream (and so sees the far side only).
             session = focus.FocusSession(
                 connect=lambda on_text: focus_stream(
-                    cfg, on_text, sample_rate=meeting.SAMPLE_RATE
+                    cfg, on_text, sample_rate=meeting.SAMPLE_RATE,
+                    channels=1 if answers_wanted else 2,
                 ),
-                completion=completion,
+                completion=completion if cfg.pipefocus else None,
                 on_tip=self._show_focus_tip,
+                them_only=answers_wanted,
+                on_line=self._on_live_line,
             )
             session.start()
             self._meeting.focus_session = session
@@ -1462,7 +1471,67 @@ class App:
             log.info("PipeFocus unavailable: %s", exc)
             self._meeting.focus_session = None
 
+    def _answers_wanted(self) -> bool:
+        """Live answers on, with something to answer from (docs, page or notes)."""
+        cfg = self.cfg
+        if not getattr(cfg, "live_answers", False):
+            return False
+        if (cfg.knowledge_dir or "").strip() or (cfg.knowledge_url or "").strip():
+            return True
+        try:
+            return (meetings_dir() / "next_call_notes.md").is_file()
+        except Exception:
+            return False
+
+    def _start_live_answers(self) -> None:
+        """Adopt the next-call notes, then arm the answerer. Never costs the recording."""
+        try:
+            session_dir = getattr(self._meeting, "session_dir", None)
+            if not session_dir or not Path(session_dir).exists():
+                return
+            session_dir = Path(session_dir)
+            notes = session_dir / "call_notes.md"
+            pending = meetings_dir() / "next_call_notes.md"
+            if pending.is_file() and not notes.exists():
+                notes.write_text(pending.read_text(encoding="utf-8", errors="replace"),
+                                 encoding="utf-8")
+                pending.unlink()
+            if not getattr(self, "_answers_on", False):
+                return
+            if getattr(self._meeting, "focus_session", None) is None:
+                return
+            from . import knowledge, live_answers
+
+            cfg = self.cfg
+            answerer = live_answers.LiveAnswerer(
+                cfg.knowledge_dir, cfg.knowledge_url, notes,
+                knowledge._default_completion(cfg.cleanup_provider, cfg.cleanup_model),
+                self._show_answer_card,
+                log_path=session_dir / "live_answers.json",
+            )
+            answerer.start()
+            self._live_answers = answerer
+        except Exception as exc:
+            log.info("live answers unavailable: %s", exc)
+            self._live_answers = None
+
+    def _on_live_line(self, speaker: str, text: str) -> None:
+        answerer = getattr(self, "_live_answers", None)
+        if answerer is not None:
+            answerer.on_line(speaker, text)
+
+    def _show_answer_card(self, headline: str, quote: str, source: str) -> None:
+        overlay = getattr(self, "overlay", None)
+        if overlay is not None and hasattr(overlay, "show_answer_card"):
+            overlay.show_answer_card(headline, quote, source)
+
     def _stop_pipefocus(self) -> None:
+        answerer, self._live_answers = getattr(self, "_live_answers", None), None
+        if answerer is not None:
+            try:
+                answerer.stop()
+            except Exception:
+                pass
         session = getattr(self._meeting, "focus_session", None)
         self._meeting.focus_session = None
         if session is not None:
