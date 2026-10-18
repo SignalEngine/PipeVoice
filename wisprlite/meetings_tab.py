@@ -830,6 +830,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     prep_notes.pack(fill="x")
     prep_ask_row = tk.Frame(prep, bg=CARD)
     prep_ask_row.pack(fill="x", pady=(6, 0))
+    tk.Label(prep_ask_row, text="Try a question:", bg=CARD, fg=MUTED,
+             font=("Segoe UI", 9)).pack(side="left", padx=(0, 8))
     prep_question = tk.StringVar()
     prep_entry = ttk.Entry(prep_ask_row, textvariable=prep_question)
     prep_entry.pack(side="left", fill="x", expand=True)
@@ -844,9 +846,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         prep_docs_label.config(text=docs_line(cfg))
         has_docs = bool((cfg.knowledge_dir or "").strip() or (cfg.knowledge_url or "").strip())
         prep_docs_btn.config(text="Change\u2026" if has_docs else "Choose docs folder\u2026")
-        prep_hint.config(
-            text="" if cfg.engine == "deepgram"
-            else "Live answers need Deepgram (Settings \u2192 Transcription).")
+        hint = ("" if cfg.engine == "deepgram"
+                else "Live answers need Deepgram (Settings \u2192 Transcription).")
+        prep_hint.config(text=hint)
+        if hint:                     # an empty label still takes a blank row
+            prep_hint.pack(fill="x", after=prep_docs_row)
+        else:
+            prep_hint.pack_forget()
 
     def load_prep_notes() -> None:
         try:

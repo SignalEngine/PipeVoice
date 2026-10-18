@@ -19,8 +19,17 @@ from . import knowledge
 
 log = logging.getLogger("wisprlite")
 
-# Below this BM25 top score the docs have nothing to say: no LLM call.
-MIN_SCORE = 1.0
+# No LLM call unless the question shares a real word with the docs. Not a BM25
+# score cut-off: scores shrink with fewer chunks, so a one-file FAQ scored a
+# perfect question at 0.99 and never showed a card.
+_FILLER = frozenset(
+    "about after again also been from just know like make mean okay really right "
+    "sorry sure tell than that them then there they think this those very what "
+    "with yeah your yours".split()
+)
+# Deepgram finalises on short pauses, so "Do you guys support" and "SSO on the
+# team plan?" can arrive as two lines. A Them line this recent is joined on.
+JOIN_SECONDS = 4.0
 _QUESTION_WORDS = frozenset(
     "what how why when where which who do does did can could is are will would "
     "should have has".split()
@@ -57,6 +66,7 @@ class LiveAnswerer:
         self._pending: tuple[str, float] | None = None   # 1-slot, latest wins
         self._shown: list[str] = []                      # normalised questions and quotes
         self._log: list[dict] = []
+        self._prev: tuple[str, float] | None = None      # last Them line, for joining
         self.last_error = ""
 
     # -- lifecycle ------------------------------------------------------------
@@ -86,10 +96,16 @@ class LiveAnswerer:
         try:
             if speaker != "Them" or not self._ready.is_set():
                 return
+            now, text = self._clock(), str(text)
+            prev, self._prev = self._prev, (text, now)
+            if prev is not None and now - prev[1] <= JOIN_SECONDS:
+                joined = f"{prev[0]} {text}"
+                if looks_like_question(joined) and not looks_like_question(prev[0]):
+                    text = joined
             if not looks_like_question(text):
                 return
             with self._cond:
-                self._pending = (str(text), self._clock())
+                self._pending = (text, now)
                 self._cond.notify()
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
@@ -113,7 +129,9 @@ class LiveAnswerer:
         index = self._index
         if index is None or not index.chunks:
             return
-        if max(index.score(question, i) for i in range(len(index.chunks))) < MIN_SCORE:
+        terms = {w for w in knowledge._words(question)
+                 if len(w) >= 4 and w not in _QUESTION_WORDS and w not in _FILLER}
+        if not terms & index.idf.keys():
             return                                   # small talk: no LLM call
         ans = knowledge.answer_question(
             {"question": question, "keywords": []}, index, self._docs, self._completion

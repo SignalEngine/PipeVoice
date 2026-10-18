@@ -481,3 +481,56 @@ def test_settings_has_your_docs_first_and_the_checkbox_round_trips(tmp_path, mon
     assert state["order"].index("Your docs") < state["order"].index("Meetings")
     assert state["box"]
     assert config.Config.load().live_answers is False
+
+
+def test_a_question_split_over_two_lines_is_joined(tmp_path):
+    asked, cards, now = [], [], [0.0]
+    a = _answerer(tmp_path, lambda m: asked.append(m[-1]["content"]) or _reply(), cards,
+                  clock=lambda: now[0])
+    a.on_line("Them", "so tell me")                     # not a question on its own
+    now[0] = 1.5
+    a.on_line("Them", "about single sign-on SAML?")
+    assert a._pending[0] == "so tell me about single sign-on SAML?"
+    now[0] = 30.0
+    a.on_line("Them", "and then the pricing per seat")  # too late to join, not a question
+    assert a._pending[0] == "so tell me about single sign-on SAML?"
+
+
+def test_saving_settings_keeps_a_folder_picked_in_the_meetings_tab(tmp_path, monkeypatch):
+    # Choose docs folder… in the Meetings tab writes config directly while the
+    # Settings form still holds the old (empty) value. Save must not revert it.
+    from wisprlite import config
+
+    state = {}
+
+    def until(root):
+        save = next((b for b in _walk(root) if b.winfo_class() == "TButton"
+                     and str(b.cget("text")) == "Save"), None)
+        if save is None:
+            return False
+        if "saved" not in state:
+            cfg = config.Config.load()
+            cfg.knowledge_dir = str(tmp_path / "picked")
+            cfg.save()
+            save.invoke()
+            state["saved"] = True
+        return True
+
+    _tab(tmp_path, monkeypatch, pump_until=until)
+    assert config.Config.load().knowledge_dir == str(tmp_path / "picked")
+
+
+def test_a_one_file_docs_folder_still_gets_cards(tmp_path):
+    # BM25 scores shrink with fewer chunks: a fixed score cut-off scored this
+    # perfect question at 0.99 against one short FAQ and never showed a card.
+    folder = tmp_path / "one"
+    folder.mkdir()
+    (folder / "faq.md").write_text(f"{QUOTE} The Starter plan uses email login only.",
+                                   encoding="utf-8")
+    cards = []
+    a = live_answers.LiveAnswerer(str(folder), "", None, lambda m: _reply(),
+                                  lambda *c: cards.append(c))
+    a._build()
+    a.on_line("Them", "so does it do single sign-on?")
+    _drain(a)
+    assert len(cards) == 1

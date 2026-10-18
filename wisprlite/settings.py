@@ -942,8 +942,7 @@ def main(first_run: bool = False) -> None:
         "them, live and after the call.",
         parent=meeting_settings_panel,
     )
-    _kr = row(c, "Docs folder",
-              "Markdown, text or PDF files. Meetings can answer the other side's questions from them.")
+    _kr = row(c, "Docs folder", "The folder PipeVoice reads.")
     entry(_kr, knowledge_dir_var, width=30)
 
     def _browse_knowledge():
@@ -2019,7 +2018,12 @@ def main(first_run: bool = False) -> None:
         except ValueError:
             pass
         cfg.meetings_dir = meetings_dir_var.get().strip()
-        cfg.knowledge_dir = knowledge_dir_var.get().strip()
+        # The Meetings tab can pick a docs folder on its own (Choose docs folder…),
+        # writing config while this form still holds the value it opened with. An
+        # untouched field must not save that stale value over the new one.
+        _kd = knowledge_dir_var.get().strip()
+        cfg.knowledge_dir = (config.Config.load().knowledge_dir
+                             if _kd == (cfg.knowledge_dir or "").strip() else _kd)
         cfg.knowledge_url = knowledge_url_var.get().strip()
         cfg.live_answers = bool(live_answers_var.get())
         cfg.paste_speed = value_for(paste_speed_var, PASTE_SPEEDS)
