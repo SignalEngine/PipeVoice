@@ -54,7 +54,8 @@ class LiveAnswerer:
     def __init__(self, folder, url, notes_path, completion, on_card, *,
                  clock=time.monotonic, deadline=8.0, log_path=None,
                  load=knowledge.load_sources, files=None, prep_path=None, on_ready=None):
-        self._folder, self._url, self._notes = folder, url, notes_path
+        self._folder, self._url = folder, url
+        self._notes = Path(notes_path) if notes_path else None
         self._files = list(files or [])
         self._prep_path = Path(prep_path) if prep_path else None
         self._on_ready = on_ready
@@ -117,7 +118,7 @@ class LiveAnswerer:
             self._small = knowledge.doc_words(docs) <= knowledge.FULL_TEXT_WORDS
             self._ready.set()
             if self._on_ready is not None:
-                self._on_ready(len(docs))
+                self._on_ready(sum(1 for d in docs if d["source"] != "Call notes"))
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}"
             log.info("live answers: index failed: %s", exc)

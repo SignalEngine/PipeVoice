@@ -1505,9 +1505,15 @@ class App:
                 return
             session_dir = Path(session_dir)
             notes = session_dir / "call_notes.md"
-            if not getattr(self, "_answers_on", False):
-                return
-            if getattr(self._meeting, "focus_session", None) is None:
+            if not getattr(self, "_answers_on", False) or \
+                    getattr(self._meeting, "focus_session", None) is None:
+                # No pop-up opens, so adopt the next-call notes here, or the
+                # after-call answers never see them.
+                pending = meetings_dir() / "next_call_notes.md"
+                if pending.is_file() and not notes.exists():
+                    notes.write_text(pending.read_text(encoding="utf-8", errors="replace"),
+                                     encoding="utf-8")
+                    pending.unlink()
                 return
             from . import knowledge, live_answers
 

@@ -147,7 +147,10 @@ def type_text(text: str, mode: str = "paste", press_enter: bool = False,
         keyboard.send("ctrl+v")
         if image is not None:
             time.sleep(restore_ms)
-            _restore_clipboard_image(image)
+            try:
+                _restore_clipboard_image(image)
+            except Exception as exc:     # the paste landed; only the screenshot is lost
+                log.info("clipboard: image not restored: %s", exc)
         elif prev is not None:
             time.sleep(restore_ms)
             try:

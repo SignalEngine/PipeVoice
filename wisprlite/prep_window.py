@@ -57,7 +57,7 @@ def main(session_dir, pump_until=None) -> None:
              bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w").pack(fill="x", pady=(2, 0))
 
     label("What's this call?")
-    title_var = tk.StringVar()
+    title_var = tk.StringVar(master=root)
     title_entry = ttk.Entry(body, textvariable=title_var, width=56)
     title_entry.pack(fill="x")
 
@@ -74,7 +74,7 @@ def main(session_dir, pump_until=None) -> None:
     label("Documents for this call")
     file_rows = tk.Frame(body, bg=BG)
     file_rows.pack(fill="x")
-    use_folder = tk.BooleanVar(value=True)
+    use_folder = tk.BooleanVar(master=root, value=True)
     first_add = {"pending": True}
 
     def redraw() -> None:
@@ -139,7 +139,7 @@ def main(session_dir, pump_until=None) -> None:
 
     buttons = tk.Frame(body, bg=BG)
     buttons.pack(fill="x", pady=(16, 0))
-    ttk.Button(buttons, text="Start answering", command=start).pack(side="right")
+    ttk.Button(buttons, text="Start answering", style="Accent.TButton", command=start).pack(side="right")
     ttk.Button(buttons, text="Skip", command=skip).pack(side="right", padx=(0, 8))
     root.bind("<Return>", lambda e: start() if e.widget is not notes else None)
     root.bind("<Escape>", skip)
@@ -147,7 +147,10 @@ def main(session_dir, pump_until=None) -> None:
 
     root.update_idletasks()
     width, height = max(root.winfo_reqwidth(), 520), root.winfo_reqheight()
-    root.geometry(f"{width}x{height}+{(root.winfo_screenwidth() - width) // 2}"
+    # Position only, never a fixed size: each added file grows the window, and a
+    # fixed height pushed Start/Skip off the bottom.
+    root.minsize(width, 0)
+    root.geometry(f"+{(root.winfo_screenwidth() - width) // 2}"
                   f"+{(root.winfo_screenheight() - height) // 3}")
     title_entry.focus_set()
     if pump_until is not None:

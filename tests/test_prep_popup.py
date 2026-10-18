@@ -441,3 +441,18 @@ def test_card_with_points_renders_on_a_real_display():
         assert "\u201cThe quote\u201d" in texts and "cv.txt" in texts
     finally:
         root.destroy()
+
+
+def test_a_failed_image_restore_does_not_fail_the_paste(monkeypatch):
+    from PIL import Image, ImageGrab
+
+    calls, kb = _clip(monkeypatch)
+    monkeypatch.setattr(typer, "_clipboard_holds_non_text", lambda: True)
+    monkeypatch.setattr(ImageGrab, "grabclipboard", lambda: Image.new("RGB", (2, 2)))
+
+    def boom(_image):
+        raise OSError("clipboard busy")
+
+    monkeypatch.setattr(typer, "_restore_clipboard_image", boom)
+    typer.type_text("hello", "paste")                  # must not raise: the paste landed
+    assert ("send", "ctrl+v") in calls

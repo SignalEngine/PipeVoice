@@ -235,10 +235,26 @@ def test_start_leaves_next_call_notes_for_the_popup(tmp_path, monkeypatch):
     (tmp_path / "next_call_notes.md").write_text("Call with Acme about SSO", encoding="utf-8")
     a = _app(tmp_path, monkeypatch, live_answers=True, knowledge_dir=str(tmp_path))
     a._meeting.session_dir = session
-    a._answers_on = False
+    a._meeting.focus_session = object()
+    a._answers_on = True
+    monkeypatch.setattr(live_answers.LiveAnswerer, "start", lambda self: None)
     a._start_live_answers()
     assert not (session / "call_notes.md").exists()
     assert (tmp_path / "next_call_notes.md").exists()   # the pop-up moves it, on Start
+
+
+def test_without_a_popup_the_next_call_notes_are_adopted_at_start(tmp_path, monkeypatch):
+    # Answers off (or no Deepgram stream): no pop-up opens, so nothing else
+    # would ever move the notes and after-call answers would never see them.
+    session = tmp_path / "meeting-1"
+    session.mkdir()
+    (tmp_path / "next_call_notes.md").write_text("Call with Acme about SSO", encoding="utf-8")
+    a = _app(tmp_path, monkeypatch, live_answers=False)
+    a._meeting.session_dir = session
+    a._answers_on = False
+    a._start_live_answers()
+    assert (session / "call_notes.md").read_text(encoding="utf-8") == "Call with Acme about SSO"
+    assert not (tmp_path / "next_call_notes.md").exists()
 
 
 def test_start_builds_and_stop_stops_the_answerer(tmp_path, monkeypatch):
