@@ -108,6 +108,30 @@ def _selection_contains_click(first: str, click: str, last: str) -> bool:
     return offset(first) <= offset(click) < offset(last)
 
 
+def next_call_notes_path() -> Path:
+    """Notes typed for the NEXT call; the app moves them into the session at start."""
+    return meetings_dir() / "next_call_notes.md"
+
+
+def count_docs(folder: str) -> int:
+    """MD/TXT/PDF files at the top level of the docs folder (what load_sources reads)."""
+    try:
+        return sum(1 for p in Path(folder).iterdir()
+                   if p.is_file() and p.suffix.lower() in (".md", ".txt", ".pdf"))
+    except OSError:
+        return 0
+
+
+def docs_line(cfg) -> str:
+    folder = (cfg.knowledge_dir or "").strip()
+    if folder:
+        n = count_docs(folder)
+        return f"Docs: {folder} \u00b7 {n} file{'s' if n != 1 else ''}"
+    if (cfg.knowledge_url or "").strip():
+        return f"Docs: {cfg.knowledge_url.strip()}"
+    return "No docs yet"
+
+
 def _read_json(path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -781,6 +805,117 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     )
     intro.pack(fill="x", pady=(0, 10))
 
+    # "Before your next call": docs, notes and a way to try a question. Outside
+    # the collapsible settings so it is always the first thing on the tab.
+    prep = tk.Frame(container, bg=CARD, padx=12, pady=8)
+    prep.pack(fill="x", padx=18, pady=(0, 10))
+    tk.Label(prep, text="Before your next call", bg=CARD, fg=ACCENT, anchor="w",
+             font=("Segoe UI", 10, "bold")).pack(fill="x")
+    prep_docs_row = tk.Frame(prep, bg=CARD)
+    prep_docs_row.pack(fill="x", pady=(4, 0))
+    prep_docs_label = tk.Label(prep_docs_row, text="", bg=CARD, fg=FG, anchor="w",
+                               font=("Segoe UI", 9))
+    prep_docs_label.pack(side="left")
+    prep_docs_btn = ttk.Button(prep_docs_row, text="Choose docs folder\u2026")
+    prep_docs_btn.pack(side="left", padx=(10, 0))
+    prep_hint = tk.Label(prep, text="", bg=CARD, fg=MUTED, anchor="w", justify="left",
+                         wraplength=860, font=("Segoe UI", 8))
+    prep_hint.pack(fill="x")
+    tk.Label(prep, text="Who is it with, what will they ask? Used for your next call. "
+                        "Standing context belongs in the docs folder.",
+             bg=CARD, fg=MUTED, anchor="w", justify="left", wraplength=860,
+             font=("Segoe UI", 8)).pack(fill="x", pady=(6, 2))
+    prep_notes = tk.Text(prep, height=3, wrap="word", bg=BG, fg=FG, relief="flat",
+                         insertbackground=FG, font=("Segoe UI", 9))
+    prep_notes.pack(fill="x")
+    prep_ask_row = tk.Frame(prep, bg=CARD)
+    prep_ask_row.pack(fill="x", pady=(6, 0))
+    tk.Label(prep_ask_row, text="Try a question:", bg=CARD, fg=MUTED,
+             font=("Segoe UI", 9)).pack(side="left", padx=(0, 8))
+    prep_question = tk.StringVar()
+    prep_entry = ttk.Entry(prep_ask_row, textvariable=prep_question)
+    prep_entry.pack(side="left", fill="x", expand=True)
+    prep_ask_btn = ttk.Button(prep_ask_row, text="Ask")
+    prep_ask_btn.pack(side="left", padx=(8, 0))
+    prep_result = tk.Label(prep, text="", bg=CARD, fg=FG, anchor="w", justify="left",
+                           wraplength=860, font=("Segoe UI", 9))
+    prep_result.pack(fill="x", pady=(4, 0))
+
+    def refresh_prep() -> None:
+        cfg = config.Config.load()
+        prep_docs_label.config(text=docs_line(cfg))
+        has_docs = bool((cfg.knowledge_dir or "").strip() or (cfg.knowledge_url or "").strip())
+        prep_docs_btn.config(text="Change\u2026" if has_docs else "Choose docs folder\u2026")
+        hint = ("" if cfg.engine == "deepgram"
+                else "Live answers need Deepgram (Settings \u2192 Transcription).")
+        prep_hint.config(text=hint)
+        if hint:                     # an empty label still takes a blank row
+            prep_hint.pack(fill="x", after=prep_docs_row)
+        else:
+            prep_hint.pack_forget()
+
+    def load_prep_notes() -> None:
+        try:
+            text = next_call_notes_path().read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        prep_notes.delete("1.0", "end")
+        prep_notes.insert("1.0", text)
+
+    def save_prep_notes(_event=None) -> None:
+        text = prep_notes.get("1.0", "end").strip()
+        path = next_call_notes_path()
+        try:
+            if text:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+            elif path.exists():
+                path.unlink()
+        except OSError:
+            pass
+
+    def ask_prep() -> None:
+        question = prep_question.get().strip()
+        if not question:
+            return
+        save_prep_notes()
+        cfg = config.Config.load()
+        if not provider_ready(cfg.cleanup_provider):
+            prep_result.config(text="Unavailable: configure an API key or choose local Ollama.")
+            return
+        prep_result.config(text="Looking\u2026")
+
+        def show(text: str) -> None:
+            prep_result.config(text=text)
+
+        def work() -> None:
+            try:
+                notes = next_call_notes_path()
+                docs, _report = knowledge.load_sources(
+                    cfg.knowledge_dir, cfg.knowledge_url, notes)
+                index = knowledge.BM25(knowledge.chunk_docs(docs))
+                ans = knowledge.answer_question(
+                    {"question": question, "keywords": []}, index, docs,
+                    knowledge._default_completion(cfg.cleanup_provider, cfg.cleanup_model))
+                if ans["quote"]:
+                    text = f"{ans['headline']}\n\u201c{ans['quote']}\u201d\n{ans['source']}"
+                else:
+                    text = "Not in your docs"
+            except Exception as exc:
+                text = f"Failed: {exc}"
+            try:
+                root.after(0, lambda: show(text))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    prep_notes.bind("<FocusOut>", save_prep_notes)
+    prep_ask_btn.config(command=ask_prep)
+    prep_entry.bind("<Return>", lambda _e: ask_prep())
+    refresh_prep()
+    load_prep_notes()
+
     # pady must be a SINGLE distance on a widget constructor — a (0, 12) tuple is
     # only valid on pack()/grid() and raises TclError: bad screen distance "0 12",
     # which kills the window before it draws.
@@ -790,7 +925,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     if settings_link is not None:
         settings_panel = collapsible_settings(
             container, settings_link,
-            [(intro, {"fill": "x", "pady": (0, 10)}),
+            [(intro, {"fill": "x", "pady": (0, 10), "before": prep}),
              (body, {"fill": "both", "expand": True, "pady": (0, 12)})],
             BG, wheel)
 
@@ -2413,6 +2548,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         cfg = config.Config.load()
         cfg.knowledge_dir = chosen
         cfg.save()
+        refresh_prep()
         pick_docs_btn.pack_forget()
         do_answers()
 
@@ -2800,6 +2936,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     folder_btn.config(command=do_open_folder)
     delete_btn.config(command=do_delete)
     pick_docs_btn.config(command=pick_docs)
+    prep_docs_btn.config(command=pick_docs)
     # Opened from the after-call pill: land on that meeting, and with
     # PV_AUTO=answer transcribe it if needed, then answer their questions.
     wanted = os.environ.get("PV_SELECT", "").strip()

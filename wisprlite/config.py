@@ -200,6 +200,7 @@ class Config:
     knowledge_url: str = ""           # one web page of docs for after-call answers
     update_channel: str = "stable"    # stable | beta — beta also sees prereleases
     pipefocus: bool = False           # live focus nudges during a meeting (Deepgram only)
+    live_answers: bool = True         # pop up doc answers when the other side asks (Deepgram only)
     # Screen recorder — off until a hotkey is set, like meeting capture.
     screenrec_hotkey: str = "ctrl+alt+r"  # drag a region, record it with narration
     screenrec_destination: str = ""   # scp target, e.g. root@host:/path/inbox-files/

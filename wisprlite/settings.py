@@ -422,7 +422,8 @@ def _build_guide(parent, wheel) -> None:
          "Answer from my docs. You get every question the other side asked, each with a "
          "short answer and the exact sentence from your docs it came from — or “Not "
          "in your docs”, which is your list of what to write next. Thumbs up or down on "
-         "each. Uses your polish engine, so a free Gemini key covers it.",
+         "each. Uses your polish engine, so a free Gemini key covers it. During the call, "
+         "an answer card pops up when they ask something your docs cover.",
          badge="NEW", badge_color=GOOD)
     body("• Playing music? Your computer's audio is captured as one mix, so a podcast or "
          "Spotify ends up in the transcript alongside the meeting. Pause it first.")
@@ -820,6 +821,7 @@ def main(first_run: bool = False) -> None:
     auto_update_var = tk.BooleanVar(value=cfg.auto_update)
     beta_channel_var = tk.BooleanVar(value=(cfg.update_channel or "").lower() == "beta")
     pipefocus_var = tk.BooleanVar(value=cfg.pipefocus)
+    live_answers_var = tk.BooleanVar(value=cfg.live_answers)
     voice_commands_var = tk.BooleanVar(value=cfg.voice_commands)
     history_var = tk.BooleanVar(value=cfg.history_enabled)
 
@@ -932,6 +934,33 @@ def main(first_run: bool = False) -> None:
         threading.Thread(target=work, daemon=True).start()
 
     clip_cap_btn.config(command=clip_capture)
+
+    # --- Your docs: first in Meetings settings, because answers are the point ---
+    c = card(
+        "Your docs",
+        "Markdown, text or PDF. Meetings answers the other side's questions from "
+        "them, live and after the call.",
+        parent=meeting_settings_panel,
+    )
+    _kr = row(c, "Docs folder", "The folder PipeVoice reads.")
+    entry(_kr, knowledge_dir_var, width=30)
+
+    def _browse_knowledge():
+        from tkinter import filedialog
+        chosen = filedialog.askdirectory(
+            parent=root, title="Folder with your docs",
+            initialdir=knowledge_dir_var.get().strip() or os.path.expanduser("~"),
+        )
+        if chosen:
+            knowledge_dir_var.set(chosen)
+
+    ttk.Button(_kr, text="Browse", width=8,
+               command=_browse_knowledge).pack(side="left", padx=(8, 0))
+    entry(row(c, "Docs web page", "One page, e.g. your pricing or FAQ. Optional."),
+          knowledge_url_var, width=30)
+    check(c, "Show answers during the call (Deepgram only)", live_answers_var,
+          "A small card pops up bottom-right when the other side asks something your\n"
+          "docs or next-call notes answer. Nothing pops up when it is unsure.")
 
     # --- Meetings: rendered into the Meetings tab, not this form ---
     c = card(
@@ -1894,24 +1923,6 @@ def main(first_run: bool = False) -> None:
     ttk.Button(_mr, text="Browse", width=8,
                command=_browse_meetings).pack(side="left", padx=(8, 0))
 
-    _kr = row(c, "Docs folder",
-              "Markdown, text or PDF files. Meetings can answer the other side's questions from them.")
-    entry(_kr, knowledge_dir_var, width=30)
-
-    def _browse_knowledge():
-        from tkinter import filedialog
-        chosen = filedialog.askdirectory(
-            parent=root, title="Folder with your docs",
-            initialdir=knowledge_dir_var.get().strip() or os.path.expanduser("~"),
-        )
-        if chosen:
-            knowledge_dir_var.set(chosen)
-
-    ttk.Button(_kr, text="Browse", width=8,
-               command=_browse_knowledge).pack(side="left", padx=(8, 0))
-    entry(row(c, "Docs web page", "One page, e.g. your pricing or FAQ. Optional."),
-          knowledge_url_var, width=30)
-
     # --- Save / Cancel (live in the fixed footer) ---
     def value_for(var, table):
         label_to_value = {l: k for k, l in table}
@@ -2007,8 +2018,14 @@ def main(first_run: bool = False) -> None:
         except ValueError:
             pass
         cfg.meetings_dir = meetings_dir_var.get().strip()
-        cfg.knowledge_dir = knowledge_dir_var.get().strip()
+        # The Meetings tab can pick a docs folder on its own (Choose docs folder…),
+        # writing config while this form still holds the value it opened with. An
+        # untouched field must not save that stale value over the new one.
+        _kd = knowledge_dir_var.get().strip()
+        cfg.knowledge_dir = (config.Config.load().knowledge_dir
+                             if _kd == (cfg.knowledge_dir or "").strip() else _kd)
         cfg.knowledge_url = knowledge_url_var.get().strip()
+        cfg.live_answers = bool(live_answers_var.get())
         cfg.paste_speed = value_for(paste_speed_var, PASTE_SPEEDS)
         cfg.speech_notes = speech_notes_var.get().strip()
         cfg.replacements = fixes_from_lines(fixes_list.get(0, "end"))

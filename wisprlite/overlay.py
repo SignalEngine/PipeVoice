@@ -16,6 +16,7 @@ from typing import Callable, Optional
 
 from .winui import PALETTE
 
+CARD_SEP = "\x1f"     # joins quote and source in the one text slot of a queue tuple
 FRAME_MS = 33          # ~30 fps
 METER_N = 16           # samples of rolling level history behind the ribbon
 RIBBON_SPLINE = 20     # Bezier steps per span; higher = smoother, more work per frame
@@ -291,6 +292,9 @@ class Overlay:
                         # state = tip, text = because. Rendered on THIS thread,
                         # which is the only one allowed to touch Tk.
                         self._render_focus_tip(canvas, state, text)
+                    if kind == "answer_card":
+                        quote, _sep, source = text.partition(CARD_SEP)
+                        self._render_answer_card(canvas, state, quote, source)
                     if kind == "click":
                         if st["name"] == "meeting" and self.on_meeting_click:
                             callback = self.on_meeting_click
@@ -1181,6 +1185,44 @@ class Overlay:
             self._make_movable(top, frame, dismiss_after=14000)
         except Exception:
             pass          # a nudge must never disturb the meeting it comments on
+
+    def _render_answer_card(self, canvas, headline: str, quote: str, source: str) -> None:
+        """A live answer from the user's docs. Same rules as a focus tip."""
+        try:
+            import tkinter as tk
+
+            root = canvas.winfo_toplevel()
+            top = tk.Toplevel(root)
+            top.overrideredirect(True)
+            top.attributes("-topmost", True)
+            top.configure(bg=PALETTE["accent"])
+            frame = tk.Frame(top, bg=PALETTE["card"], padx=16, pady=12)
+            frame.pack(fill="both", expand=True, padx=2, pady=2)
+            tk.Label(frame, text=headline, bg=PALETTE["card"], fg=PALETTE["fg"],
+                     font=("Segoe UI", 10, "bold"), wraplength=380,
+                     justify="left").pack(anchor="w")
+            tk.Label(frame, text=f"\u201c{quote}\u201d", bg=PALETTE["card"],
+                     fg=PALETTE["fg"], font=("Segoe UI", 9, "italic"),
+                     wraplength=380, justify="left").pack(anchor="w", pady=(4, 0))
+            tk.Label(frame, text=source, bg=PALETTE["card"], fg=PALETTE["muted"],
+                     font=("Segoe UI", 8), wraplength=380,
+                     justify="left").pack(anchor="w", pady=(4, 0))
+            top.update_idletasks()
+            width, height = top.winfo_reqwidth(), top.winfo_reqheight()
+            x = max(0, top.winfo_screenwidth() - width - 40)
+            y = max(0, top.winfo_screenheight() - height - 190 - 140)
+            top.geometry(f"+{x}+{y}")
+            self._make_movable(top, frame, dismiss_after=20000)
+        except Exception:
+            pass          # a card must never disturb the call it answers
+
+    def show_answer_card(self, headline: str, quote: str, source: str) -> None:
+        """Queue a live answer card (called off the overlay thread, so no Tk)."""
+        try:
+            self._q.put(("answer_card", str(headline or ""),
+                         f"{quote or ''}{CARD_SEP}{source or ''}"))
+        except Exception:
+            pass
 
     def show_focus_tip(self, tip: str, because: str = "") -> None:
         """Queue a PipeFocus nudge for display on the overlay's own thread.
