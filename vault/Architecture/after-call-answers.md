@@ -64,3 +64,6 @@ James on v2.49.12: a folder of CV PDFs plus a job-ad page, and "why would this j
 
 ## Dictation polish time limit (2026-10-20)
 James: "why is polish taking so long" (dictation clean-up). `chat_completion` had no timeout, so the OpenAI client's defaults applied: 600 s plus 2 silent retries. Dictation `_polish` now passes `cleanup.polish_timeout(text)` (6 s + 1 s per 100 words) with `max_retries=0`. On a timeout the raw words paste. Every polish logs `polish ok|failed in Xs (N words)`, so the next log shows where the time goes. Other callers (summaries, meeting Polish, answers) keep the client defaults.
+
+## Gemini model swap + Groq polish (2026-10-20, v2.49.16)
+James's 2.49.15 log: 18 of 21 polishes on gemini-3.1-flash-lite timed out at 6 s or got 503 "high demand"; the 3 that worked took 2.3-3.6 s. Polish now defaults to `gemini-3.5-flash-lite` (Google's current stable Flash-Lite). If that fails it falls back to 3.1 within the same time budget (`FALLBACK_MODELS`, only when there is a time limit, no model typed in, and at least 2 s left). Groq is now a polish provider: `openai/gpt-oss-20b` with `reasoning_effort=low`, because llama-3.1-8b-instant left Groq's free tier on 2026-08-16. Its key is the existing Groq key row. Not tested against the real APIs (no keys on the VPS); the next log's `polish ok|failed in Xs` lines are the check.

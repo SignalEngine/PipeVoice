@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import threading
+import time
 from typing import Optional
 
 log = logging.getLogger("wisprlite")
@@ -180,11 +181,19 @@ _ACCENTS = {
 PROVIDERS = {
     "openai": (None, "OPENAI_API_KEY", "gpt-4.1-mini"),
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai/",
-               "GEMINI_API_KEY", "gemini-3.1-flash-lite"),
+               "GEMINI_API_KEY", "gemini-3.5-flash-lite"),
+    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "openai/gpt-oss-20b"),
     "openrouter": ("https://openrouter.ai/api/v1",
                    "OPENROUTER_API_KEY", "google/gemma-4-31b-it:free"),
     "ollama": ("http://localhost:11434/v1", None, "llama3.2:3b"),
 }
+
+# Tried when the default model is busy or slow. 2026-10-20: 18 of 21 of James's
+# polishes on gemini-3.1-flash-lite timed out or got 503 "high demand".
+FALLBACK_MODELS = {"gemini": "gemini-3.1-flash-lite"}
+
+# gpt-oss is a reasoning model; "low" keeps a dictation polish under a second.
+EXTRA_PARAMS = {"groq": {"reasoning_effort": "low"}}
 
 
 def _accent_clause(language: str) -> str:
@@ -258,6 +267,7 @@ def chat_completion(
             model=model,
             temperature=0,
             messages=messages,
+            **EXTRA_PARAMS.get(provider, {}),
         )
         out = (resp.choices[0].message.content or "").strip()
         _set_last_error("")
@@ -318,19 +328,24 @@ def clean(text: str, provider: str = "openai", model: str = "",
     text = (text or "").strip()
     if not text:
         return None
-    return chat_completion(
-        [
-            {
-                "role": "system",
-                "content": (
-                    _style_system(style, custom_instruction)
-                    + _accent_clause(language)
-                    + _notes_clause(notes)
-                ),
-            },
-            {"role": "user", "content": text},
-        ],
-        provider,
-        model,
-        timeout=timeout,
-    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                _style_system(style, custom_instruction)
+                + _accent_clause(language)
+                + _notes_clause(notes)
+            ),
+        },
+        {"role": "user", "content": text},
+    ]
+    started = time.monotonic()
+    out = chat_completion(messages, provider, model, timeout=timeout)
+    fallback = FALLBACK_MODELS.get(provider)
+    if out is not None or timeout is None or (model or "").strip() or not fallback:
+        return out
+    # Same total budget: the fallback only gets the time the first try left.
+    remaining = timeout - (time.monotonic() - started)
+    if remaining < 2.0:
+        return None
+    return chat_completion(messages, provider, fallback, timeout=remaining)
