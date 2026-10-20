@@ -228,6 +228,7 @@ def chat_completion(
     *,
     allow_empty: bool = False,
     raise_errors: bool = False,
+    timeout: Optional[float] = None,
 ) -> Optional[str]:
     """Run one OpenAI-compatible chat completion using the shared providers."""
     base_url, key_env, default_model = PROVIDERS.get(provider, PROVIDERS["openai"])
@@ -246,6 +247,10 @@ def chat_completion(
         from openai import OpenAI
 
         kwargs = {"api_key": api_key}
+        if timeout is not None:
+            # The client defaults to a 10-minute timeout plus two silent retries,
+            # so a slow provider held a dictation's paste for as long as it liked.
+            kwargs.update(timeout=timeout, max_retries=0)
         if base_url:
             kwargs["base_url"] = base_url
         client = OpenAI(**kwargs)
@@ -297,9 +302,19 @@ def _short_reason(exc: Exception) -> str:
     return text.strip().splitlines()[0][:120] if text.strip() else exc.__class__.__name__
 
 
+def polish_timeout(text: str) -> float:
+    """Seconds a dictation waits for polish before pasting the raw words.
+
+    6 s covers a normal sentence; long dictations get 1 s per extra 100 words
+    because the reply is as long as the input.
+    """
+    return 6.0 + len((text or "").split()) / 100
+
+
 def clean(text: str, provider: str = "openai", model: str = "",
           language: str = "", notes: str = "",
-          style: str = "tidy", custom_instruction: str = "") -> Optional[str]:
+          style: str = "tidy", custom_instruction: str = "",
+          timeout: Optional[float] = None) -> Optional[str]:
     text = (text or "").strip()
     if not text:
         return None
@@ -317,4 +332,5 @@ def clean(text: str, provider: str = "openai", model: str = "",
         ],
         provider,
         model,
+        timeout=timeout,
     )

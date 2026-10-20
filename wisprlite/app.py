@@ -1610,10 +1610,14 @@ class App:
         if not cleanup.provider_ready(self.cfg.cleanup_provider):
             return text
         self.overlay.set_state("transcribing", "Polishing…")
+        started = time.monotonic()
         polished = cleanup.clean(text, self.cfg.cleanup_provider, self.cfg.cleanup_model,
                                  self.cfg.language, self.cfg.speech_notes,
                                  style=self._eff("cleanup_style"),
-                                 custom_instruction=self._eff("cleanup_instruction"))
+                                 custom_instruction=self._eff("cleanup_instruction"),
+                                 timeout=cleanup.polish_timeout(text))
+        log.info("polish %s in %.1fs (%d words)", "ok" if polished else "failed",
+                 time.monotonic() - started, len(text.split()))
         if polished is None:
             # Flow mode was ON and the provider was reachable, yet nothing came
             # back - a dead model id, a revoked key, a quota wall. This used to
