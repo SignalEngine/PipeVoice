@@ -61,3 +61,6 @@ James on v2.49.12: a folder of CV PDFs plus a job-ad page, and "why would this j
   - A real pop-up, a CV PDF made with fpdf and parsed by pypdf: only the chosen file was loaded, and the CV text was in the LLM context.
   - A card with points rendered next to the REC pill.
 - **Not verified:** the image restore on Windows, and a real LLM's answer.
+
+## Dictation polish time limit (2026-10-20)
+James: "why is polish taking so long" (dictation clean-up). `chat_completion` had no timeout, so the OpenAI client's defaults applied: 600 s plus 2 silent retries. Dictation `_polish` now passes `cleanup.polish_timeout(text)` (6 s + 1 s per 100 words) with `max_retries=0`. On a timeout the raw words paste. Every polish logs `polish ok|failed in Xs (N words)`, so the next log shows where the time goes. Other callers (summaries, meeting Polish, answers) keep the client defaults.
