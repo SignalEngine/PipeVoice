@@ -25,6 +25,7 @@ ENGINES = [("gemini", "Gemini — free, one key does it all"),
 MODES = [("ptt", "Push-to-talk (hold)"), ("toggle", "Toggle (tap on/off)")]
 PASTE_SPEEDS = [("fast", "Fast"), ("normal", "Normal"), ("slow", "Slow")]
 CLEANUP_PROVIDERS = [("openai", "OpenAI"), ("gemini", "Google Gemini (free tier)"),
+                     ("groq", "Groq (free, fastest)"),
                      ("openrouter", "OpenRouter (free models)"), ("ollama", "Local — Ollama (offline)")]
 STYLES = [("tidy", "Tidy — clean up"), ("prompt", "Prompt — for AI tools"),
           ("email", "Email — greeting, body, sign-off"),
