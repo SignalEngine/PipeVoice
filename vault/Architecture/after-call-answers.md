@@ -67,3 +67,13 @@ James: "why is polish taking so long" (dictation clean-up). `chat_completion` ha
 
 ## Gemini model swap + Groq polish (2026-10-20, v2.49.16)
 James's 2.49.15 log: 18 of 21 polishes on gemini-3.1-flash-lite timed out at 6 s or got 503 "high demand"; the 3 that worked took 2.3-3.6 s. Polish now defaults to `gemini-3.5-flash-lite` (Google's current stable Flash-Lite). If that fails it falls back to 3.1 within the same time budget (`FALLBACK_MODELS`, only when there is a time limit, no model typed in, and at least 2 s left). Groq is now a polish provider: `openai/gpt-oss-20b` with `reasoning_effort=low`, because llama-3.1-8b-instant left Groq's free tier on 2026-08-16. Its key is the existing Groq key row. Not tested against the real APIs (no keys on the VPS); the next log's `polish ok|failed in Xs` lines are the check.
+
+## History keeps the raw transcript (2026-10-23)
+James: "the polish sometimes affects it too much… some don't make sense", and "pausing mid-thought, it thinks it's the end of the sentence". Evidence:
+- His log + history: since v2.49.16, 41/44 polishes worked on 10-23 (median 0.8 s).
+- The worst fragmented entry (10-22 19:38 BST) was a FAILED polish. Gemini 3.1 timed out and Deepgram's raw text pasted, with a full stop at every pause.
+- On OpenRouter, the existing tidy prompt on gemini-3.5-flash-lite already joined pause fragments correctly. An extra "full stops at pauses aren't sentence ends" clause was no better, and on one sample it made things worse (it dropped a question), so it was not shipped.
+
+Change: `history.record(..., raw=)` stores the pre-polish transcript as `raw` when polish changed it (set in `_polish`, cleared after record). Next diagnosis: compare `raw` and `text` in history.jsonl.
+
+Remaining mis-hearings (butts/bots, OpenRooter, Bat Lifter) come from Deepgram. His vocabulary list lacks his product names.
