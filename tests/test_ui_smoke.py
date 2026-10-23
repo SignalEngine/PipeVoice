@@ -1218,7 +1218,7 @@ def test_a_failed_paste_still_leaves_the_words_in_history_and_on_the_clipboard()
     app._beep = mock.Mock()
     app._set_icon = mock.Mock()
 
-    with mock.patch.object(history, "record", side_effect=lambda t, k: recorded.append((t, k))), \
+    with mock.patch.object(history, "record", side_effect=lambda t, k, **_: recorded.append((t, k))), \
          mock.patch("wisprlite.app.type_text", side_effect=RuntimeError("no window")), \
          mock.patch("wisprlite.app.copy_clipboard", return_value=True) as clip:
         App._deliver(app, "hello there", False, "type", False)

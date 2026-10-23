@@ -27,15 +27,23 @@ def _path():
     return config.config_dir() / "history.jsonl"
 
 
-def record(text: str, kind: str = "typed") -> None:
-    """Append one entry; keep at most CAP lines. Never raises."""
+def record(text: str, kind: str = "typed", raw: str | None = None) -> None:
+    """Append one entry; keep at most CAP lines. Never raises.
+
+    ``raw`` is the transcript before AI polish, kept only when polish changed
+    it, so a bad polish can be told apart from a mis-hearing.
+    """
     text = (text or "").strip()
     if not text:
         return
     p = _path()
     try:
         lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
-        lines.append(json.dumps({"ts": time.time(), "text": text, "kind": kind}, ensure_ascii=False))
+        entry = {"ts": time.time(), "text": text, "kind": kind}
+        raw = (raw or "").strip()
+        if raw and raw != text:
+            entry["raw"] = raw
+        lines.append(json.dumps(entry, ensure_ascii=False))
         if len(lines) > CAP:
             lines = lines[-CAP:]
         p.write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -755,9 +755,11 @@ class App:
             try:
                 from . import history
 
-                history.record(text, "clipboard" if to_clipboard else "typed")
+                history.record(text, "clipboard" if to_clipboard else "typed",
+                               raw=getattr(self, "_polish_raw", None))
             except Exception:
                 log.exception("history record failed")
+        self._polish_raw = None
 
         if to_clipboard:
             if text:
@@ -1604,12 +1606,14 @@ class App:
     def _polish(self, text: str) -> str:
         """Optional LLM cleanup ('Flow mode'); returns the input unchanged if off/unavailable."""
         self._polish_error = None
+        self._polish_raw = None
         if not (text and self._eff("ai_cleanup")):
             return text
         from . import cleanup
         if not cleanup.provider_ready(self.cfg.cleanup_provider):
             return text
         self.overlay.set_state("transcribing", "Polishing…")
+        self._polish_raw = text   # history keeps what was heard next to the polish
         started = time.monotonic()
         polished = cleanup.clean(text, self.cfg.cleanup_provider, self.cfg.cleanup_model,
                                  self.cfg.language, self.cfg.speech_notes,
