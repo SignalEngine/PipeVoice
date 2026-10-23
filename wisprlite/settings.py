@@ -10,6 +10,7 @@ trouble.
 from __future__ import annotations
 
 import os
+import re
 import json
 import threading
 import types
@@ -50,6 +51,11 @@ LANGUAGES = [
 ]
 
 _FIX_SEP = " → "
+
+
+def split_terms(text: str) -> list:
+    """A pasted "OpenRouter, Battle Lifter, PWA" is three vocabulary terms, not one."""
+    return [t.strip() for t in re.split(r"[,\n;]", text or "") if t.strip()]
 
 
 def fixes_from_lines(lines) -> dict:
@@ -1637,9 +1643,9 @@ def main(first_run: bool = False) -> None:
     _vadd.pack(anchor="w")
 
     def _vocab_add(*_a):
-        t = vocab_add_var.get().strip().strip(",")
-        if t and t not in vocab_list.get(0, "end"):
-            vocab_list.insert("end", t)
+        for t in split_terms(vocab_add_var.get()):
+            if t not in vocab_list.get(0, "end"):
+                vocab_list.insert("end", t)
         vocab_add_var.set("")
 
     def _vocab_remove():

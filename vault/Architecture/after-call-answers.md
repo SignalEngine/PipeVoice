@@ -77,3 +77,6 @@ James: "the polish sometimes affects it too much… some don't make sense", and 
 Change: `history.record(..., raw=)` stores the pre-polish transcript as `raw` when polish changed it (set in `_polish`, cleared after record). Next diagnosis: compare `raw` and `text` in history.jsonl.
 
 Remaining mis-hearings (butts/bots, OpenRooter, Bat Lifter) come from Deepgram. His vocabulary list lacks his product names.
+
+## Vocabulary paste splits lists (2026-10-23)
+Pasting "OpenRouter, Battle Lifter, PWA" into Settings → Vocabulary added ONE term. `settings.split_terms` now splits on , ; and newlines before adding.
