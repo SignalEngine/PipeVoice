@@ -43,6 +43,13 @@ def _quiet(fn, *args) -> None:
 KEYTERM_MODELS = ("nova-3",)
 
 
+# How long a pause Deepgram waits before closing a phrase. Its default is 10 ms,
+# so every stutter or thinking pause ended a phrase with a full stop (James,
+# 2026-10-28: "still putting full stops in really weird places"). The stream
+# is flushed when the key is released, so a long value costs no latency.
+PAUSE_MS = 1500
+
+
 def bias_param(model: str) -> str:
     """Which term-biasing parameter this model accepts."""
     name = (model or "").strip().lower()
@@ -114,6 +121,7 @@ class _DeepgramSession(Session):
             interim_results=True,
             smart_format=True,
             punctuate=True,
+            endpointing=PAUSE_MS,
         )
         bias_key = bias_param(engine.model)
         if engine.keywords:

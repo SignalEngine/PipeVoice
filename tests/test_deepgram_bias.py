@@ -142,3 +142,17 @@ def test_flushing_the_backlog_does_not_stall_the_mic_callback():
     assert time.monotonic() - t0 < 0.1, "feed() blocked behind the backlog flush"
     session._connector.join(timeout=5)
     assert sent == [bytes([i]) for i in range(5)] + [b"late"], f"order broken: {sent}"
+
+
+def test_dictation_waits_through_thinking_pauses():
+    """Deepgram's 10 ms default endpointing put a full stop at every stutter."""
+    started = {}
+    conn = mock.Mock()
+    conn.start.side_effect = lambda options: started.update(options)
+    engine = mock.Mock(model="nova-3", language="en-US", keywords=None)
+    fake = mock.Mock(LiveOptions=dict, LiveTranscriptionEvents=mock.Mock())
+    with mock.patch.dict(sys.modules, {"deepgram": fake}):
+        engine.client.listen.websocket.v.return_value = conn
+        session = dg._DeepgramSession(engine, None)
+        session._connector.join(timeout=5)
+    assert started["endpointing"] >= 1000

@@ -80,3 +80,6 @@ Remaining mis-hearings (butts/bots, OpenRooter, Bat Lifter) come from Deepgram. 
 
 ## Vocabulary paste splits lists (2026-10-23)
 Pasting "OpenRouter, Battle Lifter, PWA" into Settings → Vocabulary added ONE term. `settings.split_terms` now splits on , ; and newlines before adding.
+
+## Deepgram pause endpointing (2026-10-28, v2.49.19)
+James: "still putting full stops in really weird places". The dictation stream never set `endpointing`, so Deepgram used its 10 ms default: every stutter or thinking pause closed a phrase, and punctuate gave it a full stop. Now `PAUSE_MS = 1500`. Release flushes the stream via `conn.finish`, so there is no latency cost. Not tested against live Deepgram from the VPS. Confirm with the raw field in his next history.jsonl.
