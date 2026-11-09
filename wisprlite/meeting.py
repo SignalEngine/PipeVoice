@@ -747,16 +747,19 @@ def transcribe_session(
     meta["transcript_file"] = "transcript.json"
     _write_json(meta_path, meta)
     _auto_title(session_dir, segments, cfg, selected_backend)
-    _auto_promises(session_dir, segments, cfg)
+    _auto_promises(session_dir, segments, cfg, selected_backend)
     return transcript
 
 
-def _auto_promises(session_dir: Path, segments: list[dict], cfg) -> None:
-    """Find what the user promised. Never raises: a failure must not fail the transcription."""
+def _auto_promises(session_dir: Path, segments: list[dict], cfg, backend: str = "local") -> None:
+    """Find what the user promised. Never raises: a failure must not fail the transcription.
+    Same privacy rule as the auto-name: a local-only transcript goes to the AI only if
+    the user ticked meeting_auto_name; otherwise the regex list stands alone."""
     try:
         from . import promises
 
-        promises.build_promises(session_dir, segments, cfg)
+        use_ai = backend == "deepgram" or bool(getattr(cfg, "meeting_auto_name", False))
+        promises.build_promises(session_dir, segments, cfg, use_ai=use_ai)
     except Exception as exc:
         log.warning("promises failed: %s", exc)
 

@@ -150,7 +150,7 @@ class Config:
     bookmark_phrases: str = DEFAULT_BOOKMARK_PHRASES
     meeting_max_minutes: int = 240  # safety cap for an unattended meeting capture
     meeting_retention_sessions: int = 20  # newest local meeting sessions to keep
-    meeting_auto_name: bool = False  # also auto-name LOCALLY transcribed meetings (Deepgram ones always are)
+    meeting_auto_name: bool = False  # also use AI (name, promises) on LOCALLY transcribed meetings (Deepgram ones always do)
     meeting_auto_transcribe: bool = False  # transcribe a meeting as soon as it ends
     meeting_video: bool = False  # also record the screen during meetings
     meeting_video_fps: int = 10  # 4 looked choppy on a real call

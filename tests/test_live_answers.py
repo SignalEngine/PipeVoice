@@ -568,6 +568,8 @@ def _topic_answerer(tmp_path, completion, cards, now, **kw):
                                   lambda *c, **k: cards.append((c, k)),
                                   clock=lambda: now[0], topic_cards=True, **kw)
     a._build()
+    now[0] = 0.0
+    a.on_line("Them", "anybody see the football last night")   # starts the 45 s topic clock
     return a
 
 
@@ -654,6 +656,15 @@ def test_topic_off_queues_no_topic_jobs(tmp_path):
     assert a._pending is None and a._pending_topic is None
 
 
+def test_the_first_topic_check_waits_45_seconds_from_the_first_them_line(tmp_path):
+    cards, now = [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: _reply(), cards, now)
+    _say(a, now, 44.0, TOPIC_LINES[:1])
+    assert a._pending_topic is None
+    _say(a, now, 45.0, TOPIC_LINES[1:2])
+    assert a._pending_topic is not None
+
+
 def test_a_late_topic_job_is_logged_not_shown(tmp_path):
     cards, now = [], [0.0]
     a = _topic_answerer(tmp_path, lambda m: _reply(), cards, now, deadline=8.0)
@@ -708,15 +719,19 @@ def test_topic_and_talk_checks_round_trip_and_topic_greys_out_with_live_answers_
             live.invoke()                                  # live answers off
             root.update()
             state["disabled_with_live_off"] = "disabled" in topic.state()
+            state["hint_off"] = str(topic.hint_label.cget("text"))
             live.invoke()                                  # back on
             root.update()
             state["reenabled"] = "disabled" not in topic.state()
+            state["hint_on"] = str(topic.hint_label.cget("text"))
             save.invoke()
             state["step"] = 1
         return True
 
     _tab(tmp_path, monkeypatch, pump_until=until)
     assert state["enabled_with_live_on"] and state["disabled_with_live_off"] and state["reenabled"]
+    assert state["hint_off"] == "Turn on Show answers during the call first."
+    assert state["hint_on"] == "At most one card every 2 minutes, only when a doc clearly covers it."
     cfg = config.Config.load()
     assert cfg.meeting_topic_cards is True and cfg.meeting_talk_hint is True
     assert config.Config().meeting_topic_cards is False and config.Config().meeting_talk_hint is False

@@ -855,8 +855,10 @@ def main(first_run: bool = False) -> None:
         box = ttk.Checkbutton(r, text=text, variable=var, style="Card.TCheckbutton")
         box.pack(anchor="w")
         if desc:
-            tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=theme.font("caption"),
-                     wraplength=px(540), justify="left").pack(anchor="w", padx=px((25, 0)), pady=px((3, 0)))
+            lbl = tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=theme.font("caption"),
+                           wraplength=px(540), justify="left")
+            lbl.pack(anchor="w", padx=px((25, 0)), pady=px((3, 0)))
+        box.hint_label = lbl if desc else None
         return box
 
     # --- values ---
@@ -1296,9 +1298,14 @@ def main(first_run: bool = False) -> None:
                        topic_cards_var,
                        "At most one card every 2 minutes, only when a doc clearly covers it.")
 
+    _topic_hint = "At most one card every 2 minutes, only when a doc clearly covers it."
+
     def _sync_topic(*_):
         try:
-            _topic_box.config(state="normal" if live_answers_var.get() else "disabled")
+            on = live_answers_var.get()
+            _topic_box.config(state="normal" if on else "disabled")
+            _topic_box.hint_label.config(
+                text=_topic_hint if on else "Turn on Show answers during the call first.")
         except Exception:
             pass
 
@@ -1325,9 +1332,10 @@ def main(first_run: bool = False) -> None:
         command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
     )
 
-    check(c, "Also name meetings transcribed on this computer", meeting_auto_name_var,
-          "Meetings transcribed with Deepgram are named automatically. Tick this to also "
-          "send the start of local transcripts to your AI provider for a name.")
+    check(c, "Also use AI on meetings transcribed on this computer (names and promises)", meeting_auto_name_var,
+          "Meetings transcribed with Deepgram are named and checked for your promises "
+          "automatically. Tick this to also send the start of local transcripts (for a name) "
+          "and your own lines (for promises) to your AI provider.")
     check(c, "Transcribe automatically when the meeting ends", meeting_auto_transcribe_var,
           "Uses your transcription provider. You can still answer their questions after.")
     check(c, "Record the screen too (video)", meeting_video_var,

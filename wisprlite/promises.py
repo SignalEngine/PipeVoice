@@ -30,6 +30,14 @@ _DUE = re.compile(
     re.IGNORECASE)
 
 
+# Not commitments: a condition ("if/when/unless/in case ..."), or "let me" + something
+# done during the call itself.
+_CONDITION = re.compile(r"^\W*(?:if|when|unless|in case)\b", re.IGNORECASE)
+_IN_CALL = re.compile(
+    r"\blet me\b(?:\W+\w+){0,3}?\W+(?:share my screen|pull up|show you|open|scroll|check quickly)\b",
+    re.IGNORECASE)
+
+
 def find_promises(segments: list[dict]) -> list[dict]:
     """[{t, text, due}] for each promise-shaped sentence on a "You" line."""
     found = []
@@ -38,7 +46,7 @@ def find_promises(segments: list[dict]) -> list[dict]:
             continue
         for sentence in re.split(r"(?<=[.!?])\s+", str(seg.get("text") or "").strip()):
             match = _PROMISE.search(sentence)
-            if not match:
+            if not match or _CONDITION.match(sentence) or _IN_CALL.search(sentence):
                 continue
             due = _DUE.search(sentence, match.end())
             try:
@@ -78,13 +86,15 @@ def ai_filter(candidates: list[dict], completion) -> list[dict]:
         return candidates
 
 
-def build_promises(session_dir, segments: list[dict], cfg, completion=None) -> list[dict]:
-    """Find, filter and save promises.json (removed when there are none)."""
+def build_promises(session_dir, segments: list[dict], cfg, completion=None,
+                   use_ai: bool = False) -> list[dict]:
+    """Find, filter and save promises.json (removed when there are none).
+    The AI filter sees the user's lines only when `use_ai` (see meeting._auto_promises)."""
     from .cleanup import provider_ready
 
     path = Path(session_dir) / PROMISES_FILE
     found = find_promises(segments)
-    if found and provider_ready(cfg.cleanup_provider):
+    if found and use_ai and provider_ready(cfg.cleanup_provider):
         if completion is None:
             from .summarise import _complete
 

@@ -68,7 +68,7 @@ class LiveAnswerer:
         self._small = False
         self._topic_cards = bool(topic_cards)
         self._window: deque[tuple[str, float]] = deque()  # Them lines, last TOPIC_WINDOW s
-        self._last_topic_check = float("-inf")
+        self._last_topic_check: float | None = None   # starts at the first Them line
         self._last_card_at: float | None = None
         self._pending_topic: tuple[str, float] | None = None   # 1-slot; a question wins
         self._completion, self._on_card = completion, on_card
@@ -147,6 +147,8 @@ class LiveAnswerer:
                 if looks_like_question(joined) and not looks_like_question(prev[0]):
                     text = joined
             if self._topic_cards:
+                if self._last_topic_check is None:
+                    self._last_topic_check = now
                 self._window.append((str(text), now))
                 while self._window and now - self._window[0][1] > TOPIC_WINDOW:
                     self._window.popleft()

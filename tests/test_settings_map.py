@@ -63,7 +63,7 @@ MAP = {
             "Meeting settings",
             "Your docs", "Docs folder", "Docs web page", "Show answers during the call (Deepgram only)",
             "Also show what my docs say about the current topic (Deepgram only)",
-            "Meetings", "Meeting hotkey", "Also name meetings transcribed on this computer",
+            "Meetings", "Meeting hotkey", "Also use AI on meetings transcribed on this computer (names and promises)",
             "Transcribe automatically when the meeting ends", "Record the screen too (video)",
             "Video smoothness",
             "Send the video when the meeting ends, plus the transcript if it was transcribed "

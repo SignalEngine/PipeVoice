@@ -49,6 +49,18 @@ def test_due_phrases_are_extracted_for_the_two_with_a_day():
     assert others and all(p["due"] == "" for p in others)
 
 
+def test_a_condition_or_an_in_call_action_is_not_a_promise_on_unseen_sentences():
+    # Each sentence matches the bare candidate regex, so only the reject rule removes it.
+    for sentence in ("Unless legal objects, we will send the draft on Monday.",
+                     "When the contract arrives I'll send it over.",
+                     "In case it fails we'll call support.",
+                     "Let me open the pricing page and check it with you.",
+                     "Let me quickly pull up the plan and share it."):
+        assert promises._PROMISE.search(sentence), sentence
+        assert promises.find_promises([{"t": 1, "speaker": "You", "text": sentence}]) == [], sentence
+    assert promises.find_promises([{"t": 1, "speaker": "You", "text": "Let me send you the plan."}])
+
+
 def test_only_you_lines_count_and_t_is_the_segment_time():
     segs = [{"t": 12.0, "speaker": "Them 1", "text": "I'll send you the contract tomorrow."},
             {"t": 30.5, "speaker": "You", "text": "Fine. I'll send the notes tomorrow. Thanks all."}]
@@ -94,6 +106,9 @@ def test_build_saves_promises_json_and_uses_the_ai_only_when_the_provider_is_rea
     called = []
     with patch("wisprlite.cleanup.provider_ready", return_value=True):
         promises.build_promises(tmp_path, segs, cfg, completion=lambda m: called.append(m) or "[0]")
+        assert called == []                      # use_ai defaults to off
+        promises.build_promises(tmp_path, segs, cfg, completion=lambda m: called.append(m) or "[0]",
+                                use_ai=True)
     assert len(called) == 1 and len(promises.load_promises(tmp_path)) == 1
 
 
@@ -114,6 +129,16 @@ def test_a_crash_in_promises_never_fails_the_transcription(tmp_path):
         transcript = _transcribe(tmp_path)
     assert transcript["segments"]
     assert json.loads((tmp_path / "meta.json").read_text())["status"] == "transcribed"
+
+
+def test_ai_sees_your_lines_only_for_deepgram_or_when_the_box_is_ticked(tmp_path):
+    for backend, ticked, expected in (("deepgram", False, True), ("local", False, False),
+                                      ("local", True, True)):
+        cfg = types.SimpleNamespace(cleanup_provider="openai", cleanup_model="m",
+                                    meeting_auto_name=ticked)
+        with patch("wisprlite.promises.build_promises") as build:
+            meeting._auto_promises(tmp_path, [], cfg, backend)
+        assert build.call_args.kwargs["use_ai"] is expected, (backend, ticked)
 
 
 def test_transcription_writes_promises_json(tmp_path):
