@@ -1656,12 +1656,20 @@ class App:
             size_mb = path.stat().st_size / 1e6
         except OSError:
             size_mb = 0.0
+        # The picture died part-way: say so in every message, never "ready" alone.
+        import json
+
+        try:
+            partial = json.loads((path.parent / "video.json").read_text(encoding="utf-8")).get("partial")
+        except (OSError, ValueError, AttributeError):
+            partial = None
+        note = " (picture stopped early; audio is complete)" if partial else ""
         send_on, destination = plan or (
             bool(self.cfg.meeting_video_send), (self.cfg.screenrec_destination or "").strip())
         if not send_on:
             log.info("meeting video: %.1f MB, sent=False", size_mb)
             with self._video_msg_lock:
-                self._video_say("done", "\u2713 Meeting video ready")
+                self._video_say("done", "\u2713 Meeting video ready" + note)
             return
         if not destination:
             log.info("meeting video: %.1f MB, sent=False (no destination)", size_mb)
@@ -1692,7 +1700,7 @@ class App:
             with self._video_msg_lock:
                 self._video_say(
                     "done" if ok else "error",
-                    "\u2713 Meeting video sent" if ok else
+                    "\u2713 Meeting video sent" + note if ok else
                     f"Meeting video kept locally \u2014 send failed: {message}"[:80])
 
         thread = threading.Thread(target=work, name="meeting-video-send", daemon=False)

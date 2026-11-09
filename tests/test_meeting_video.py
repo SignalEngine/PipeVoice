@@ -438,3 +438,13 @@ def test_a_crashed_hold_goes_stale(tmp_path):
     old = time.time() - 7 * 3600
     os.utime(marker, (old, old))
     assert meeting.session_busy(tmp_path) is False
+
+
+def test_a_partial_picture_is_never_announced_as_simply_ready(tmp_path):
+    clip = tmp_path / meeting.meeting_video_name(tmp_path)
+    clip.write_bytes(b"x")
+    (tmp_path / "video.json").write_text(json.dumps(
+        {"file": clip.name, "error": None, "partial": "grab failed"}))
+    app, said = _app()
+    _ready(app, clip, plan=(False, ""))
+    assert "stopped early" in said[-1]
