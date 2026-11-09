@@ -292,7 +292,7 @@ def test_first_run_opens_the_guide_maximised():
     import inspect
 
     source = inspect.getsource(settings.main)
-    assert '"Guide" if first_run else "Settings"' in source, (
+    assert '"Guide" if first_run else "History"' in source, (
         "first run must open the Guide, not the settings form"
     )
 
@@ -709,11 +709,11 @@ def test_settings_live_in_the_tab_they_belong_to():
             node = getattr(node, "master", None)
         return chain
 
-    settings_form = set(ancestors(find("Min seconds")))          # still in Advanced
+    settings_form = set(ancestors(find("Deepgram wait")))        # still in Advanced
     recordings_tab = set(ancestors(find("Press your screen recording hotkey")))
     meetings_tab_frames = set(ancestors(find("Press your meeting hotkey")))
 
-    screenrec_card = set(ancestors(find("Screen recordings")))
+    screenrec_card = set(ancestors(find("Show a bug instead")))     # the card's own subtitle
     assert screenrec_card & (recordings_tab - settings_form), \
         "the screen-recording card is not inside the Recordings tab"
     assert not (screenrec_card & (settings_form - recordings_tab)), \
@@ -725,7 +725,7 @@ def test_settings_live_in_the_tab_they_belong_to():
     assert not (meeting_card & (settings_form - meetings_tab_frames)), \
         "the meeting settings are still in the Settings form"
 
-    assert "Recordings" in seen, "the Recordings tab button was never mounted"
+    assert "Screen recordings" in seen, "the Screen recordings tab button was never mounted"
 
 
 def test_the_settings_link_swaps_the_view_and_swaps_it_back():
@@ -741,14 +741,14 @@ def test_the_settings_link_swaps_the_view_and_swaps_it_back():
     import tkinter as tk
     from wisprlite import settings
 
-    os.environ["PV_TAB"] = "Recordings"
+    os.environ["PV_TAB"] = "Screen recordings"
     outcome: dict[str, bool] = {}
     real_mainloop = tk.Misc.mainloop
 
     def find_visible_link(widget):
         for child in widget.winfo_children():
             try:
-                if str(child.cget("text")).startswith("Settings  ") and child.winfo_ismapped():
+                if str(child.cget("text")).startswith("\u2699  Recording settings") and child.winfo_ismapped():
                     return child
             except Exception:
                 pass
@@ -777,13 +777,13 @@ def test_the_settings_link_swaps_the_view_and_swaps_it_back():
             link = find_visible_link(self)
             outcome["found_link"] = link is not None
             outcome["browser_before"] = bool(intro and intro.winfo_ismapped())
-            link.event_generate("<Button-1>")
+            link.invoke()
             self.update_idletasks()
             self.update()
             outcome["browser_hidden"] = not intro.winfo_ismapped()
             hotkey = find_by_text(self, "Screen recording hotkey")
             outcome["settings_shown"] = bool(hotkey and hotkey.winfo_ismapped())
-            link.event_generate("<Button-1>")
+            link.invoke()
             self.update_idletasks()
             self.update()
             outcome["browser_back"] = intro.winfo_ismapped()
@@ -799,7 +799,7 @@ def test_the_settings_link_swaps_the_view_and_swaps_it_back():
     finally:
         tk.Misc.mainloop = real_mainloop
 
-    assert outcome.get("found_link"), "no visible Settings link on the Recordings tab"
+    assert outcome.get("found_link"), "no visible Recording settings button on the Screen recordings tab"
     assert outcome.get("browser_before"), "the browser should start visible"
     assert outcome.get("browser_hidden"), "opening settings must hide the browser"
     assert outcome.get("settings_shown"), "the settings never became visible"
@@ -1242,7 +1242,7 @@ def test_the_settings_link_says_which_state_it_is_in():
     import tkinter as tk
     from wisprlite import settings
 
-    os.environ["PV_TAB"] = "Recordings"
+    os.environ["PV_TAB"] = "Screen recordings"
     seen = {}
     real_mainloop = tk.Misc.mainloop
 
@@ -1261,15 +1261,14 @@ def test_the_settings_link_says_which_state_it_is_in():
     def stub_mainloop(self, _n=0):
         try:
             self.update_idletasks(); self.update()
-            # "Settings" alone also matches the TAB header, which is a
-            # different widget entirely. The gear is the link.
-            link = find(self, "Settings  \u2699")
+            # The gear button in the tab's own header row is the opener.
+            link = find(self, "\u2699  Recording settings")
             seen["shut"] = str(link.cget("text"))
-            link.event_generate("<Button-1>")
+            link.invoke()
             self.update_idletasks(); self.update()
             seen["open"] = str(link.cget("text"))
             # Pressing the tab header must be a way out of the settings.
-            tab = find(self, "Recordings")
+            tab = find(self, "Screen recordings")
             tab.event_generate("<Button-1>")
             self.update_idletasks(); self.update()
             seen["after_tab"] = str(link.cget("text"))

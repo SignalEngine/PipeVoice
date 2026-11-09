@@ -145,13 +145,12 @@ def build(container, root, wheel=None, with_settings=False):
 
     head = tk.Frame(container, bg=BG, padx=px(18), pady=px(14))
     head.pack(fill="x")
-    tk.Label(head, text="Recordings", bg=BG, fg=ACCENT,
+    tk.Label(head, text="Screen recordings", bg=BG, fg=ACCENT,
              font=theme.font("subtitle")).pack(side="left")
     count_label = tk.Label(head, text="", bg=BG, fg=MUTED, font=theme.font("body"))
     count_label.pack(side="left", padx=px((10, 0)))
 
-    settings_link = tk.Label(head, text="Settings  ⚙", bg=BG, fg=ACCENT,
-                             cursor="hand2", font=theme.font("body", underline=True))
+    settings_link = ttk.Button(head, text="⚙  Recording settings")
     settings_panel = None
 
     # anchor="w" is load-bearing: a Label centres its wrapped block, so without

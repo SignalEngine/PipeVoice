@@ -211,7 +211,7 @@ def main() -> None:
         vrow = tk.Frame(inner, bg=CARD)
         vrow.pack(fill="x", pady=px((14, 0)))
         tk.Label(vrow, text="VOICE", bg=CARD, fg=MUTED, font=theme.font("body_strong")).pack(anchor="w")
-        tk.Label(vrow, text="The polish preset to use in this app. Create/edit voices in Settings → Manage voices.",
+        tk.Label(vrow, text="The polish preset to use in this app. Create/edit voices in the Voices tab.",
                  bg=CARD, fg=MUTED, font=theme.font("caption")).pack(anchor="w", pady=px((2, 0)))
         voice_opts = voices.names(cfg) or ["Tidy"]
         cur = overrides_voice if overrides_voice in voice_opts else voice_opts[0]

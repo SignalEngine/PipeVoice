@@ -849,8 +849,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     settings_panel = None
     settings_link = None
     if with_settings:
-        settings_link = tk.Label(head, text="Settings  ⚙", bg=BG, fg=ACCENT,
-                                 cursor="hand2", font=theme.font("body", underline=True))
+        settings_link = ttk.Button(head, text="⚙  Meeting settings")
         settings_link.pack(side="right", padx=px((0, 14)))
         tooltip(settings_link, "Meeting hotkey, bookmarks, PipeFocus, where recordings "
                                "are kept and how many.")
@@ -2336,7 +2335,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         destination = (config.Config.load().screenrec_destination or "").strip()
         if not destination:
             status_label.config(
-                text="Set a destination under Screen recording first.", fg=ACCENT)
+                text="Set a destination in Screen recordings → ⚙ Recording settings first.", fg=ACCENT)
             return
         from .meeting import hold_session, release_session
 
@@ -2538,7 +2537,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             session_title.config(text="No meetings yet")
             session_meta.config(text="")
             set_transcript(
-                "Set a meeting hotkey in Settings, then press it once to start "
+                "Set a meeting hotkey in ⚙ Meeting settings, then press it once to start "
                 "recording and again to stop.",
                 placeholder=True,
             )

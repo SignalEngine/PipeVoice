@@ -993,7 +993,7 @@ class App:
             elif action == "copy":
                 copy_clipboard(str(video))
             elif action == "open":
-                self.open_settings(tab="Recordings", select=Path(video).stem)
+                self.open_settings(tab="Screen recordings", select=Path(video).stem)
         except Exception as exc:
             log.info("screenrec: %s failed: %s", action, exc)
         if action in ("play", "open"):
@@ -1290,7 +1290,7 @@ class App:
         if not destination:
             self._screenrec_ui.update(
                 phase="done", title="No destination set",
-                subtitle="Settings › Recordings › where to send clips")
+                subtitle="Screen recordings › ⚙ Recording settings › where to send clips")
             return
 
         def work():
@@ -1329,7 +1329,7 @@ class App:
         except Exception as exc:
             log.info("screenrec: could not copy the path: %s", exc)
         try:
-            self.open_settings(tab="Recordings", select=stem)
+            self.open_settings(tab="Screen recordings", select=stem)
         except Exception as exc:
             log.info("screenrec: could not open the Recordings tab: %s", exc)
 
@@ -1356,7 +1356,7 @@ class App:
         if not hotkey:
             # Without it the user has started something they cannot stop.
             return {"status": "error",
-                    "error": "no screen recording hotkey is set — Settings > Screen recording"}
+                    "error": "no screen recording hotkey is set — Screen recordings > ⚙ Recording settings"}
 
         self._screenrec_agent_result = None
         waiter = threading.Event()

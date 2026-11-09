@@ -376,7 +376,7 @@ def _build_guide(parent, wheel) -> None:
          "engine; the recordings stay on your machine.")
     item("1 · Press Ctrl + Alt + M",
          "Tap it once to start recording, tap it again to stop. That's the default on a new "
-         "install; change it (or clear it to turn it off) in Settings → Hotkeys → Meeting hotkey.",
+         "install; change it (or clear it to turn it off) in Meetings → ⚙ Meeting settings.",
          badge="START HERE", badge_color=GOOD)
     item("2 · It records both sides",
          "Your microphone and your computer's own audio are captured separately — so what "
@@ -386,7 +386,7 @@ def _build_guide(parent, wheel) -> None:
          "Your normal typing hotkey is switched off while a meeting records, so a stray "
          "press can't interrupt the capture. It comes back the moment you stop.")
     item("4 · Transcribe it",
-         "Settings → Meetings, pick the session, press Transcribe. Deepgram is fast and "
+         "In the Meetings tab, pick the session, press Transcribe. Deepgram is fast and "
          "separates the remote speakers; Local whisper works offline but labels everyone "
          "the same. The tab tells you which one produced each transcript.")
     item("5 · Name the people",
@@ -427,7 +427,7 @@ def _build_guide(parent, wheel) -> None:
          "When you stop a meeting, the pill offers Transcribe + answer: one click does both. "
          "If no docs are set, press Choose docs folder… in the Their questions panel. "
          "Point Pipevoice at your docs first: a folder (PDF, Markdown or text) or a web page "
-         "under Settings → Meetings, or paste this call's brief into Call notes. Then press "
+         "under the Meetings tab, or paste this call's brief into Call notes. Then press "
          "Answer from my docs. You get every question the other side asked, each with a "
          "short answer and the exact sentence from your docs it came from — or “Not "
          "in your docs”, which is your list of what to write next. Thumbs up or down on "
@@ -475,14 +475,26 @@ def _build_guide(parent, wheel) -> None:
     tk.Label(g, text="", bg=BG).pack(pady=px(6))  # bottom breathing room
 
 
-def _build_voices_tab(parent, show_tab=None, wheel=None) -> None:
-    """Flagship 'Voices & App Profiles' page: explain the feature, launch the editors."""
+def _build_voices_tab(parent, show_tab=None, wheel=None, with_settings=False):
+    """Flagship 'Voices & App Profiles' page: explain the feature, launch the editors.
+
+    With `with_settings`, a "⚙  Voice settings" button swaps in an (empty, hidden)
+    panel, which is returned for the caller to fill; otherwise returns None.
+    """
     import tkinter as tk
     from tkinter import ttk
 
+    head = tk.Frame(parent, bg=BG, padx=px(18), pady=px(14))
+    head.pack(fill="x")
+    settings_link = ttk.Button(head, text="⚙  Voice settings") if with_settings else None
+    if settings_link is not None:
+        settings_link.pack(side="right")
+    content = tk.Frame(parent, bg=BG)
+    content.pack(fill="both", expand=True)
+
     # scrollable (mirrors the other content tabs) so nothing is clipped on short screens
-    canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
-    sbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+    canvas = tk.Canvas(content, bg=BG, highlightthickness=0)
+    sbar = ttk.Scrollbar(content, orient="vertical", command=canvas.yview)
     canvas.configure(yscrollcommand=sbar.set)
     sbar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
@@ -538,9 +550,14 @@ def _build_voices_tab(parent, show_tab=None, wheel=None) -> None:
              "Outlook → Professional"],
             "Manage app profiles…", "--profiles")
 
-    tk.Label(wrap, text="Tip: bind a Voice to a hotkey (Settings → Voice hotkeys) to switch style mid-sentence. "
+    tk.Label(wrap, text="Tip: bind a Voice to a hotkey (Voices → ⚙ Voice settings) to switch style mid-sentence. "
                         "A key always wins over the app's default.",
              bg=BG, fg=MUTED, font=theme.font("body"), justify="left", wraplength=px(736)).pack(anchor="w", pady=px((4, 0)))
+
+    if settings_link is None:
+        return None
+    return winui.collapsible_settings(
+        parent, settings_link, [(content, {"fill": "both", "expand": True})], BG, wheel)
 
 
 VIDEO_FPS_OPTIONS = [
@@ -604,14 +621,21 @@ def main(first_run: bool = False) -> None:
     tab_recordings = tk.Frame(body_wrap, bg=BG)
     tab_guide = tk.Frame(body_wrap, bg=BG)
     tab_about = tk.Frame(body_wrap, bg=BG)
-    _tabs = [("Settings", tab_settings), ("Voices", tab_voices), ("History", tab_history),
-             ("Meetings", tab_meetings), ("Recordings", tab_recordings),
-             ("Guide", tab_guide), ("About", tab_about)]
+    # About is reachable but not in the bar: it lives behind Settings (a card at
+    # the bottom of that form), and the tray's "About" opens it directly.
+    _tabs = [("History", tab_history), ("Meetings", tab_meetings),
+             ("Screen recordings", tab_recordings), ("Voices", tab_voices),
+             ("Guide", tab_guide), ("Settings", tab_settings), ("About", tab_about)]
+    _tab_aliases = {"Recordings": "Screen recordings"}      # old PV_TAB values keep working
+    _tab_tile = {"History": "feat_history", "Meetings": "feat_meetings",
+                 "Screen recordings": "feat_screenrec", "Voices": "feat_voices",
+                 "Guide": "feat_guide"}
     _tab_w = {}
 
     def _show_tab(name):
+        name = _tab_aliases.get(name, name)
         if name not in dict(_tabs):
-            name = "Settings"
+            name = "History"
         # A tab's settings panel is a detour INSIDE that tab, not a place of its
         # own, so pressing the tab header is the way back out of it. Do this for
         # every tab, not just the one being opened: leaving a tab with its
@@ -627,20 +651,32 @@ def main(first_run: bool = False) -> None:
         for _n, _f in _tabs:
             _f.pack_forget()
         dict(_tabs)[name].pack(fill="both", expand=True)
+        selected = "Settings" if name == "About" else name      # About sits under the gear
         for _n, (lbl, ul) in _tab_w.items():
-            on = _n == name
-            lbl.config(fg=ACCENT if on else MUTED)
+            on = _n == selected
+            lbl.config(fg=FG if on else MUTED)
             ul.config(bg=ACCENT if on else BG)
 
-    for _name, _frame in _tabs:
+    for _name in ("History", "Meetings", "Screen recordings", "Voices", "Guide", "Settings"):
+        gear = _name == "Settings"
         w = tk.Frame(tabbar, bg=BG)
-        w.pack(side="left", padx=px((0, 8)))
-        lbl = tk.Label(w, text=_name, bg=BG, fg=MUTED, font=theme.font("body_large_strong"),
-                       cursor="hand2", padx=px(10), pady=px(8))
-        lbl.pack()
+        w.pack(side="right" if gear else "left", padx=px((0, 8)))
+        top = tk.Frame(w, bg=BG, cursor="hand2")
+        top.pack()
+        widgets = [top]
+        if not gear:
+            tile = tk.Frame(top, bg=winui.PALETTE[_tab_tile[_name]], width=px(10), height=px(10))
+            tile.pack(side="left", padx=px((0, 6)))
+            widgets.append(tile)
+        lbl = tk.Label(top, text="\u2699  Settings" if gear else _name, bg=BG, fg=MUTED,
+                       font=theme.font("body_large_strong"),
+                       cursor="hand2", padx=px(4 if not gear else 10), pady=px(8))
+        lbl.pack(side="left")
+        widgets.append(lbl)
         ul = tk.Frame(w, bg=BG, height=px(2))
         ul.pack(fill="x")
-        lbl.bind("<Button-1>", lambda e, n=_name: _show_tab(n))
+        for _w in widgets:
+            _w.bind("<Button-1>", lambda e, n=_name: _show_tab(n))
         _tab_w[_name] = (lbl, ul)
 
     # --- Settings tab: scrollable form ---
@@ -667,13 +703,15 @@ def main(first_run: bool = False) -> None:
     _canvas.bind("<Configure>", _fit_form)
     _wheel(_canvas)
     def fix_word_from_history(wrong: str) -> None:
-        """"Fix this" on a history row: prefill the wrong side, jump to Settings."""
+        """"Fix this" on a history row: prefill the wrong side, open Dictation settings."""
         fix_wrong_var.set(wrong)
         fix_right_var.set("")
-        _show_tab("Settings")
+        _show_tab("History")
+        tab_history.pv_open_settings()
         root.after(50, fix_right_entry.focus_set)
 
-    history.build(tab_history, root, _wheel, on_fix_word=fix_word_from_history)
+    history_settings_panel = history.build(
+        tab_history, root, _wheel, on_fix_word=fix_word_from_history, with_settings=True)
 
     def sync_meeting_replacements(replacements):
         items = [f"{k} → {v}" for k, v in replacements.items()]
@@ -694,11 +732,17 @@ def main(first_run: bool = False) -> None:
         tab_recordings, root, _wheel, with_settings=True)
     _build_guide(tab_guide, _wheel)
     about.build(tab_about, root, _wheel)
-    _build_voices_tab(tab_voices, _show_tab, _wheel)
+    voices_settings_panel = _build_voices_tab(tab_voices, _show_tab, _wheel, with_settings=True)
+    for _panel, _title in ((history_settings_panel, "Dictation settings"),
+                           (meeting_settings_panel, "Meeting settings"),
+                           (recordings_settings_panel, "Recording settings"),
+                           (voices_settings_panel, "Voice settings")):
+        tk.Label(_panel, text=_title, bg=BG, fg=FG, font=theme.font("subtitle")).pack(
+            anchor="w", padx=px(21), pady=px((0, 10)))
     # First run lands on the GUIDE, not a settings form. Someone who has just
     # installed this needs "how do I use it", and first_run previously changed
     # only the window title. PV_TAB is a render/test seam and still wins.
-    _show_tab(os.getenv("PV_TAB") or ("Guide" if first_run else "Settings"))
+    _show_tab(os.getenv("PV_TAB") or ("Guide" if first_run else "History"))
     DIV = "#272b37"
 
     def card(title, subtitle=None, parent=None):
@@ -902,541 +946,31 @@ def main(first_run: bool = False) -> None:
         e.pack(side="left")
         return e
 
+    # --- Pointer card: settings moved into their feature tabs in v2.49.27 ---
+    # Upgraders look here for push-to-talk etc.; send them to the one real home.
+    c = card("Looking for something?", "Feature settings now live in their own tab.")
+    for _txt, _desc, _tab, _frame in (
+        ("Hotkeys, polish and vocabulary", "History → ⚙ Dictation settings", "History", tab_history),
+        ("Meeting recording and docs", "Meetings → ⚙ Meeting settings", "Meetings", tab_meetings),
+        ("Screen recording and sending", "Screen recordings → ⚙ Recording settings",
+         "Screen recordings", tab_recordings),
+        ("Voice keys", "Voices → ⚙ Voice settings", "Voices", tab_voices),
+    ):
+        def _go(t=_tab, f=_frame):
+            _show_tab(t)
+            opener = getattr(f, "pv_open_settings", None)
+            if callable(opener):
+                opener()
+        ttk.Button(row(c, _txt, _desc), text="Open", width=8, command=_go).pack(side="left")
+
     # --- General ---
     c = card("General", "How Pipevoice listens, and where your words go.")
     combo(row(c, "Engine", "Gemini is free (one key also does AI polish). Groq is fast, accurate Whisper. Deepgram streams live. Local is offline."),
           engine_var, [l for _, l in engine_opts])
-    combo(row(c, "Mode", "Push-to-talk holds the key; toggle taps it on and off."),
-          mode_var, [l for _, l in MODES])
+    combo(row(c, "Accent / language", "Pick yours for better accuracy, including non-native accents."),
+          lang_var, [l for _, l in LANGUAGES])
 
-    # --- Hotkeys ---
-    c = card("Hotkeys")
-    r = row(c, "Push-to-talk key", "Hold this to dictate into the focused window.")
-    entry(r, hotkey_var, width=14)
-    cap_btn = ttk.Button(r, text="Capture", width=8)
-    cap_btn.pack(side="left", padx=px((8, 0)))
-
-    def capture():
-        cap_btn.config(text="Press keys…")
-
-        def work():
-            hk = None
-            try:
-                import keyboard
-                hk = keyboard.read_hotkey(suppress=False)
-            except Exception:
-                hk = None
-
-            def done():
-                if hk:
-                    hotkey_var.set(hk)
-                cap_btn.config(text="Capture")
-            root.after(0, done)
-
-        threading.Thread(target=work, daemon=True).start()
-
-    cap_btn.config(command=capture)
-
-    r = row(c, "Clipboard hotkey", "Hold to dictate to the clipboard instead of typing into the app.")
-    entry(r, clip_hotkey_var, width=14)
-    clip_cap_btn = ttk.Button(r, text="Capture", width=8)
-    clip_cap_btn.pack(side="left", padx=px((8, 0)))
-
-    def clip_capture():
-        clip_cap_btn.config(text="Press keys…")
-
-        def work():
-            hk = None
-            try:
-                import keyboard
-                hk = keyboard.read_hotkey(suppress=False)
-            except Exception:
-                hk = None
-
-            def done():
-                if hk:
-                    clip_hotkey_var.set(hk)
-                clip_cap_btn.config(text="Capture")
-            root.after(0, done)
-
-        threading.Thread(target=work, daemon=True).start()
-
-    clip_cap_btn.config(command=clip_capture)
-
-    # --- Your docs: first in Meetings settings, because answers are the point ---
-    c = card(
-        "Your docs",
-        "Markdown, text or PDF. Meetings answers the other side's questions from "
-        "them, live and after the call.",
-        parent=meeting_settings_panel,
-    )
-    _kr = row(c, "Docs folder", "The folder PipeVoice reads.")
-    entry(_kr, knowledge_dir_var, width=30)
-
-    def _browse_knowledge():
-        from tkinter import filedialog
-        chosen = filedialog.askdirectory(
-            parent=root, title="Folder with your docs",
-            initialdir=knowledge_dir_var.get().strip() or os.path.expanduser("~"),
-        )
-        if chosen:
-            knowledge_dir_var.set(chosen)
-
-    ttk.Button(_kr, text="Browse", width=8,
-               command=_browse_knowledge).pack(side="left", padx=px((8, 0)))
-    entry(row(c, "Docs web page", "One page, e.g. your pricing or FAQ. Optional."),
-          knowledge_url_var, width=30)
-    check(c, "Show answers during the call (Deepgram only)", live_answers_var,
-          "A small card pops up bottom-right when the other side asks something your\n"
-          "docs or next-call notes answer. Nothing pops up when it is unsure.")
-
-    # --- Meetings: rendered into the Meetings tab, not this form ---
-    c = card(
-        "Meetings",
-        "Recording a call captures your microphone and the computer's audio "
-        "separately, so nobody gets mixed up.",
-        parent=meeting_settings_panel,
-    )
-    r = row(
-        c,
-        "Meeting hotkey",
-        "Tap once to start meeting recording and again to stop. "
-        "Dictation is suppressed while a meeting is recording.",
-    )
-    entry(r, meeting_hotkey_var, width=14)
-    meeting_cap_btn = ttk.Button(r, text="Capture", width=8)
-    meeting_cap_btn.pack(side="left", padx=px((8, 0)))
-    meeting_cap_btn.config(
-        command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
-    )
-
-    check(c, "Also name meetings transcribed on this computer", meeting_auto_name_var,
-          "Meetings transcribed with Deepgram are named automatically. Tick this to also "
-          "send the start of local transcripts to your AI provider for a name.")
-    check(c, "Transcribe automatically when the meeting ends", meeting_auto_transcribe_var,
-          "Uses your transcription provider. You can still answer their questions after.")
-    check(c, "Record the screen too (video)", meeting_video_var,
-          "Records the screen your mouse is on when the meeting starts. "
-          "Applies from the next meeting.")
-    combo(row(c, "Video smoothness",
-              "Higher is smoother but makes bigger files and uses more CPU. "
-              "About 3x the size at 15 fps. Applies from the next meeting."),
-          meeting_video_fps_var, [label for label, _ in VIDEO_FPS_OPTIONS])
-    check(c, "Send the video when the meeting ends, plus the transcript if it was transcribed automatically (uses the Screen recording destination)",
-          meeting_video_send_var)
-    _video_dest_hint = tk.Label(c, text="", bg=CARD, fg=MUTED, font=theme.font("caption"),
-                                wraplength=px(540), justify="left")
-    _video_dest_hint.pack(anchor="w", padx=px((43, 0)), pady=px((0, 8)))
-
-    def _sync_video_dest_hint(*_):
-        empty = not screenrec_dest_var.get().strip()
-        _video_dest_hint.config(
-            text="Set a destination under Screen recording first" if empty else "")
-
-    _sync_video_dest_hint()
-    screenrec_dest_var.trace_add("write", _sync_video_dest_hint)
-
-    r = row(c, "Bookmark hotkey", "Tap while recording to mark the current moment.")
-    entry(r, bookmark_hotkey_var, width=14)
-    bookmark_cap_btn = ttk.Button(r, text="Capture", width=8)
-    bookmark_cap_btn.pack(side="left", padx=px((8, 0)))
-    bookmark_cap_btn.config(command=_mk_capture(bookmark_cap_btn, bookmark_hotkey_var))
-
-    entry(row(c, "Say this to bookmark",
-              "Just say one of these during a meeting — no key, no hands. Found when the\n"
-              "recording is transcribed, so it costs nothing and works offline.\n"
-              "Comma-separated; leave blank to switch off."),
-          bookmark_phrases_var, width=34)
-
-    check(c, "Also bookmark on a double clap or snap", bookmark_acoustic_var,
-          "Off by default, and it does not work on many laptops: Windows Audio\n"
-          "enhancements (Studio Effects / Voice Focus) delete claps and snaps on\n"
-          "purpose and ship switched ON. Press Test to see whether yours get through.\n"
-          "Microphone only — nothing on the call can trigger it. Prefer the spoken\n"
-          "phrase above, which is speech and so survives that filtering.")
-    check(c, "PipeFocus \u2014 quiet nudges during a meeting", pipefocus_var,
-          "Off by default. Watches the conversation live and speaks up only when something\nconcrete is drifting \u2014 an action item with nobody on it, a decision deferred again.\nAt most one nudge every few minutes, and it stays quiet when nothing is wrong.\nNeeds Deepgram, because it is the only engine that transcribes live; it simply\ndoes not run on the others. Uses your transcription and AI-polish keys while a\nmeeting records. Roughly 30 cents an hour of meeting on Deepgram's standard rate.")
-    r = row(c, "Clap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
-    _sens_scale = ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
-                            orient="horizontal", length=px(130))
-    _sens_scale.pack(side="left")
-    ttk.Label(r, textvariable=bookmark_sensitivity_var, width=5).pack(side="left", padx=px((7, 0)))
-
-    def test_snap():
-        import tkinter as tk
-        from .meeting import smooth_level
-        from .overlay import meter_level
-        from .snap import SnapDetector
-        dialog = tk.Toplevel(root)
-        dialog.title("Test acoustic bookmarks")
-        dialog.configure(bg=BG)
-        tk.Label(dialog, text="Clap twice, or snap twice", bg=BG, fg=FG,
-                 font=theme.font("body_large_strong")).pack(padx=px(18), pady=px((16, 6)))
-        level = ttk.Progressbar(dialog, maximum=1.0, length=px(260))
-        level.pack(padx=px(18), pady=px(8))
-        result = tk.Label(dialog, text="Listening…", bg=BG, fg=MUTED)
-        result.pack(padx=px(18), pady=px((0, 12)))
-        detector = SnapDetector(16_000, sensitivity=float(bookmark_sensitivity_var.get()))
-        stream = None
-        # Name the device in every message. "No microphone showing" is impossible
-        # to act on without knowing which device the test actually opened.
-        _dev = config.device_arg(cfg)
-        device_label = "the system default microphone" if _dev is None else f"device {_dev}"
-        # The audio callback runs on PortAudio's thread and Tk is not thread-safe,
-        # so it only ever writes into this dict — exactly what MeetingRecorder does
-        # with self._levels. The UI polls on the main thread below.
-        shared = {"level": 0.0, "hits": 0, "error": "", "blocks": 0, "peak": 0.0}
-
-        def callback(block, _frames, _time, _status):
-            try:
-                shared["blocks"] += 1
-                total = 0.0
-                count = 0
-                for value in block:
-                    sample = float(value[0] if getattr(value, "ndim", 0) else value)
-                    total += sample * sample
-                    count += 1
-                rms = (total / count) ** 0.5 if count else 0.0
-                if rms > shared["peak"]:
-                    shared["peak"] = rms
-                # Fast attack, slow release, then the same dB curve the REC meter
-                # uses. A linear bar reads as dead: speech peaks near 0.05.
-                shared["level"] = smooth_level(shared["level"], rms)
-                if detector.feed(block):
-                    shared["hits"] += 1
-            except Exception as exc:      # never silently: a dead bar told us nothing
-                shared["error"] = f"{type(exc).__name__}: {exc}"
-
-        seen_hits = 0
-        ticks = 0
-
-        def tick():
-            # Never leave a silent bar again: say WHICH of the three states we are
-            # in — no audio arriving at all, audio arriving but too quiet, or
-            # working. A dead bar with "Listening..." under it is indistinguishable
-            # from a crash, which is exactly how this wasted a debugging round.
-            nonlocal seen_hits, ticks
-            if not dialog.winfo_exists():
-                return
-            ticks += 1
-            level.configure(value=meter_level(shared["level"]))
-            if shared["error"]:
-                result.config(text=shared["error"], fg=ACCENT)
-            elif shared["hits"] > seen_hits:
-                seen_hits = shared["hits"]
-                result.config(text=f"Detected · {seen_hits}", fg=GOOD)
-            elif shared["blocks"] == 0 and ticks > 30:      # ~1.5s with no callback
-                result.config(
-                    text=f"No audio from {device_label}. Pick a different microphone "
-                         "under Audio, then reopen this test.",
-                    fg=ACCENT,
-                )
-            elif shared["blocks"] and shared["peak"] < 0.002 and ticks > 60:
-                result.config(
-                    text=f"{device_label} is connected but silent — check it is not "
-                         "muted, and that it is the mic you are speaking into.",
-                    fg=WARN,
-                )
-            elif detector.transients:
-                # A pair was not accepted, but sharp events ARE getting through:
-                # say so, or "nothing happened" reads as a dead feature again.
-                result.config(
-                    text=f"{detector.transients} sharp sound(s) heard — "
-                         "clap twice, about a second apart",
-                    fg=WARN,
-                )
-            elif detector.last_peak:
-                # Loud but smooth IS the Windows Studio Effects signature: Voice
-                # Focus is built to strip non-speech transients — claps, snaps and
-                # keyboard noise — so the clap arrives loud and flattened. Confirmed
-                # on a Copilot+ machine where it is on by default. Name it, because
-                # no amount of clapping harder will ever fix it.
-                result.config(
-                    text=f"Heard it ({detector.last_peak:.2f} loud) but too smooth — "
-                         f"crest {detector.last_crest:.1f}, needs "
-                         f"{detector.need_crest:.1f}.\nWindows is filtering the clap "
-                         "out. Sound settings → your mic → turn OFF Audio "
-                         "enhancements\n(Copilot+ PCs: Windows Studio Effects → "
-                         "Voice Focus).",
-                    fg=WARN,
-                    justify="left",
-                )
-            elif shared["blocks"]:
-                result.config(
-                    text=f"Listening · {device_label} · peak {shared['peak']:.3f}",
-                    fg=MUTED,
-                )
-            dialog.after(50, tick)
-
-        def release():
-            nonlocal stream
-            if stream is not None:
-                try:
-                    stream.stop()
-                    stream.close()
-                except Exception:
-                    pass
-                stream = None
-
-        def close():
-            release()
-            dialog.destroy()
-
-        # Closing the SETTINGS window destroys this dialog without ever running
-        # close(), so WM_DELETE_WINDOW alone leaks the microphone — and on first
-        # run settings.main() lives in the app process, so the app then cannot
-        # acquire its own mic. That is exactly the "something else is holding the
-        # device" failure this dialog exists to diagnose. <Destroy> fires for every
-        # descendant widget, so only act on the dialog itself.
-        dialog.bind(
-            "<Destroy>", lambda event: release() if event.widget is dialog else None
-        )
-        try:
-            import sounddevice as sd
-            stream = sd.InputStream(samplerate=16_000, channels=1, dtype="float32",
-                                    blocksize=800, callback=callback,
-                                    device=config.device_arg(cfg))
-            stream.start()
-            ttk.Button(dialog, text="Close", command=close).pack(pady=px((0, 16)))
-            dialog.protocol("WM_DELETE_WINDOW", close)
-            tick()
-        except Exception as exc:
-            result.config(text=f"Microphone unavailable: {exc}", fg=ACCENT)
-            ttk.Button(dialog, text="Close", command=close).pack(pady=px((0, 16)))
-    _test_btn = ttk.Button(r, text="Test", command=test_snap)
-    _test_btn.pack(side="left", padx=px((8, 0)))
-
-    # Acoustic bookmarks are OFF by default and blocked outright on many laptops, but
-    # the sensitivity slider and Test button sat live regardless — so the Hotkeys tab
-    # foregrounded a switched-off feature next to the spoken phrase that actually
-    # works. Grey them out until the box is ticked. (James, 2026-07-28: "the ui still
-    # says about snapping ... is this the wrong one again?")
-    def _sync_acoustic(*_):
-        state = "normal" if bookmark_acoustic_var.get() else "disabled"
-        for _w in (_sens_scale, _test_btn):
-            try:
-                _w.config(state=state)
-            except Exception:
-                pass
-
-    bookmark_acoustic_var.trace_add("write", _sync_acoustic)
-    _sync_acoustic()
-
-    # --- Voice hotkeys ---
-    c = card("Voice hotkeys",
-             "Press a key to dictate with a specific Voice. Optional picker key chooses on the fly.")
-    for _i in range(3):
-        r = row(c, f"Voice key {_i + 1}", "Hold this to dictate using the chosen Voice.")
-        entry(r, vk_vars[_i], width=14)
-        _vcap = ttk.Button(r, text="Capture", width=8)
-        _vcap.pack(side="left", padx=px((8, 0)))
-        _vcap.config(command=_mk_capture(_vcap, vk_vars[_i]))
-        combo(r, vv_vars[_i], [l for _, l in voice_opts], width=18)
-    r = row(c, "Picker key", "Hold to pop a numbered voice list on the overlay.")
-    entry(r, picker_var, width=14)
-    _pcap = ttk.Button(r, text="Capture", width=8)
-    _pcap.pack(side="left", padx=px((8, 0)))
-    _pcap.config(command=_mk_capture(_pcap, picker_var))
-
-    # --- Screen recordings: rendered into the Recordings tab, not this form ---
-    c = card(
-        "Screen recordings",
-        "Show a bug instead of describing it. Recordings are sent with a text "
-        "transcript of what you said, so a coding agent can read it without "
-        "watching the video.",
-        parent=recordings_settings_panel,
-    )
-    r = row(c, "Screen recording hotkey",
-            "Tap once to drag a box over what you want to show, and again to stop. "
-            "Records that area plus your microphone.")
-    entry(r, screenrec_hotkey_var, width=14)
-    screenrec_cap_btn = ttk.Button(r, text="Capture", width=8)
-    screenrec_cap_btn.pack(side="left", padx=px((8, 0)))
-    screenrec_cap_btn.config(command=_mk_capture(screenrec_cap_btn, screenrec_hotkey_var))
-    entry(row(c, "Send to",
-              "An scp destination, e.g. root@your-vps:/root/project/inbox/. Uses the "
-              "SSH keys you already have — Pipevoice never stores one. Leave blank "
-              "to only save locally."),
-          screenrec_dest_var, width=34)
-    entry(row(c, "Save to",
-              "Blank uses your Videos folder."), screenrec_dir_var, width=34)
-    check(c, "Keep a local copy after sending", screenrec_keep_var,
-          "Off deletes the files once they have arrived. A failed send never deletes anything.")
-    entry(row(c, "Frames per second",
-              "10-15 is realistic at 1080p. Higher costs CPU on the machine you are "
-              "recording, which is the same one running what you are showing."),
-          screenrec_fps_var, width=6)
-
-    # --- Read Aloud: press the hotkey, have the screen read to you ---
-    c = card(
-        "Read Aloud",
-        "For text a screen reader can't reach — an image, a canvas, a scanned "
-        "PDF. Tap = drag a region, +Shift = the whole screen, +Ctrl = the "
-        "focused window. Speaks even with a screen reader running, unless you "
-        "turn that off below.",
-    )
-    r = row(c, "Read Aloud hotkey", "Blank turns the feature off.")
-    entry(r, read_aloud_hotkey_var, width=14)
-    ra_cap_btn = ttk.Button(r, text="Capture", width=8)
-    ra_cap_btn.pack(side="left", padx=px((8, 0)))
-    ra_cap_btn.config(command=_mk_capture(ra_cap_btn, read_aloud_hotkey_var))
-
-    combo(row(c, "Voice engine",
-              "Windows is free, offline, no key — nothing ever leaves this "
-              "machine. Deepgram and ElevenLabs send the recognized text to "
-              "their servers to speak it; only pick those on purpose. Any "
-              "cloud failure (dead key, no network) falls back to Windows and "
-              "says why."),
-          read_aloud_tts_var, [l for _, l in read_aloud_tts_opts])
-
-    pr = row(c, "Preview voice",
-             "Speaks one test sentence using the settings on this screen — "
-             "even if you haven't saved yet.")
-    preview_btn = ttk.Button(pr, text="Preview", width=10)
-    preview_btn.pack(side="left")
-    preview_status = tk.Label(pr, text="", bg=CARD, fg=MUTED, font=theme.font("caption"),
-                               wraplength=px(253), justify="left")
-    preview_status.pack(side="left", padx=px((10, 0)))
-
-    # Only the group matching the chosen engine is shown — a greyed-out field
-    # still reads as "something I am supposed to fill in", and showing all
-    # three at once is exactly how choosing ElevenLabs used to reveal nothing.
-    _divide(c)
-    windows_group = tk.Frame(c, bg=CARD)
-    deepgram_group = tk.Frame(c, bg=CARD)
-    elevenlabs_group = tk.Frame(c, bg=CARD)
-
-    wr = row(windows_group, "Get better Windows voices",
-             "Windows 11 ships far better \"Natural\" voices, but they aren't "
-             "installed by default. Opens Settings → Speech → Manage voices.")
-    ttk.Button(wr, text="Open Windows voice settings",
-               command=lambda: os.startfile("ms-settings:speech")).pack(side="left")
-    entry(row(windows_group, "Voice / model",
-              "Blank uses the system default Windows voice. Type the exact "
-              "name of an installed voice for another."),
-          read_aloud_voice_var, width=28)
-
-    dg_key_note = ("Already configured — the same key dictation uses." if config.deepgram_key()
-                   else "Not configured yet — add a Deepgram key in the API keys section below.")
-    dg_row = row(deepgram_group, "Deepgram voice (pick one)", dg_key_note)
-    dg_combo = combo(dg_row, read_aloud_deepgram_pick_var,
-                     [f"{name} — {desc}" for name, desc in _tts_cloud.DEEPGRAM_VOICES], width=40)
-
-    def _pick_deepgram_voice(_evt=None):
-        i = dg_combo.current()
-        if 0 <= i < len(_tts_cloud.DEEPGRAM_VOICES):
-            read_aloud_voice_var.set(_tts_cloud.DEEPGRAM_VOICES[i][0])
-    dg_combo.bind("<<ComboboxSelected>>", _pick_deepgram_voice)
-
-    _eleven_key_row = row(elevenlabs_group, "ElevenLabs API key",
-                          "Saved" if config.elevenlabs_key() else "Not set")
-    entry(_eleven_key_row, eleven_key_var, width=26, show="•")
-    ttk.Button(_eleven_key_row, text="Get a key ↗",
-               command=lambda: webbrowser.open(_URLS["elevenlabs"])).pack(side="left", padx=px((8, 0)))
-    eleven_id_row = row(
-        elevenlabs_group, "ElevenLabs voice ID",
-        "Search the Voice Library for a character or accent, add it to your "
-        "collection, and copy its ID here. Nothing there? Voice Design builds "
-        "one from a description. The catalogue is per-account, which is why "
-        "this is an ID rather than a picklist.")
-    entry(eleven_id_row, read_aloud_elevenlabs_id_var, width=28)
-    ttk.Button(eleven_id_row, text="Browse voices ↗",
-               command=lambda: webbrowser.open(
-                   "https://elevenlabs.io/app/voice-library")).pack(side="left", padx=px((8, 0)))
-
-    speed_row = row(c, "Speed", "0.5 (slow) to 2.0 (fast). 1.0 is normal.")
-    # row() returns the RIGHT-hand frame, so .master is the row frame packed
-    # into the card - which is what `before=` needs. If row() ever returns
-    # the row frame itself this becomes `before=<the card>` and pack() errors.
-    # tests/test_read_aloud_voice_keys.py walks the same two levels, so a
-    # change to row() breaks that test rather than the settings window.
-    speed_row_frame = speed_row.master
-    entry(speed_row, read_aloud_rate_var, width=6)
-    entry(row(c, "OCR language",
-              "e.g. en-US. Blank uses your Windows display language."),
-          read_aloud_lang_var, width=10)
-    check(c, "Also copy the recognized text to the clipboard", read_aloud_clipboard_var,
-          "On by default. The overlay always says when it copied.")
-    check(c, "Stay quiet while a screen reader is running", read_aloud_quiet_var,
-          "Off by default — the hotkey is usually pressed because the screen "
-          "reader can't read that spot, so silence there defeats the feature.")
-
-    def _read_aloud_tier():
-        label = read_aloud_tts_var.get()
-        for value, lbl in read_aloud_tts_opts:
-            if lbl == label:
-                return value
-        return read_aloud_tts_opts[0][0]
-
-    def _on_read_aloud_tts(*_):
-        tier = _read_aloud_tier()
-        for group in (windows_group, deepgram_group, elevenlabs_group):
-            group.pack_forget()
-        {"windows": windows_group, "deepgram": deepgram_group,
-         "elevenlabs": elevenlabs_group}[tier].pack(fill="x", before=speed_row_frame)
-    read_aloud_tts_var.trace_add("write", _on_read_aloud_tts)
-    _on_read_aloud_tts()
-
-    PREVIEW_TEXT = "Six sharp trucks strapped their crisp black cargo, then quickly turned north."
-
-    def _preview_snapshot():
-        return preview_snapshot(
-            tier=_read_aloud_tier(),
-            voice=read_aloud_voice_var.get(),
-            elevenlabs_voice_id=read_aloud_elevenlabs_id_var.get(),
-            rate_text=read_aloud_rate_var.get(),
-            elevenlabs_key=eleven_key_var.get(),
-            deepgram_key=dg_key_var.get(),
-        )
-
-    def _preview_show(text, fg):
-        def apply():
-            if preview_status.winfo_exists():
-                preview_status.config(text=text, fg=fg)
-        try:
-            if root.winfo_exists():
-                root.after(0, apply)
-        except Exception:
-            pass
-
-    def _run_preview():
-        preview_btn.config(state="disabled")
-        _preview_show("Speaking…", MUTED)
-        # Read every form value HERE, on the Tk thread, before the worker
-        # starts — a Tk variable read from a background thread is unsafe
-        # once the thread outlives the call that spawned it.
-        snap = _preview_snapshot()
-
-        def work():
-            from . import readaloud
-
-            try:
-                speaker, reason = readaloud.build_speaker(PREVIEW_TEXT, snap)
-                if reason:
-                    # A dead key or bad voice ID is exactly what preview exists
-                    # to surface — it must not quietly play the Windows
-                    # fallback voice the way a real read does.
-                    _preview_show(reason, WARN)
-                    return
-                speaker.speak(PREVIEW_TEXT)
-                _preview_show("Played.", GOOD)
-            except Exception as exc:
-                _preview_show(str(exc), WARN)
-            finally:
-                def reenable():
-                    if preview_btn.winfo_exists():
-                        preview_btn.config(state="normal")
-                try:
-                    if root.winfo_exists():
-                        root.after(0, reenable)
-                except Exception:
-                    pass
-
-        threading.Thread(target=work, daemon=True).start()
-
-    preview_btn.config(command=_run_preview)
-
-    c = card("Audio")
+    c = card("Microphone")
     mic_row = row(c, "Microphone")
     device_combo = combo(mic_row, device_var, [lbl for lbl, _ in devices], width=30)
 
@@ -1622,19 +1156,373 @@ def main(first_run: bool = False) -> None:
     check(c, "Show all endpoints", show_all_devices_var,
           "Every raw device PortAudio reports, including duplicates across host "
           "APIs (MME/DirectSound/WASAPI/WDM-KS) and virtual/loopback inputs.")
-    combo(row(c, "Accent / language", "Pick yours for better accuracy, including non-native accents."),
-          lang_var, [l for _, l in LANGUAGES])
 
-    # --- Models ---
-    c = card("Models", "Per-engine model names. The defaults are good for most people.")
-    entry(row(c, "Gemini model", "flash-lite is free & fast; try a Flash model for more accuracy."), gemini_model_var, width=22)
-    entry(row(c, "Groq model", "whisper-large-v3-turbo is fast; whisper-large-v3 is a touch more accurate."), groq_model_var, width=22)
-    entry(row(c, "Deepgram model"), dg_var, width=22)
-    combo(row(c, "Local model size", "Bigger is more accurate but slower."), local_var, LOCAL_SIZES)
-    combo(row(c, "Local: device", "Auto picks GPU if available, else CPU."),
-          local_device_var, [l for _, l in LOCAL_DEVICES])
-    combo(row(c, "Local: compute type", "int8 is fastest on CPU; float16/int8_float16 for GPU."),
-          local_compute_var, [l for _, l in LOCAL_COMPUTE_TYPES], width=26)
+    # --- Dictation: rendered into History's "Dictation settings", not this form ---
+    c = card("Dictation", "How you start and stop dictating, and how the text is typed.",
+             parent=history_settings_panel)
+    combo(row(c, "Mode", "Push-to-talk holds the key; toggle taps it on and off."),
+          mode_var, [l for _, l in MODES])
+    r = row(c, "Push-to-talk key", "Hold this to dictate into the focused window.")
+    entry(r, hotkey_var, width=14)
+    cap_btn = ttk.Button(r, text="Capture", width=8)
+    cap_btn.pack(side="left", padx=px((8, 0)))
+
+    def capture():
+        cap_btn.config(text="Press keys…")
+
+        def work():
+            hk = None
+            try:
+                import keyboard
+                hk = keyboard.read_hotkey(suppress=False)
+            except Exception:
+                hk = None
+
+            def done():
+                if hk:
+                    hotkey_var.set(hk)
+                cap_btn.config(text="Capture")
+            root.after(0, done)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    cap_btn.config(command=capture)
+
+    r = row(c, "Clipboard hotkey", "Hold to dictate to the clipboard instead of typing into the app.")
+    entry(r, clip_hotkey_var, width=14)
+    clip_cap_btn = ttk.Button(r, text="Capture", width=8)
+    clip_cap_btn.pack(side="left", padx=px((8, 0)))
+
+    def clip_capture():
+        clip_cap_btn.config(text="Press keys…")
+
+        def work():
+            hk = None
+            try:
+                import keyboard
+                hk = keyboard.read_hotkey(suppress=False)
+            except Exception:
+                hk = None
+
+            def done():
+                if hk:
+                    clip_hotkey_var.set(hk)
+                clip_cap_btn.config(text="Capture")
+            root.after(0, done)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    clip_cap_btn.config(command=clip_capture)
+
+    combo(row(c, "Paste speed", "Slower is more reliable in some apps."),
+          paste_speed_var, [l for _, l in PASTE_SPEEDS], width=10)
+    entry(row(c, "Min seconds", "Ignore taps shorter than this."), min_seconds_var, width=7)
+    check(c, "Keep a local dictation history", history_var, "Saved on your PC; open it from the tray.")
+
+    # --- Your docs: first in Meetings settings, because answers are the point ---
+    c = card(
+        "Your docs",
+        "Markdown, text or PDF. Meetings answers the other side's questions from "
+        "them, live and after the call.",
+        parent=meeting_settings_panel,
+    )
+    _kr = row(c, "Docs folder", "The folder PipeVoice reads.")
+    entry(_kr, knowledge_dir_var, width=30)
+
+    def _browse_knowledge():
+        from tkinter import filedialog
+        chosen = filedialog.askdirectory(
+            parent=root, title="Folder with your docs",
+            initialdir=knowledge_dir_var.get().strip() or os.path.expanduser("~"),
+        )
+        if chosen:
+            knowledge_dir_var.set(chosen)
+
+    ttk.Button(_kr, text="Browse", width=8,
+               command=_browse_knowledge).pack(side="left", padx=px((8, 0)))
+    entry(row(c, "Docs web page", "One page, e.g. your pricing or FAQ. Optional."),
+          knowledge_url_var, width=30)
+    check(c, "Show answers during the call (Deepgram only)", live_answers_var,
+          "A small card pops up bottom-right when the other side asks something your\n"
+          "docs or next-call notes answer. Nothing pops up when it is unsure.")
+
+    # --- Meetings: rendered into the Meetings tab, not this form ---
+    c = card(
+        "Meetings",
+        "Recording a call captures your microphone and the computer's audio "
+        "separately, so nobody gets mixed up.",
+        parent=meeting_settings_panel,
+    )
+    r = row(
+        c,
+        "Meeting hotkey",
+        "Tap once to start meeting recording and again to stop. "
+        "Dictation is suppressed while a meeting is recording.",
+    )
+    entry(r, meeting_hotkey_var, width=14)
+    meeting_cap_btn = ttk.Button(r, text="Capture", width=8)
+    meeting_cap_btn.pack(side="left", padx=px((8, 0)))
+    meeting_cap_btn.config(
+        command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
+    )
+
+    check(c, "Also name meetings transcribed on this computer", meeting_auto_name_var,
+          "Meetings transcribed with Deepgram are named automatically. Tick this to also "
+          "send the start of local transcripts to your AI provider for a name.")
+    check(c, "Transcribe automatically when the meeting ends", meeting_auto_transcribe_var,
+          "Uses your transcription provider. You can still answer their questions after.")
+    check(c, "Record the screen too (video)", meeting_video_var,
+          "Records the screen your mouse is on when the meeting starts. "
+          "Applies from the next meeting.")
+    combo(row(c, "Video smoothness",
+              "Higher is smoother but makes bigger files and uses more CPU. "
+              "About 3x the size at 15 fps. Applies from the next meeting."),
+          meeting_video_fps_var, [label for label, _ in VIDEO_FPS_OPTIONS])
+    check(c, "Send the video when the meeting ends, plus the transcript if it was transcribed automatically (uses the Screen recording destination)",
+          meeting_video_send_var)
+    _video_dest_hint = tk.Label(c, text="", bg=CARD, fg=MUTED, font=theme.font("caption"),
+                                wraplength=px(540), justify="left")
+    _video_dest_hint.pack(anchor="w", padx=px((43, 0)), pady=px((0, 8)))
+
+    def _sync_video_dest_hint(*_):
+        empty = not screenrec_dest_var.get().strip()
+        _video_dest_hint.config(
+            text="Set a destination in Screen recordings → ⚙ Recording settings first" if empty else "")
+
+    _sync_video_dest_hint()
+    screenrec_dest_var.trace_add("write", _sync_video_dest_hint)
+
+    r = row(c, "Bookmark hotkey", "Tap while recording to mark the current moment.")
+    entry(r, bookmark_hotkey_var, width=14)
+    bookmark_cap_btn = ttk.Button(r, text="Capture", width=8)
+    bookmark_cap_btn.pack(side="left", padx=px((8, 0)))
+    bookmark_cap_btn.config(command=_mk_capture(bookmark_cap_btn, bookmark_hotkey_var))
+
+    entry(row(c, "Say this to bookmark",
+              "Just say one of these during a meeting — no key, no hands. Found when the\n"
+              "recording is transcribed, so it costs nothing and works offline.\n"
+              "Comma-separated; leave blank to switch off."),
+          bookmark_phrases_var, width=34)
+
+    check(c, "Also bookmark on a double clap or snap", bookmark_acoustic_var,
+          "Off by default, and it does not work on many laptops: Windows Audio\n"
+          "enhancements (Studio Effects / Voice Focus) delete claps and snaps on\n"
+          "purpose and ship switched ON. Press Test to see whether yours get through.\n"
+          "Microphone only — nothing on the call can trigger it. Prefer the spoken\n"
+          "phrase above, which is speech and so survives that filtering.")
+    check(c, "PipeFocus \u2014 quiet nudges during a meeting", pipefocus_var,
+          "Off by default. Watches the conversation live and speaks up only when something\nconcrete is drifting \u2014 an action item with nobody on it, a decision deferred again.\nAt most one nudge every few minutes, and it stays quiet when nothing is wrong.\nNeeds Deepgram, because it is the only engine that transcribes live; it simply\ndoes not run on the others. Uses your transcription and AI-polish keys while a\nmeeting records. Roughly 30 cents an hour of meeting on Deepgram's standard rate.")
+    r = row(c, "Clap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
+    _sens_scale = ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
+                            orient="horizontal", length=px(130))
+    _sens_scale.pack(side="left")
+    ttk.Label(r, textvariable=bookmark_sensitivity_var, width=5).pack(side="left", padx=px((7, 0)))
+
+    def test_snap():
+        import tkinter as tk
+        from .meeting import smooth_level
+        from .overlay import meter_level
+        from .snap import SnapDetector
+        dialog = tk.Toplevel(root)
+        dialog.title("Test acoustic bookmarks")
+        dialog.configure(bg=BG)
+        tk.Label(dialog, text="Clap twice, or snap twice", bg=BG, fg=FG,
+                 font=theme.font("body_large_strong")).pack(padx=px(18), pady=px((16, 6)))
+        level = ttk.Progressbar(dialog, maximum=1.0, length=px(260))
+        level.pack(padx=px(18), pady=px(8))
+        result = tk.Label(dialog, text="Listening…", bg=BG, fg=MUTED)
+        result.pack(padx=px(18), pady=px((0, 12)))
+        detector = SnapDetector(16_000, sensitivity=float(bookmark_sensitivity_var.get()))
+        stream = None
+        # Name the device in every message. "No microphone showing" is impossible
+        # to act on without knowing which device the test actually opened.
+        _dev = config.device_arg(cfg)
+        device_label = "the system default microphone" if _dev is None else f"device {_dev}"
+        # The audio callback runs on PortAudio's thread and Tk is not thread-safe,
+        # so it only ever writes into this dict — exactly what MeetingRecorder does
+        # with self._levels. The UI polls on the main thread below.
+        shared = {"level": 0.0, "hits": 0, "error": "", "blocks": 0, "peak": 0.0}
+
+        def callback(block, _frames, _time, _status):
+            try:
+                shared["blocks"] += 1
+                total = 0.0
+                count = 0
+                for value in block:
+                    sample = float(value[0] if getattr(value, "ndim", 0) else value)
+                    total += sample * sample
+                    count += 1
+                rms = (total / count) ** 0.5 if count else 0.0
+                if rms > shared["peak"]:
+                    shared["peak"] = rms
+                # Fast attack, slow release, then the same dB curve the REC meter
+                # uses. A linear bar reads as dead: speech peaks near 0.05.
+                shared["level"] = smooth_level(shared["level"], rms)
+                if detector.feed(block):
+                    shared["hits"] += 1
+            except Exception as exc:      # never silently: a dead bar told us nothing
+                shared["error"] = f"{type(exc).__name__}: {exc}"
+
+        seen_hits = 0
+        ticks = 0
+
+        def tick():
+            # Never leave a silent bar again: say WHICH of the three states we are
+            # in — no audio arriving at all, audio arriving but too quiet, or
+            # working. A dead bar with "Listening..." under it is indistinguishable
+            # from a crash, which is exactly how this wasted a debugging round.
+            nonlocal seen_hits, ticks
+            if not dialog.winfo_exists():
+                return
+            ticks += 1
+            level.configure(value=meter_level(shared["level"]))
+            if shared["error"]:
+                result.config(text=shared["error"], fg=ACCENT)
+            elif shared["hits"] > seen_hits:
+                seen_hits = shared["hits"]
+                result.config(text=f"Detected · {seen_hits}", fg=GOOD)
+            elif shared["blocks"] == 0 and ticks > 30:      # ~1.5s with no callback
+                result.config(
+                    text=f"No audio from {device_label}. Pick a different microphone "
+                         "under Microphone, then reopen this test.",
+                    fg=ACCENT,
+                )
+            elif shared["blocks"] and shared["peak"] < 0.002 and ticks > 60:
+                result.config(
+                    text=f"{device_label} is connected but silent — check it is not "
+                         "muted, and that it is the mic you are speaking into.",
+                    fg=WARN,
+                )
+            elif detector.transients:
+                # A pair was not accepted, but sharp events ARE getting through:
+                # say so, or "nothing happened" reads as a dead feature again.
+                result.config(
+                    text=f"{detector.transients} sharp sound(s) heard — "
+                         "clap twice, about a second apart",
+                    fg=WARN,
+                )
+            elif detector.last_peak:
+                # Loud but smooth IS the Windows Studio Effects signature: Voice
+                # Focus is built to strip non-speech transients — claps, snaps and
+                # keyboard noise — so the clap arrives loud and flattened. Confirmed
+                # on a Copilot+ machine where it is on by default. Name it, because
+                # no amount of clapping harder will ever fix it.
+                result.config(
+                    text=f"Heard it ({detector.last_peak:.2f} loud) but too smooth — "
+                         f"crest {detector.last_crest:.1f}, needs "
+                         f"{detector.need_crest:.1f}.\nWindows is filtering the clap "
+                         "out. Sound settings → your mic → turn OFF Audio "
+                         "enhancements\n(Copilot+ PCs: Windows Studio Effects → "
+                         "Voice Focus).",
+                    fg=WARN,
+                    justify="left",
+                )
+            elif shared["blocks"]:
+                result.config(
+                    text=f"Listening · {device_label} · peak {shared['peak']:.3f}",
+                    fg=MUTED,
+                )
+            dialog.after(50, tick)
+
+        def release():
+            nonlocal stream
+            if stream is not None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
+                stream = None
+
+        def close():
+            release()
+            dialog.destroy()
+
+        # Closing the SETTINGS window destroys this dialog without ever running
+        # close(), so WM_DELETE_WINDOW alone leaks the microphone — and on first
+        # run settings.main() lives in the app process, so the app then cannot
+        # acquire its own mic. That is exactly the "something else is holding the
+        # device" failure this dialog exists to diagnose. <Destroy> fires for every
+        # descendant widget, so only act on the dialog itself.
+        dialog.bind(
+            "<Destroy>", lambda event: release() if event.widget is dialog else None
+        )
+        try:
+            import sounddevice as sd
+            stream = sd.InputStream(samplerate=16_000, channels=1, dtype="float32",
+                                    blocksize=800, callback=callback,
+                                    device=config.device_arg(cfg))
+            stream.start()
+            ttk.Button(dialog, text="Close", command=close).pack(pady=px((0, 16)))
+            dialog.protocol("WM_DELETE_WINDOW", close)
+            tick()
+        except Exception as exc:
+            result.config(text=f"Microphone unavailable: {exc}", fg=ACCENT)
+            ttk.Button(dialog, text="Close", command=close).pack(pady=px((0, 16)))
+    _test_btn = ttk.Button(r, text="Test", command=test_snap)
+    _test_btn.pack(side="left", padx=px((8, 0)))
+
+    # Acoustic bookmarks are OFF by default and blocked outright on many laptops, but
+    # the sensitivity slider and Test button sat live regardless — so the Hotkeys tab
+    # foregrounded a switched-off feature next to the spoken phrase that actually
+    # works. Grey them out until the box is ticked. (James, 2026-07-28: "the ui still
+    # says about snapping ... is this the wrong one again?")
+    def _sync_acoustic(*_):
+        state = "normal" if bookmark_acoustic_var.get() else "disabled"
+        for _w in (_sens_scale, _test_btn):
+            try:
+                _w.config(state=state)
+            except Exception:
+                pass
+
+    bookmark_acoustic_var.trace_add("write", _sync_acoustic)
+    _sync_acoustic()
+
+    # --- Voice hotkeys ---
+    c = card("Voice hotkeys",
+             "Press a key to dictate with a specific Voice. Optional picker key chooses on the fly.",
+             parent=voices_settings_panel)
+    for _i in range(3):
+        r = row(c, f"Voice key {_i + 1}", "Hold this to dictate using the chosen Voice.")
+        entry(r, vk_vars[_i], width=14)
+        _vcap = ttk.Button(r, text="Capture", width=8)
+        _vcap.pack(side="left", padx=px((8, 0)))
+        _vcap.config(command=_mk_capture(_vcap, vk_vars[_i]))
+        combo(r, vv_vars[_i], [l for _, l in voice_opts], width=18)
+    r = row(c, "Picker key", "Hold to pop a numbered voice list on the overlay.")
+    entry(r, picker_var, width=14)
+    _pcap = ttk.Button(r, text="Capture", width=8)
+    _pcap.pack(side="left", padx=px((8, 0)))
+    _pcap.config(command=_mk_capture(_pcap, picker_var))
+
+    # --- Screen recordings: rendered into the Recordings tab, not this form ---
+    c = card(
+        "Screen recordings",
+        "Show a bug instead of describing it. Recordings are sent with a text "
+        "transcript of what you said, so a coding agent can read it without "
+        "watching the video.",
+        parent=recordings_settings_panel,
+    )
+    r = row(c, "Screen recording hotkey",
+            "Tap once to drag a box over what you want to show, and again to stop. "
+            "Records that area plus your microphone.")
+    entry(r, screenrec_hotkey_var, width=14)
+    screenrec_cap_btn = ttk.Button(r, text="Capture", width=8)
+    screenrec_cap_btn.pack(side="left", padx=px((8, 0)))
+    screenrec_cap_btn.config(command=_mk_capture(screenrec_cap_btn, screenrec_hotkey_var))
+    entry(row(c, "Send to",
+              "An scp destination, e.g. root@your-vps:/root/project/inbox/. Uses the "
+              "SSH keys you already have — Pipevoice never stores one. Leave blank "
+              "to only save locally."),
+          screenrec_dest_var, width=34)
+    entry(row(c, "Save to",
+              "Blank uses your Videos folder."), screenrec_dir_var, width=34)
+    check(c, "Keep a local copy after sending", screenrec_keep_var,
+          "Off deletes the files once they have arrived. A failed send never deletes anything.")
+    entry(row(c, "Frames per second",
+              "10-15 is realistic at 1080p. Higher costs CPU on the machine you are "
+              "recording, which is the same one running what you are showing."),
+          screenrec_fps_var, width=6)
 
     # --- API keys ---
     c = card("API keys", "Stored locally in your .env, never uploaded. Leave a field blank to keep its current key.")
@@ -1653,8 +1541,19 @@ def main(first_run: bool = False) -> None:
     key_row("OpenAI", oai_key_var, config.openai_key(), "openai")
     key_row("OpenRouter", or_key_var, config.openrouter_key(), "openrouter", "Get a free key ↗")
 
+    # --- Models ---
+    c = card("Models", "Per-engine model names. The defaults are good for most people.")
+    entry(row(c, "Gemini model", "flash-lite is free & fast; try a Flash model for more accuracy."), gemini_model_var, width=22)
+    entry(row(c, "Groq model", "whisper-large-v3-turbo is fast; whisper-large-v3 is a touch more accurate."), groq_model_var, width=22)
+    entry(row(c, "Deepgram model"), dg_var, width=22)
+    combo(row(c, "Local model size", "Bigger is more accurate but slower."), local_var, LOCAL_SIZES)
+    combo(row(c, "Local: device", "Auto picks GPU if available, else CPU."),
+          local_device_var, [l for _, l in LOCAL_DEVICES])
+    combo(row(c, "Local: compute type", "int8 is fastest on CPU; float16/int8_float16 for GPU."),
+          local_compute_var, [l for _, l in LOCAL_COMPUTE_TYPES], width=26)
+
     # --- Polish & text ---
-    c = card("Polish & text", "Clean up and shape what gets typed.")
+    c = card("Polish & text", "Clean up and shape what gets typed.", parent=history_settings_panel)
     check(c, "Polish with AI (Flow mode)", ai_cleanup_var,
           "Tidies filler words, punctuation and casing after transcription.")
     _cleanup_row = row(c, "Cleanup with", "OpenAI, free Google Gemini, OpenRouter, or fully offline Ollama.")
@@ -1678,6 +1577,8 @@ def main(first_run: bool = False) -> None:
     check(c, "Press Enter after typing (auto-send)", auto_enter_var,
           "Submits the line. Handy for chat, leave off for editors.")
 
+    c = card("Words", "Names and jargon to recognise, and fixes for words it gets wrong.",
+             parent=history_settings_panel)
     vb = stack(c, "Vocabulary", "Names and jargon, so they're recognised and spelled correctly.")
     vocab_list = tk.Listbox(vb, height=4, width=26, bg=BG, fg=FG,
                             selectbackground=ACCENT, selectforeground="#1a0c0d",
@@ -1881,23 +1782,186 @@ def main(first_run: bool = False) -> None:
           speech_notes_var, width=24)
 
     # --- Behaviour ---
-    c = card("Behaviour")
+    c = card("App")
     check(c, "Show live overlay", overlay_var, "A small HUD that shows it's listening.")
     check(c, "Play start/stop sounds", sounds_var)
     check(c, "Start on Windows login", autostart_var)
     check(c, "Automatic updates", auto_update_var, "Check for a newer version on startup and install it silently.")
     check(c, "Get updates early (beta)", beta_channel_var,
           "Receive new versions a few days before everyone else, so problems are found\non a handful of machines instead of all of them. Slightly more likely to hit a\nrough edge — untick to go back to normal releases.")
-    check(c, "Keep a local dictation history", history_var, "Saved on your PC; open it from the tray.")
-    pr = stack(c, "Voices & app profiles", "Per-app styles and key-bound Voices — PipeVoice's signature feature.")
-    ttk.Button(pr, text="Open the Voices tab  →", command=lambda: _show_tab("Voices")).pack(anchor="w")
+
+    # --- Read Aloud: press the hotkey, have the screen read to you ---
+    c = card(
+        "Read Aloud",
+        "For text a screen reader can't reach — an image, a canvas, a scanned "
+        "PDF. Tap = drag a region, +Shift = the whole screen, +Ctrl = the "
+        "focused window. Speaks even with a screen reader running, unless you "
+        "turn that off below.",
+    )
+    r = row(c, "Read Aloud hotkey", "Blank turns the feature off.")
+    entry(r, read_aloud_hotkey_var, width=14)
+    ra_cap_btn = ttk.Button(r, text="Capture", width=8)
+    ra_cap_btn.pack(side="left", padx=px((8, 0)))
+    ra_cap_btn.config(command=_mk_capture(ra_cap_btn, read_aloud_hotkey_var))
+
+    combo(row(c, "Voice engine",
+              "Windows is free, offline, no key — nothing ever leaves this "
+              "machine. Deepgram and ElevenLabs send the recognized text to "
+              "their servers to speak it; only pick those on purpose. Any "
+              "cloud failure (dead key, no network) falls back to Windows and "
+              "says why."),
+          read_aloud_tts_var, [l for _, l in read_aloud_tts_opts])
+
+    pr = row(c, "Preview voice",
+             "Speaks one test sentence using the settings on this screen — "
+             "even if you haven't saved yet.")
+    preview_btn = ttk.Button(pr, text="Preview", width=10)
+    preview_btn.pack(side="left")
+    preview_status = tk.Label(pr, text="", bg=CARD, fg=MUTED, font=theme.font("caption"),
+                               wraplength=px(253), justify="left")
+    preview_status.pack(side="left", padx=px((10, 0)))
+
+    # Only the group matching the chosen engine is shown — a greyed-out field
+    # still reads as "something I am supposed to fill in", and showing all
+    # three at once is exactly how choosing ElevenLabs used to reveal nothing.
+    _divide(c)
+    windows_group = tk.Frame(c, bg=CARD)
+    deepgram_group = tk.Frame(c, bg=CARD)
+    elevenlabs_group = tk.Frame(c, bg=CARD)
+
+    wr = row(windows_group, "Get better Windows voices",
+             "Windows 11 ships far better \"Natural\" voices, but they aren't "
+             "installed by default. Opens Settings → Speech → Manage voices.")
+    ttk.Button(wr, text="Open Windows voice settings",
+               command=lambda: os.startfile("ms-settings:speech")).pack(side="left")
+    entry(row(windows_group, "Voice / model",
+              "Blank uses the system default Windows voice. Type the exact "
+              "name of an installed voice for another."),
+          read_aloud_voice_var, width=28)
+
+    dg_key_note = ("Already configured — the same key dictation uses." if config.deepgram_key()
+                   else "Not configured yet — add a Deepgram key in the API keys card above.")
+    dg_row = row(deepgram_group, "Deepgram voice (pick one)", dg_key_note)
+    dg_combo = combo(dg_row, read_aloud_deepgram_pick_var,
+                     [f"{name} — {desc}" for name, desc in _tts_cloud.DEEPGRAM_VOICES], width=40)
+
+    def _pick_deepgram_voice(_evt=None):
+        i = dg_combo.current()
+        if 0 <= i < len(_tts_cloud.DEEPGRAM_VOICES):
+            read_aloud_voice_var.set(_tts_cloud.DEEPGRAM_VOICES[i][0])
+    dg_combo.bind("<<ComboboxSelected>>", _pick_deepgram_voice)
+
+    _eleven_key_row = row(elevenlabs_group, "ElevenLabs API key",
+                          "Saved" if config.elevenlabs_key() else "Not set")
+    entry(_eleven_key_row, eleven_key_var, width=26, show="•")
+    ttk.Button(_eleven_key_row, text="Get a key ↗",
+               command=lambda: webbrowser.open(_URLS["elevenlabs"])).pack(side="left", padx=px((8, 0)))
+    eleven_id_row = row(
+        elevenlabs_group, "ElevenLabs voice ID",
+        "Search the Voice Library for a character or accent, add it to your "
+        "collection, and copy its ID here. Nothing there? Voice Design builds "
+        "one from a description. The catalogue is per-account, which is why "
+        "this is an ID rather than a picklist.")
+    entry(eleven_id_row, read_aloud_elevenlabs_id_var, width=28)
+    ttk.Button(eleven_id_row, text="Browse voices ↗",
+               command=lambda: webbrowser.open(
+                   "https://elevenlabs.io/app/voice-library")).pack(side="left", padx=px((8, 0)))
+
+    speed_row = row(c, "Speed", "0.5 (slow) to 2.0 (fast). 1.0 is normal.")
+    # row() returns the RIGHT-hand frame, so .master is the row frame packed
+    # into the card - which is what `before=` needs. If row() ever returns
+    # the row frame itself this becomes `before=<the card>` and pack() errors.
+    # tests/test_read_aloud_voice_keys.py walks the same two levels, so a
+    # change to row() breaks that test rather than the settings window.
+    speed_row_frame = speed_row.master
+    entry(speed_row, read_aloud_rate_var, width=6)
+    entry(row(c, "OCR language",
+              "e.g. en-US. Blank uses your Windows display language."),
+          read_aloud_lang_var, width=10)
+    check(c, "Also copy the recognized text to the clipboard", read_aloud_clipboard_var,
+          "On by default. The overlay always says when it copied.")
+    check(c, "Stay quiet while a screen reader is running", read_aloud_quiet_var,
+          "Off by default — the hotkey is usually pressed because the screen "
+          "reader can't read that spot, so silence there defeats the feature.")
+
+    def _read_aloud_tier():
+        label = read_aloud_tts_var.get()
+        for value, lbl in read_aloud_tts_opts:
+            if lbl == label:
+                return value
+        return read_aloud_tts_opts[0][0]
+
+    def _on_read_aloud_tts(*_):
+        tier = _read_aloud_tier()
+        for group in (windows_group, deepgram_group, elevenlabs_group):
+            group.pack_forget()
+        {"windows": windows_group, "deepgram": deepgram_group,
+         "elevenlabs": elevenlabs_group}[tier].pack(fill="x", before=speed_row_frame)
+    read_aloud_tts_var.trace_add("write", _on_read_aloud_tts)
+    _on_read_aloud_tts()
+
+    PREVIEW_TEXT = "Six sharp trucks strapped their crisp black cargo, then quickly turned north."
+
+    def _preview_snapshot():
+        return preview_snapshot(
+            tier=_read_aloud_tier(),
+            voice=read_aloud_voice_var.get(),
+            elevenlabs_voice_id=read_aloud_elevenlabs_id_var.get(),
+            rate_text=read_aloud_rate_var.get(),
+            elevenlabs_key=eleven_key_var.get(),
+            deepgram_key=dg_key_var.get(),
+        )
+
+    def _preview_show(text, fg):
+        def apply():
+            if preview_status.winfo_exists():
+                preview_status.config(text=text, fg=fg)
+        try:
+            if root.winfo_exists():
+                root.after(0, apply)
+        except Exception:
+            pass
+
+    def _run_preview():
+        preview_btn.config(state="disabled")
+        _preview_show("Speaking…", MUTED)
+        # Read every form value HERE, on the Tk thread, before the worker
+        # starts — a Tk variable read from a background thread is unsafe
+        # once the thread outlives the call that spawned it.
+        snap = _preview_snapshot()
+
+        def work():
+            from . import readaloud
+
+            try:
+                speaker, reason = readaloud.build_speaker(PREVIEW_TEXT, snap)
+                if reason:
+                    # A dead key or bad voice ID is exactly what preview exists
+                    # to surface — it must not quietly play the Windows
+                    # fallback voice the way a real read does.
+                    _preview_show(reason, WARN)
+                    return
+                speaker.speak(PREVIEW_TEXT)
+                _preview_show("Played.", GOOD)
+            except Exception as exc:
+                _preview_show(str(exc), WARN)
+            finally:
+                def reenable():
+                    if preview_btn.winfo_exists():
+                        preview_btn.config(state="normal")
+                try:
+                    if root.winfo_exists():
+                        root.after(0, reenable)
+                except Exception:
+                    pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    preview_btn.config(command=_run_preview)
 
     # --- Advanced ---
     c = card("Advanced", "Most people never need these.")
-    entry(row(c, "Min seconds", "Ignore taps shorter than this."), min_seconds_var, width=7)
     entry(row(c, "Deepgram wait", "Seconds to wait for final words."), dg_timeout_var, width=7)
-    combo(row(c, "Paste speed", "Slower is more reliable in some apps."),
-          paste_speed_var, [l for _, l in PASTE_SPEEDS], width=10)
 
     # A part-finished model download makes local transcription slow and empty,
     # and the only cure was deleting a folder by hand from a support reply.
@@ -1945,6 +2009,13 @@ def main(first_run: bool = False) -> None:
 
     _clear_btn.config(command=_clear_cache)
     _refresh_cache_size()
+
+    # --- About: the tab itself hides behind the gear ---
+    from . import __version__
+    c = card("About PipeVoice")
+    _ab = row(c, f"Version {__version__}")
+    ttk.Button(_ab, text="About, licence and updates \u2192",
+               command=lambda: _show_tab("About")).pack(side="left")
 
     # --- Meeting storage: rendered into the Meetings tab, beside the recordings
     # it governs. These sat under "Advanced" three tabs away from the list they
