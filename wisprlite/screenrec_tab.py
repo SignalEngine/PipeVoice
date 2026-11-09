@@ -145,12 +145,18 @@ def _when(timestamp: float) -> str:
 _DURATIONS: dict = {}
 
 
-def _cached_duration(item: dict):
-    """Length of a clip, read once per (file, size, mtime): the list redraws every poll."""
+def _cached_duration(item: dict, read: bool = True):
+    """Length of a clip, read once per (file, size, mtime): the list redraws every poll.
+
+    read=False only looks in the cache: list rows must not open every mp4 on the Tk
+    thread (a big folder froze the tab), so a row shows its length once selected.
+    """
     key = (str(item["path"]), item["size"], item["modified"])
-    if key not in _DURATIONS:
+    if key not in _DURATIONS and read:
+        if len(_DURATIONS) > 500:   # stale (size, mtime) keys pile up otherwise
+            _DURATIONS.clear()
         _DURATIONS[key] = _duration_seconds(item["path"])
-    return _DURATIONS[key]
+    return _DURATIONS.get(key)
 
 
 def fill_recording_menu(menu, cmds: dict) -> None:
@@ -357,7 +363,7 @@ def build(container, root, wheel=None, with_settings=False):
                      anchor="w", wraplength=px(200), justify="left",
                      cursor="hand2").pack(fill="x")
             sub = [_when(item["modified"])]
-            seconds = _cached_duration(item)
+            seconds = _cached_duration(item, read=False)
             if seconds:
                 sub.append(_mss(seconds))
             tk.Label(row, text="  \u00b7  ".join(sub), bg=CARD, fg=MUTED,

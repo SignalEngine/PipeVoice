@@ -143,7 +143,9 @@ def test_right_click_selects_the_row_first(tmp_path, monkeypatch, cfg, tk_root):
 def test_rows_are_two_lines_and_meta_line_is_date_duration_size(tmp_path, monkeypatch, cfg, tk_root):
     monkeypatch.setattr(screenrec_tab, "_duration_seconds", lambda p: 65)
     _recs(monkeypatch, tmp_path, ["a clip"], words="x")
-    frame = _build_recs(tk_root)
+    screenrec_tab._DURATIONS.clear()
+    _build_recs(tk_root)                 # selecting the clip reads (and caches) its length
+    frame = _build_recs(tk_root)         # rows show a length only once it is cached
     texts = _texts(frame)
     assert any(t.endswith("·  1:05") for t in texts), texts      # row grey line
     assert any("1:05" in t and "KB" in t for t in texts), texts        # header meta line
@@ -266,3 +268,14 @@ def test_failed_send_shows_the_cause_not_connection_closed(tmp_path, monkeypatch
         a, 255, stdout="", stderr=err))
     ok, msg = screenrec.send([f], "root@nohost:/tmp/")
     assert not ok and "Could not resolve hostname" in msg
+
+
+def test_list_rows_do_not_open_every_clip(tmp_path, monkeypatch, cfg, tk_root):
+    # Opening each mp4 on the Tk thread froze the tab on a big folder; only the selected one is read.
+    _recs(monkeypatch, tmp_path, [f"clip {i}" for i in range(5)])
+    screenrec_tab._DURATIONS.clear()
+    opened = []
+    monkeypatch.setattr(screenrec_tab, "_duration_seconds", lambda p: opened.append(p) or 42.0)
+    _build_recs(tk_root)
+    tk_root.update()
+    assert len(opened) <= 1
