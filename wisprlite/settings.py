@@ -857,6 +857,7 @@ def main(first_run: bool = False) -> None:
         if desc:
             tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=theme.font("caption"),
                      wraplength=px(540), justify="left").pack(anchor="w", padx=px((25, 0)), pady=px((3, 0)))
+        return box
 
     # --- values ---
     # Show the current engine even if it's a legacy/hidden one (e.g. "openai"),
@@ -940,6 +941,8 @@ def main(first_run: bool = False) -> None:
     beta_channel_var = tk.BooleanVar(value=(cfg.update_channel or "").lower() == "beta")
     pipefocus_var = tk.BooleanVar(value=cfg.pipefocus)
     live_answers_var = tk.BooleanVar(value=cfg.live_answers)
+    topic_cards_var = tk.BooleanVar(value=cfg.meeting_topic_cards)
+    talk_hint_var = tk.BooleanVar(value=cfg.meeting_talk_hint)
     voice_commands_var = tk.BooleanVar(value=cfg.voice_commands)
     history_var = tk.BooleanVar(value=cfg.history_enabled)
 
@@ -1289,6 +1292,18 @@ def main(first_run: bool = False) -> None:
     check(c, "Show answers during the call (Deepgram only)", live_answers_var,
           "A small card pops up bottom-right when the other side asks something your\n"
           "docs or next-call notes answer. Nothing pops up when it is unsure.")
+    _topic_box = check(c, "Also show what my docs say about the current topic (Deepgram only)",
+                       topic_cards_var,
+                       "At most one card every 2 minutes, only when a doc clearly covers it.")
+
+    def _sync_topic(*_):
+        try:
+            _topic_box.config(state="normal" if live_answers_var.get() else "disabled")
+        except Exception:
+            pass
+
+    live_answers_var.trace_add("write", _sync_topic)
+    _sync_topic()
 
     # --- Meetings: rendered into the Meetings tab, not this form ---
     c = card(
@@ -1356,6 +1371,8 @@ def main(first_run: bool = False) -> None:
           "phrase above, which is speech and so survives that filtering.")
     check(c, "PipeFocus \u2014 quiet nudges during a meeting", pipefocus_var,
           "Off by default. Watches the conversation live and speaks up only when something\nconcrete is drifting \u2014 an action item with nobody on it, a decision deferred again.\nAt most one nudge every few minutes, and it stays quiet when nothing is wrong.\nNeeds Deepgram, because it is the only engine that transcribes live; it simply\ndoes not run on the others. Uses your transcription and AI-polish keys while a\nmeeting records. Roughly 30 cents an hour of meeting on Deepgram's standard rate.")
+    check(c, "Hint when I've done most of the talking", talk_hint_var,
+          "Works offline. Uses how loud your mic and the call audio are, not the words.")
     r = row(c, "Clap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
     _sens_scale = ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
                             orient="horizontal", length=px(130))
@@ -2201,6 +2218,8 @@ def main(first_run: bool = False) -> None:
                              if _kd == (cfg.knowledge_dir or "").strip() else _kd)
         cfg.knowledge_url = knowledge_url_var.get().strip()
         cfg.live_answers = bool(live_answers_var.get())
+        cfg.meeting_topic_cards = bool(topic_cards_var.get())
+        cfg.meeting_talk_hint = bool(talk_hint_var.get())
         cfg.paste_speed = value_for(paste_speed_var, PASTE_SPEEDS)
         cfg.speech_notes = speech_notes_var.get().strip()
         cfg.replacements = fixes_from_lines(fixes_list.get(0, "end"))

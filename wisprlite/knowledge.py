@@ -349,6 +349,17 @@ _LIVE_PROMPT = (
 )
 
 
+def _verbatim(data: dict, docs: list[dict]) -> tuple[str, str, str] | None:
+    """(headline, quote, source) when all three are text and the quote is in that source."""
+    headline, quote, source = data.get("headline"), data.get("quote"), data.get("source")
+    if not all(isinstance(v, str) and v.strip() for v in (headline, quote, source)):
+        return None
+    text = next((d["text"] for d in docs if d["source"] == source), None)
+    if text is None or _norm(quote) not in _norm(text):  # existence check only
+        return None
+    return headline.strip(), quote.strip(), source
+
+
 def answer_live(question: str, index: BM25, docs: list[dict], completion: Callable) -> dict:
     out = {"headline": None, "points": None, "quote": None, "source": None}
     if not docs:
@@ -359,19 +370,38 @@ def answer_live(question: str, index: BM25, docs: list[dict], completion: Callab
                                     f"{build_context(question, index, docs)}"},
     ])
     data = _parse_json(reply, dict)
-    if not data:
-        return out
-    headline, quote, source = data.get("headline"), data.get("quote"), data.get("source")
-    if not all(isinstance(v, str) and v.strip() for v in (headline, quote, source)):
-        return out
-    text = next((d["text"] for d in docs if d["source"] == source), None)
-    if text is None or _norm(quote) not in _norm(text):  # existence check only
+    ok = _verbatim(data, docs) if data else None
+    if not ok:
         return out
     raw = data.get("points")
     points = [p.strip()[:120] for p in raw if isinstance(p, str) and p.strip()][:2] \
         if isinstance(raw, list) else []
-    return {"headline": headline.strip(), "points": points, "quote": quote.strip(),
-            "source": source}
+    return {"headline": ok[0], "points": points, "quote": ok[1], "source": ok[2]}
+
+
+_TOPIC_PROMPT = (
+    "This is what the other side said in the last minute of a call. If one of these documents "
+    "has a short fact that would help me right now on this topic, reply with JSON only: "
+    '{"headline": "<12 words max>", "quote": "<one sentence copied word for word from one '
+    'document>", "source": "<that document\'s file name>"}. '
+    'If nothing clearly helps, reply {"headline": null, "quote": null, "source": null}.'
+)
+
+
+def topic_live(window_text: str, index: BM25, docs: list[dict], completion: Callable) -> dict:
+    out = {"headline": None, "points": None, "quote": None, "source": None}
+    if not docs:
+        return out
+    reply = completion([
+        {"role": "system", "content": _TOPIC_PROMPT},
+        {"role": "user", "content": f"What they said:\n{window_text}\n\nDocuments:\n"
+                                    f"{build_context(window_text, index, docs)}"},
+    ])
+    data = _parse_json(reply, dict)
+    ok = _verbatim(data, docs) if data else None
+    if not ok:
+        return out
+    return {"headline": ok[0], "points": None, "quote": ok[1], "source": ok[2]}
 
 
 # --- 7. Jev answer check -----------------------------------------------------

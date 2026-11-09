@@ -13,6 +13,7 @@ import logging
 import re
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 from . import knowledge
@@ -30,6 +31,10 @@ _FILLER = frozenset(
 # Deepgram finalises on short pauses, so "Do you guys support" and "SSO on the
 # team plan?" can arrive as two lines. A Them line this recent is joined on.
 JOIN_SECONDS = 4.0
+TOPIC_WINDOW = 45        # seconds of Them lines a topic check reads
+TOPIC_EVERY = 45         # seconds between topic checks
+TOPIC_GAP = 120          # seconds between any two shown cards before a topic card
+TOPIC_MIN_TERMS = 3      # distinct doc words in the window, and 2 of them in the top chunk
 PREP_WAIT = 600          # seconds _build waits for the prep pop-up's prep.json
 _QUESTION_WORDS = frozenset(
     "what how why when where which who do does did can could is are will would "
@@ -53,13 +58,19 @@ def _norm(text: str) -> str:
 class LiveAnswerer:
     def __init__(self, folder, url, notes_path, completion, on_card, *,
                  clock=time.monotonic, deadline=8.0, log_path=None,
-                 load=knowledge.load_sources, files=None, prep_path=None, on_ready=None):
+                 load=knowledge.load_sources, files=None, prep_path=None, on_ready=None,
+                 topic_cards=False):
         self._folder, self._url = folder, url
         self._notes = Path(notes_path) if notes_path else None
         self._files = list(files or [])
         self._prep_path = Path(prep_path) if prep_path else None
         self._on_ready = on_ready
         self._small = False
+        self._topic_cards = bool(topic_cards)
+        self._window: deque[tuple[str, float]] = deque()  # Them lines, last TOPIC_WINDOW s
+        self._last_topic_check = float("-inf")
+        self._last_card_at: float | None = None
+        self._pending_topic: tuple[str, float] | None = None   # 1-slot; a question wins
         self._completion, self._on_card = completion, on_card
         self._clock, self._deadline = clock, float(deadline)
         self._log_path = Path(log_path) if log_path else None
@@ -135,7 +146,16 @@ class LiveAnswerer:
                 joined = f"{prev[0]} {text}"
                 if looks_like_question(joined) and not looks_like_question(prev[0]):
                     text = joined
+            if self._topic_cards:
+                self._window.append((str(text), now))
+                while self._window and now - self._window[0][1] > TOPIC_WINDOW:
+                    self._window.popleft()
             if not looks_like_question(text):
+                if self._topic_cards and now - self._last_topic_check >= TOPIC_EVERY:
+                    self._last_topic_check = now
+                    with self._cond:
+                        self._pending_topic = (" ".join(t for t, _ in self._window), now)
+                        self._cond.notify()
                 return
             with self._cond:
                 self._pending = (text, now)
@@ -148,13 +168,20 @@ class LiveAnswerer:
     def _work(self) -> None:
         while not self._stop.is_set():
             with self._cond:
-                while self._pending is None and not self._stop.is_set():
+                while (self._pending is None and self._pending_topic is None
+                       and not self._stop.is_set()):
                     self._cond.wait(timeout=0.5)
                 job, self._pending = self._pending, None
-            if job is None or self._stop.is_set():
+                topic = None
+                if job is None:
+                    topic, self._pending_topic = self._pending_topic, None
+            if (job is None and topic is None) or self._stop.is_set():
                 continue
             try:
-                self._answer(*job)
+                if job is not None:
+                    self._answer(*job)
+                else:
+                    self._topic(*topic)
             except Exception as exc:
                 self.last_error = f"{type(exc).__name__}: {exc}"
 
@@ -177,13 +204,42 @@ class LiveAnswerer:
         show = not late and not repeat
         if show:
             self._shown += [qn, quote_n]
+            self._last_card_at = self._clock()
             self._on_card(ans["headline"], ans["points"], ans["quote"], ans["source"])
         self._record(asked_at, question, ans, show)
 
-    def _record(self, asked_at, question, ans, shown) -> None:
+    def _topic(self, window_text: str, at: float) -> None:
+        """A doc card for the topic, not a question. Silence is the default."""
+        index = self._index
+        if index is None or not index.chunks:
+            return
+        if self._last_card_at is not None and self._clock() - self._last_card_at < TOPIC_GAP:
+            return
+        terms = {w for w in knowledge._words(window_text)
+                 if len(w) >= 4 and w not in _QUESTION_WORDS and w not in _FILLER} & index.idf.keys()
+        if len(terms) < TOPIC_MIN_TERMS:
+            return
+        top = index.top(window_text, 1)
+        if not top or len(terms & set(knowledge._words(top[0]["text"]))) < 2:
+            return
+        ans = knowledge.topic_live(window_text, index, self._docs, self._completion)
+        if not ans["quote"]:
+            self._record(at, "", ans, False, kind="topic", window=window_text)
+            return
+        late = self._clock() - at > self._deadline
+        quote_n = _norm(ans["quote"])
+        show = not late and quote_n not in self._shown
+        if show:
+            self._shown.append(quote_n)
+            self._last_card_at = self._clock()
+            self._on_card(ans["headline"], None, ans["quote"], ans["source"], kind="topic")
+        self._record(at, "", ans, show, kind="topic", window=window_text)
+
+    def _record(self, asked_at, question, ans, shown, kind="answer", window=None) -> None:
         if self._log_path is None:
             return
-        self._log.append({"t_asked": asked_at, "question": question,
+        extra = {"window": window} if window is not None else {}
+        self._log.append({"kind": kind, **extra, "t_asked": asked_at, "question": question,
                           "headline": ans["headline"], "points": ans["points"], "quote": ans["quote"],
                           "source": ans["source"], "shown": shown})
         try:

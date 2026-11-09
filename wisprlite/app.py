@@ -1549,6 +1549,7 @@ class App:
                 cfg.knowledge_dir, cfg.knowledge_url, notes,
                 knowledge._default_completion(cfg.cleanup_provider, cfg.cleanup_model),
                 self._show_answer_card,
+                topic_cards=bool(getattr(cfg, "meeting_topic_cards", False)),
                 log_path=session_dir / "live_answers.json",
                 prep_path=session_dir / "prep.json",
                 on_ready=lambda n: self._show_focus_tip(
@@ -1565,10 +1566,14 @@ class App:
         if answerer is not None:
             answerer.on_line(speaker, text)
 
-    def _show_answer_card(self, headline: str, points, quote: str, source: str) -> None:
+    def _show_answer_card(self, headline: str, points, quote: str, source: str,
+                          kind: str = "answer") -> None:
         overlay = getattr(self, "overlay", None)
         if overlay is not None and hasattr(overlay, "show_answer_card"):
-            overlay.show_answer_card(headline, points, quote, source)
+            if kind == "answer":
+                overlay.show_answer_card(headline, points, quote, source)
+            else:
+                overlay.show_answer_card(headline, points, quote, source, kind=kind)
 
     def _stop_pipefocus(self) -> None:
         answerer, self._live_answers = getattr(self, "_live_answers", None), None

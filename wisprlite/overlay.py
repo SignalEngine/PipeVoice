@@ -296,6 +296,10 @@ class Overlay:
                     if kind == "answer_card":
                         quote, source, *points = text.split(CARD_SEP)
                         self._render_answer_card(canvas, state, quote, source, points)
+                    if kind == "topic_card":
+                        quote, source, *points = text.split(CARD_SEP)
+                        self._render_answer_card(canvas, state, quote, source, points,
+                                                 label="From your docs")
                     if kind == "click":
                         if st["name"] == "meeting" and self.on_meeting_click:
                             callback = self.on_meeting_click
@@ -1214,7 +1218,7 @@ class Overlay:
             pass          # a nudge must never disturb the meeting it comments on
 
     def _render_answer_card(self, canvas, headline: str, quote: str, source: str,
-                            points=()) -> None:
+                            points=(), label: str = "") -> None:
         """A live answer from the user's docs. Same rules as a focus tip."""
         try:
             import tkinter as tk
@@ -1226,6 +1230,9 @@ class Overlay:
             top.configure(bg=PALETTE["accent"])
             frame = tk.Frame(top, bg=PALETTE["card"], padx=16, pady=12)
             frame.pack(fill="both", expand=True, padx=2, pady=2)
+            if label:
+                tk.Label(frame, text=label, bg=PALETTE["card"], fg=PALETTE["muted"],
+                         font=("Segoe UI", 8)).pack(anchor="w")
             tk.Label(frame, text=headline, bg=PALETTE["card"], fg=PALETTE["fg"],
                      font=("Segoe UI", 10, "bold"), wraplength=380,
                      justify="left").pack(anchor="w")
@@ -1248,10 +1255,11 @@ class Overlay:
         except Exception:
             pass          # a card must never disturb the call it answers
 
-    def show_answer_card(self, headline: str, points, quote: str, source: str) -> None:
+    def show_answer_card(self, headline: str, points, quote: str, source: str,
+                         kind: str = "answer") -> None:
         """Queue a live answer card (called off the overlay thread, so no Tk)."""
         try:
-            self._q.put(("answer_card", str(headline or ""),
+            self._q.put(("topic_card" if kind == "topic" else "answer_card", str(headline or ""),
                          CARD_SEP.join([str(quote or ""), str(source or ""),
                                         *(str(p) for p in points or [])])))
         except Exception:
