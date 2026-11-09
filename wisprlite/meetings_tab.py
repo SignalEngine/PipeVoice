@@ -1050,8 +1050,22 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
 
     right = tk.Frame(body, bg=BG)
     right.pack(side="left", fill="both", expand=True, padx=(14, 0))
+    # Summary-first layout: a header (title left, Copy for AI / Transcribe / ⋯
+    # right), a pill tab bar, then one content frame per tab. The right-hand
+    # buttons are packed first so a narrow pane clips the title, never them.
+    style.configure("Meet.Accent.TButton", background=ACCENT, foreground="#1a0c0d",
+                    font=("Segoe UI", 9, "bold"), padding=7, borderwidth=0)
+    style.map("Meet.Accent.TButton", background=[("active", PALETTE["accent_hi"]),
+                                                  ("disabled", CARD)],
+              foreground=[("disabled", MUTED)])
+    detail_head = tk.Frame(right, bg=BG)
+    detail_head.pack(fill="x")
+    head_right = tk.Frame(detail_head, bg=BG)
+    head_right.pack(side="right", padx=(8, 0))
+    head_left = tk.Frame(detail_head, bg=BG)
+    head_left.pack(side="left", fill="x", expand=True)
     session_title = tk.Label(
-        right,
+        head_left,
         text="Select a meeting",
         bg=BG,
         fg=FG,
@@ -1060,7 +1074,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     )
     session_title.pack(fill="x")
     session_meta = tk.Label(
-        right,
+        head_left,
         text="",
         bg=BG,
         fg=MUTED,
@@ -1068,8 +1082,70 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         font=("Segoe UI", 9),
     )
     session_meta.pack(fill="x", pady=(2, 8))
+    # Header buttons. Transcribe is only packed while the selected meeting can
+    # be transcribed; then it is the filled one and Copy for AI steps down.
+    transcribe_btn = ttk.Button(head_right, text="Transcribe", state="disabled",
+                                style="Meet.Accent.TButton")
+    copy_ai_btn = ttk.Button(head_right, text="Copy for AI", state="disabled",
+                             style="Meet.Accent.TButton")
+    copy_ai_btn.pack(side="left")
+    more_btn = ttk.Button(head_right, text="\u22ef", width=3)
+    more_btn.pack(side="left", padx=(7, 0))
 
-    search_row = tk.Frame(right, bg=BG)
+    TAB_NAMES = (("summary", "Summary"), ("transcript", "Transcript"),
+                 ("questions", "Questions"), ("stats", "Stats"))
+    tab_bar = tk.Frame(right, bg=BG)
+    tab_bar.pack(fill="x", pady=(0, 8))
+    tab_pills: dict = {}
+    for _key, _label in TAB_NAMES:
+        _cell = tk.Frame(tab_bar, bg=BG)
+        _cell.pack(side="left", padx=(0, 4))
+        _pill = tk.Button(
+            _cell, text=_label, bg=BG, fg=MUTED, activebackground=ROW_HOVER,
+            activeforeground=FG, relief="flat", borderwidth=0, cursor="hand2",
+            font=("Segoe UI", 9, "bold"), padx=12, pady=6, takefocus=True,
+            highlightthickness=1, highlightbackground=BG, highlightcolor=ACCENT,
+            command=lambda k=_key: select_tab(k),
+        )
+        _pill.pack(fill="x")
+        _line = tk.Frame(_cell, bg=BG, height=2)
+        _line.pack(fill="x")
+        tab_pills[_key] = (_pill, _line)
+
+    # The status line sits under the tab content; packed before the content so
+    # a short window squeezes the tab, never the status.
+    status_label = tk.Label(
+        right,
+        text="",
+        bg=BG,
+        fg=MUTED,
+        anchor="w",
+        justify="left",
+        wraplength=600,
+        font=("Segoe UI", 9),
+    )
+    status_label.pack(side="bottom", fill="x", pady=(8, 0))
+    tab_content = tk.Frame(right, bg=BG)
+    tab_content.pack(fill="both", expand=True)
+    tab_frames = {key: tk.Frame(tab_content, bg=BG) for key, _l in TAB_NAMES}
+
+    def scrolled(parent):
+        """A vertically scrolling frame for tabs whose content can outgrow the pane."""
+        holder = tk.Frame(parent, bg=CARD)
+        canvas = tk.Canvas(holder, bg=CARD, highlightthickness=0, borderwidth=0)
+        bar = ttk.Scrollbar(holder, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=CARD)
+        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
+        wheel(canvas)
+        return holder, inner
+
+    search_row = tk.Frame(tab_frames["transcript"], bg=BG)
     search_row.pack(fill="x", pady=(0, 8))
     search_var = tk.StringVar()
     search_entry = ttk.Entry(search_row, textvariable=search_var)
@@ -1096,7 +1172,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     )
     match_label.pack(side="left", padx=(7, 0))
 
-    summarise_controls = tk.Frame(right, bg=BG)
+    summarise_controls = tk.Frame(tab_frames["summary"], bg=BG)
     tk.Label(
         summarise_controls,
         text="Summarise",
@@ -1123,7 +1199,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     # A recording with no transcript has nothing to show and no obvious next
     # step — the Transcribe control was one small grey button among six at the
     # bottom edge. This banner puts the next action where the eye already is.
-    needs_transcribe = tk.Frame(right, bg=CARD)
+    needs_transcribe = tk.Frame(tab_frames["transcript"], bg=CARD)
     _nt_inner = tk.Frame(needs_transcribe, bg=CARD, padx=14, pady=12)
     _nt_inner.pack(fill="x")
     tk.Label(_nt_inner, text="This recording has not been transcribed yet",
@@ -1135,7 +1211,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
 
     # Detected speaker bleed. A warning, never an edit: the transcript keeps
     # every word and the user fixes the cause with headphones.
-    bleed_banner = tk.Frame(right, bg=CARD)
+    bleed_banner = tk.Frame(tab_frames["transcript"], bg=CARD)
     bleed_label = tk.Label(
         bleed_banner,
         text="", bg=CARD, fg=WARN, anchor="w", justify="left",
@@ -1143,7 +1219,17 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     )
     bleed_label.pack(fill="x")
 
-    highlights_panel = tk.Frame(right, bg=CARD)
+    stats_holder, stats_inner = scrolled(tab_frames["stats"])
+    stats_holder.pack(fill="both", expand=True)
+    stats_empty = tk.Label(tab_frames["stats"], text="", bg=BG, fg=MUTED, anchor="w",
+                           justify="left", font=("Segoe UI", 10), pady=8)
+    # Two zero-height anchors keep stats above highlights however they are
+    # packed: each panel goes "before" its anchor, and an anchor is always packed.
+    stats_anchor = tk.Frame(stats_inner, bg=CARD, height=1)
+    stats_anchor.pack(fill="x")
+    highlights_anchor = tk.Frame(stats_inner, bg=CARD, height=1)
+    highlights_anchor.pack(fill="x")
+    highlights_panel = tk.Frame(stats_inner, bg=CARD)
     highlights_title = tk.Label(highlights_panel, text="Highlights", bg=CARD, fg=ACCENT,
                                 font=("Segoe UI", 9, "bold"), anchor="w")
     highlights_title.pack(fill="x", padx=10, pady=(7, 2))
@@ -1153,13 +1239,15 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     # Who-spoke figures. Computed from the transcript already on disk — no LLM,
     # no key, no cost — so it works for offline users exactly as for everyone
     # else, and appears whether or not a summary has been generated.
-    stats_panel = tk.Frame(right, bg=CARD)
+    stats_panel = tk.Frame(stats_inner, bg=CARD)
     stats_text = tk.Label(stats_panel, text="", bg=CARD, fg=FG, anchor="w",
                           justify="left", padx=14, pady=10,
                           font=("Consolas", 9))
     stats_text.pack(fill="x")
 
-    summary_panel = tk.Frame(right, bg=CARD)
+    summary_empty = tk.Label(tab_frames["summary"], text="", bg=BG, fg=MUTED, anchor="w",
+                             justify="left", font=("Segoe UI", 10), pady=8)
+    summary_panel = tk.Frame(tab_frames["summary"], bg=CARD)
     summary_head = tk.Frame(summary_panel, bg=CARD)
     summary_head.pack(fill="x")
     summary_toggle = tk.Button(
@@ -1177,11 +1265,11 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         padx=10,
         pady=7,
     )
-    summary_toggle.pack(side="left")
+    # Not packed: the Summary tab is the summary; a collapse toggle inside it did nothing useful.
     summary_copy_btn = ttk.Button(summary_head, text="Copy", state="disabled")
     summary_copy_btn.pack(side="right", padx=(0, 7), pady=(5, 5))
     summary_body = tk.Frame(summary_panel, bg=CARD)
-    summary_body.pack(fill="x")
+    summary_body.pack(fill="both", expand=True)
     summary_text = tk.Text(
         summary_body,
         bg=CARD,
@@ -1193,7 +1281,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         highlightthickness=0,
         wrap="word",
         font=("Segoe UI", 9),
-        height=7,
+        height=4,
         padx=12,
         pady=8,
         state="disabled",
@@ -1209,30 +1297,16 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     wheel(summary_text)
 
     # After-call answers: the other side's questions, answered from the user's
-    # docs. Built on demand (one button), never during the live call.
-    answers_panel = tk.Frame(right, bg=CARD)
-    answers_body = tk.Frame(answers_panel, bg=CARD)
+    # docs. Built on demand (one button), never during the live call. Lives in
+    # the Questions tab, always expanded.
+    answers_panel, answers_body = scrolled(tab_frames["questions"])
+    questions_empty = tk.Label(tab_frames["questions"], text="", bg=BG, fg=MUTED,
+                               anchor="w", justify="left", font=("Segoe UI", 10), pady=8)
 
     def expand_answers() -> None:
-        """Open the section when it has something the user must see or do."""
-        answers_body.pack(fill="x")
-        answers_toggle.config(text="\u25be Their questions")
+        """Bring the user to the Questions tab (they have something to see or do)."""
+        select_tab("questions")
 
-    def toggle_answers() -> None:
-        if answers_body.winfo_manager():
-            answers_body.pack_forget()
-            answers_toggle.config(text="▸ Their questions")
-        else:
-            answers_body.pack(fill="x")
-            answers_toggle.config(text="▾ Their questions")
-
-    answers_toggle = tk.Button(
-        answers_panel, text="▸ Their questions", command=toggle_answers,
-        bg=CARD, fg=FG, activebackground=ROW_HOVER, activeforeground=FG,
-        relief="flat", borderwidth=0, cursor="hand2", anchor="w",
-        font=("Segoe UI", 9, "bold"), padx=10, pady=7,
-    )
-    answers_toggle.pack(fill="x")
     answers_notes = tk.Text(answers_body, bg=CARD, fg=FG, height=3, wrap="word",
                             relief="flat", highlightthickness=1,
                             highlightbackground=MUTED, font=("Segoe UI", 9))
@@ -1251,7 +1325,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     answers_list = tk.Frame(answers_body, bg=CARD)
     answers_list.pack(fill="x", padx=10, pady=(0, 8))
 
-    transcript_wrap = tk.Frame(right, bg=CARD)
+    transcript_wrap = tk.Frame(tab_frames["transcript"], bg=CARD)
     transcript_wrap.pack(fill="both", expand=True)
     transcript = tk.Text(
         transcript_wrap,
@@ -1312,43 +1386,18 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     summary_text.tag_configure("bold", foreground=FG, font=("Segoe UI", 9, "bold"))
     summary_text.tag_configure("italic", foreground=FG, font=("Segoe UI", 9, "italic"))
 
+    # The old bottom row is no longer packed. Its buttons stay as (unpacked)
+    # objects so their .config(state=...) calls keep working; their commands are
+    # reached via the header and the ⋯ menu.
     actions = tk.Frame(right, bg=BG)
-    # side=bottom + before the first child: packed first, so a short window
-    # squeezes the transcript, never the buttons (they used to vanish).
-    actions.pack(side="bottom", fill="x", pady=(10, 0), before=session_title)
-    transcribe_btn = ttk.Button(actions, text="Transcribe", state="disabled",
-                                style="Go.TButton")
-    transcribe_btn.pack(side="left")
-    # Right after Transcribe so a narrow window never clips it.
     export_btn = ttk.Button(actions, text="Export all", state="disabled")
-    export_btn.pack(side="left", padx=(7, 0))
-    copy_ai_btn = ttk.Button(actions, text="Copy for AI", state="disabled")
-    copy_ai_btn.pack(side="left", padx=(7, 0))
     video_btn = ttk.Button(actions, text="Send video", state="disabled")
-    video_btn.pack(side="left", padx=(7, 0))
     polish_btn = ttk.Button(actions, text="Polish", state="disabled")
-    polish_btn.pack(side="left", padx=(7, 0))
     toggle_polish_btn = ttk.Button(actions, text="Show raw", state="disabled")
-    toggle_polish_btn.pack(side="left", padx=(7, 0))
     copy_btn = ttk.Button(actions, text="Copy", state="disabled")
-    copy_btn.pack(side="left", padx=(7, 0))
-    # Not packed: the row overflowed with Copy for AI. Kept for its state; reached via the row's right-click menu.
     save_btn = ttk.Button(actions, text="Save as .txt", state="disabled")
     folder_btn = ttk.Button(actions, text="Open folder", state="disabled")
-    folder_btn.pack(side="left", padx=(7, 0))
     delete_btn = ttk.Button(actions, text="Delete session", state="disabled")
-    delete_btn.pack(side="right")
-    status_label = tk.Label(
-        right,
-        text="",
-        bg=BG,
-        fg=MUTED,
-        anchor="w",
-        justify="left",
-        wraplength=600,
-        font=("Segoe UI", 9),
-    )
-    status_label.pack(side="bottom", fill="x", pady=(8, 0), before=actions)
 
     def selected_path() -> Path | None:
         selected = state["selected"]
@@ -1623,10 +1672,23 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
 
         threading.Thread(target=work, daemon=True).start()
 
+    def select_tab(name: str) -> None:
+        """Show one tab's frame and paint its pill (selected = accent text + underline)."""
+        if name not in tab_frames:
+            return
+        state["tab"] = name
+        for frame in tab_frames.values():
+            frame.pack_forget()
+        tab_frames[name].pack(fill="both", expand=True)
+        for key, (pill, line) in tab_pills.items():
+            on = key == name
+            pill.config(fg=ACCENT if on else MUTED, bg=CARD if on else BG)
+            line.config(bg=ACCENT if on else BG)
+
     def toggle_summary() -> None:
         state["summary_expanded"] = not state["summary_expanded"]
         if state["summary_expanded"]:
-            summary_body.pack(fill="x")
+            summary_body.pack(fill="both", expand=True)
             summary_toggle.config(text="▾ Summary")
         else:
             summary_body.pack_forget()
@@ -1645,14 +1707,22 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                     summary_text.insert("end", "\n")
         summary_text.config(state="disabled")
         summary_copy_btn.config(state="normal" if value else "disabled")
-        if value:
-            summary_panel.pack(
-                fill="x",
-                pady=(0, 8),
-                before=transcript_wrap,
-            )
-        else:
-            summary_panel.pack_forget()
+        layout_summary_tab(bool(value))
+
+    def layout_summary_tab(has_summary: bool) -> None:
+        """Empty note (if any), then the Summarise row, then the summary filling the rest."""
+        for widget in (summary_empty, summarise_controls, summary_panel):
+            widget.pack_forget()
+        if not state.get("has_transcript"):
+            summary_empty.config(text="Transcribe this meeting first.")
+            summary_empty.pack(fill="x")
+            return
+        if not has_summary:
+            summary_empty.config(text="No summary yet. Pick a style and press Summarise.")
+            summary_empty.pack(fill="x")
+        summarise_controls.pack(fill="x", pady=(0, 8))
+        if has_summary:
+            summary_panel.pack(fill="both", expand=True, pady=(0, 8))
 
     def display_highlights(bookmarks, segments):
         for child in highlights_body.winfo_children():
@@ -1660,6 +1730,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         resolved = resolve_bookmarks(bookmarks, segments)
         if not resolved:
             highlights_panel.pack_forget()
+            sync_stats_empty()
             return
         for item in resolved:
             text = item["text"]
@@ -1674,7 +1745,21 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                 button.bind("<Button-1>",
                             lambda _event, needle=item.get("first_text") or text:
                             _see_transcript(needle))
-        highlights_panel.pack(fill="x", pady=(0, 8), before=transcript_wrap)
+        highlights_panel.pack(fill="x", pady=(0, 8), before=highlights_anchor)
+        sync_stats_empty()
+
+    def sync_stats_empty() -> None:
+        """Stats tab: a one-line note when there is nothing in it."""
+        if not state.get("has_transcript"):
+            stats_empty.config(text="Transcribe this meeting first.")
+        elif not (stats_panel.winfo_manager() or highlights_panel.winfo_manager()):
+            stats_empty.config(text="No speaker stats for this meeting.")
+        else:
+            stats_empty.pack_forget()
+            stats_holder.pack(fill="both", expand=True)
+            return
+        stats_holder.pack_forget()
+        stats_empty.pack(fill="x")
 
     def _see_transcript(needle):
         transcript.config(state="normal")
@@ -2128,6 +2213,14 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         can_transcribe = session["can_transcribe"] and not state["busy"]
         transcribe_btn.config(state="normal" if can_transcribe else "disabled")
         transcribe_cta.config(state="normal" if can_transcribe else "disabled")
+        # Header buttons: Transcribe only while it applies, and then it is the
+        # filled one; otherwise Copy for AI is.
+        if session["can_transcribe"]:
+            transcribe_btn.pack(side="left", padx=(0, 7), before=copy_ai_btn)
+            copy_ai_btn.config(style="TButton")
+        else:
+            transcribe_btn.pack_forget()
+            copy_ai_btn.config(style="Meet.Accent.TButton")
         if session["can_transcribe"]:
             # before=transcript_wrap, NOT before=highlights_panel: that panel is
             # pack_forget() whenever a meeting has no bookmarks, and packing
@@ -2142,9 +2235,11 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         who_spoke = render_stats(raw_segments, state["speaker_map"]) if raw_segments else ""
         if who_spoke:
             stats_text.config(text=who_spoke)
-            stats_panel.pack(fill="x", pady=(0, 8), before=transcript_wrap)
+            stats_panel.pack(fill="x", pady=(0, 8), before=stats_anchor)
         else:
             stats_panel.pack_forget()
+        state["has_transcript"] = bool(body_text)
+        sync_stats_empty()
 
         doubled = count_speaker_bleed(raw_segments) if raw_segments else 0
         if doubled >= 2:
@@ -2168,11 +2263,6 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         if body_text:
             cfg = config.Config.load()
             state["summary_ready"] = provider_ready(cfg.cleanup_provider)
-            summarise_controls.pack(
-                fill="x",
-                pady=(0, 8),
-                before=transcript_wrap,
-            )
             summary_mode.config(
                 state="readonly" if state["summary_ready"] and not state["busy"]
                 else "disabled"
@@ -2197,14 +2287,21 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             show_answers(session)
         else:
             state["summary_ready"] = False
-            summarise_controls.pack_forget()
-            answers_panel.pack_forget()
+            set_questions_visible(False)
             status_label.config(
                 text=session["error"] or "",
                 fg=ACCENT if session["error"] else MUTED,
             )
         sync_video_btn(session)
         display_summary()
+        # Opening a different meeting picks its tab: Summary if it has one,
+        # else Transcript (or Transcript when a search is active). A refresh of
+        # the SAME meeting leaves the user's tab alone.
+        if state.get("tab_path") != session["path"]:
+            state["tab_path"] = session["path"]
+            has_summary = any(v for v in state["summaries"].values())
+            searching = bool(search_var.get().strip())
+            select_tab("summary" if has_summary and not searching else "transcript")
 
     sending_videos: set = set()     # meeting folders with an upload running from this window
 
@@ -2451,15 +2548,19 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                 button.config(state="disabled")
             match_label.config(text="0/0")
             status_label.config(text="")
-            summarise_controls.pack_forget()
-            summary_panel.pack_forget()
-            answers_panel.pack_forget()
+            state["has_transcript"] = False
+            transcribe_btn.pack_forget()
+            copy_ai_btn.config(state="disabled", style="Meet.Accent.TButton")
+            layout_summary_tab(False)
+            set_questions_visible(False)
             # Delete the only untranscribed session and these stayed on screen,
             # advertising a recording that no longer exists.
             needs_transcribe.pack_forget()
             bleed_banner.pack_forget()
             highlights_panel.pack_forget()
             stats_panel.pack_forget()
+            sync_stats_empty()
+            select_tab("transcript")
             return
         # Resolve against the RENDERED list. Computing this over all sessions and
         # then indexing the filtered one left a hidden meeting selected while a
@@ -2696,12 +2797,28 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         if path is not None:
             select_by_path(path)
 
+    def set_question_count(count: int) -> None:
+        label = f"Questions ({count})" if count else "Questions"
+        tab_pills["questions"][0].config(text=label)
+
+    def set_questions_visible(show: bool) -> None:
+        """Questions tab: the answers panel when transcribed, else the empty note."""
+        if show:
+            questions_empty.pack_forget()
+            answers_panel.pack(fill="both", expand=True)
+        else:
+            answers_panel.pack_forget()
+            set_question_count(0)
+            questions_empty.config(text="Transcribe this meeting first.")
+            questions_empty.pack(fill="x")
+
     def render_answers(path) -> None:
         for child in answers_list.winfo_children():
             child.destroy()
         data = knowledge.load_answers(path)
         if not data:
             answers_status.config(text="")
+            set_question_count(0)
             return
         src = data.get("sources", {})
         parts = [f"Used: {', '.join(src.get('ok', [])) or 'nothing'}."]
@@ -2709,6 +2826,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             parts.append("Couldn't read: " + "; ".join(src["failed"]))
         if not data.get("items"):
             parts.append("No questions found.")
+        set_question_count(len(data.get("items") or []))
         answers_status.config(text=" ".join(parts), fg=MUTED)
         for index, item in enumerate(data.get("items", [])):
             head, detail = knowledge.describe_item(item)
@@ -2736,10 +2854,14 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                           bg=ACCENT if item.get("vote") == vote else CARD, fg=FG,
                           cursor="hand2").pack(side="right", padx=2)
 
-    def need_docs() -> None:
-        """No docs, page or notes yet: say so and offer the folder picker."""
+    def need_docs(reveal: bool = True) -> None:
+        """No docs, page or notes yet: say so and offer the folder picker.
+
+        ``reveal`` switches to the Questions tab; the passive refresh of a
+        selected meeting passes False so it never pulls the user off their tab."""
         answers_status.config(text="Pick a docs folder (PDF, Markdown, text), or type call notes above.", fg=MUTED)
-        expand_answers()
+        if reveal:
+            expand_answers()
         if not pick_docs_btn.winfo_ismapped():
             # Its own row: beside the status text the pair overflows a narrow
             # pane and the status gets clipped away entirely.
@@ -2758,7 +2880,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
 
     def show_answers(session) -> None:
         path = session["path"]
-        answers_panel.pack(fill="x", pady=(0, 8), before=transcript_wrap)
+        set_questions_visible(True)
         answers_notes.delete("1.0", "end")
         notes = Path(path) / "call_notes.md"
         if notes.is_file():
@@ -2772,12 +2894,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         else:
             for child in answers_list.winfo_children():
                 child.destroy()
+            set_question_count(0)
             if not ready:
                 pick_docs_btn.pack_forget()   # a folder is no use until an engine is ready
                 answers_status.config(
                     text="Unavailable: configure an API key or choose local Ollama.", fg=ACCENT)
             elif not has_docs and not answers_notes.get("1.0", "end").strip():
-                need_docs()
+                need_docs(reveal=False)
             else:
                 pick_docs_btn.pack_forget()
                 answers_status.config(text="", fg=MUTED)
@@ -2866,7 +2989,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             set_busy(False)
             state["summaries"][mode] = result
             state["summary_expanded"] = True
-            summary_body.pack(fill="x")
+            summary_body.pack(fill="both", expand=True)
             summary_toggle.config(text="▾ Summary")
             display_summary()
             summary_mode.config(state="readonly")
@@ -3189,16 +3312,17 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     # One reusable menu (see transcript_menu: never destroy a menu inside its own command).
     session_menu = tk.Menu(root, tearoff=False)
 
-    def show_session_menu(event) -> None:
+    def fill_session_menu(menu) -> None:
+        """Items shared by the row right-click menu and the header \u22ef button."""
         selected = state["selected"]
-        if selected is None or state["busy"]:
-            return
-        menu = session_menu
         menu.delete(0, "end")
         can_name = (
             (selected["path"] / "transcript.json").is_file()
             and provider_ready(config.Config.load().cleanup_provider)
         )
+        if selected["can_transcribe"]:
+            menu.add_command(label="Transcribe", command=do_transcribe)
+            menu.add_separator()
         menu.add_command(label="Rename…", command=rename_selected)
         menu.add_command(
             label="Name it from the transcript", command=name_from_transcript,
@@ -3208,6 +3332,9 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         menu.add_command(label="Export all…", command=do_export)
         menu.add_command(label="Copy for AI", command=do_copy_ai)
         menu.add_command(
+            label="Copy transcript", command=do_copy,
+            state="normal" if str(copy_btn.cget("state")) == "normal" else "disabled")
+        menu.add_command(
             label="Save as .txt…", command=do_save,
             state="normal" if str(save_btn.cget("state")) == "normal" else "disabled")
         menu.add_command(
@@ -3215,13 +3342,42 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             state=str(video_btn.cget("state")) if str(video_btn.cget("state")) in
             ("normal", "disabled") else "disabled")
         menu.add_separator()
+        menu.add_command(
+            label="Polish transcript", command=do_polish,
+            state="normal" if str(polish_btn.cget("state")) == "normal" else "disabled")
+        menu.add_command(
+            label="Show raw" if state["show_polished"] else "Show polished",
+            command=toggle_polish,
+            state="normal" if str(toggle_polish_btn.cget("state")) == "normal" else "disabled")
+        menu.add_separator()
         menu.add_command(label="Delete…", command=do_delete)
-        menu.tk_popup(event.x_root, event.y_root)
+
+    def show_session_menu(event) -> None:
+        if state["selected"] is None or state["busy"]:
+            return
+        fill_session_menu(session_menu)
+        session_menu.tk_popup(event.x_root, event.y_root)
+
+    def show_more_menu() -> None:
+        if state["selected"] is None or state["busy"]:
+            return
+        fill_session_menu(session_menu)
+        session_menu.tk_popup(more_btn.winfo_rootx(),
+                              more_btn.winfo_rooty() + more_btn.winfo_height())
+
+    more_btn.config(command=show_more_menu)
+    for _n, (_key, _l) in enumerate(TAB_NAMES, start=1):
+        # Ctrl+1..4 switch tabs, but only while this pane is on screen.
+        root.bind(f"<Control-Key-{_n}>",
+                  lambda _e, k=_key: select_tab(k) if right.winfo_ismapped() else None,
+                  add="+")
 
     session_canvas.bind("<F2>", lambda _event: rename_selected())
 
     def _on_search_changed(*_args) -> None:
         update_search()
+        if search_var.get().strip():
+            select_tab("transcript")
         if search_all_var.get():
             refresh(preferred=selected_path(), preserve_scroll=None, preserve_search=True)
 
@@ -3254,6 +3410,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         (export_btn, "Write this meeting out as Markdown, a web page you can print to PDF, "
                      "or slides \u2014 with highlights, notes and named speakers. "
                      "Press Transcribe first, then Export all."),
+        (more_btn, "More: transcribe, rename, export, copy the transcript, polish, delete."),
         (copy_ai_btn, "Copy the whole meeting as Markdown (title, speakers, notes and "
                       "transcript) to paste into an AI chat."),
         (video_btn, "Send this meeting's screen video to your Screen recording destination."),

@@ -183,13 +183,17 @@ def test_answers_panel_is_mounted_for_a_transcribed_meeting_and_hidden_otherwise
         frame.pack(fill="both", expand=True)
         meetings_tab.build(frame, root)
         root.update()
-        # A collapsible header now (collapsed by default so the transcript has room).
-        panels = [w for w in _walk(frame) if isinstance(w, tk.Button)
-                  and str(w.cget("text")).endswith("Their questions")]
-        assert panels, "answers panel was never built"
+        # The answers live in a "Questions (N)" tab now (no collapse toggle).
+        pills = [w for w in _walk(frame) if isinstance(w, tk.Button)
+                 and str(w.cget("text")).startswith("Questions")]
+        assert pills, "Questions tab was never built"
+        assert str(pills[0].cget("text")) == "Questions (1)"
         assert any("Yes" == w.cget("text") for w in _walk(frame) if isinstance(w, tk.Label)), \
             "saved answers.json was not rendered when the meeting was selected"
-        assert panels[0].master.winfo_ismapped()
+        pills[0].invoke()
+        root.update()
+        yes = next(w for w in _walk(frame) if isinstance(w, tk.Label) and w.cget("text") == "Yes")
+        assert yes.winfo_ismapped(), "the Questions tab did not show the answers"
     finally:
         meeting.meetings_dir, meetings_tab.meetings_dir = orig
         root.destroy()
