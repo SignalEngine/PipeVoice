@@ -782,6 +782,7 @@ def main(first_run: bool = False) -> None:
     screenrec_dir_var = tk.StringVar(value=cfg.screenrec_dir)
     screenrec_keep_var = tk.BooleanVar(value=cfg.screenrec_keep_local)
     screenrec_fps_var = tk.StringVar(value=str(cfg.screenrec_fps))
+    meeting_auto_name_var = tk.BooleanVar(value=cfg.meeting_auto_name)
     meeting_video_var = tk.BooleanVar(value=cfg.meeting_video)
     meeting_video_send_var = tk.BooleanVar(value=cfg.meeting_video_send)
     video_fps_start = nearest_video_fps_label(cfg.meeting_video_fps)
@@ -1004,6 +1005,8 @@ def main(first_run: bool = False) -> None:
         command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
     )
 
+    check(c, "Name meetings automatically after transcription", meeting_auto_name_var,
+          "Sends the first part of the transcript to your AI provider to suggest a name.")
     check(c, "Record the screen too (video)", meeting_video_var,
           "Records the screen your mouse is on when the meeting starts. "
           "Applies from the next meeting.")
@@ -2009,6 +2012,7 @@ def main(first_run: bool = False) -> None:
         cfg.read_aloud_quiet_with_screenreader = bool(read_aloud_quiet_var.get())
         cfg.bookmark_hotkey = bookmark_hotkey_var.get().strip()
         cfg.bookmark_acoustic = bool(bookmark_acoustic_var.get())
+        cfg.meeting_auto_name = bool(meeting_auto_name_var.get())
         cfg.meeting_video = bool(meeting_video_var.get())
         cfg.meeting_video_send = bool(meeting_video_send_var.get())
         cfg.meeting_video_fps = dict(VIDEO_FPS_OPTIONS).get(

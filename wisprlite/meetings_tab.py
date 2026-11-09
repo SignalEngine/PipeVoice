@@ -37,6 +37,7 @@ from .meeting import (
     render_transcript,
     save_speaker_map,
     save_title,
+    save_title_if_empty,
     save_corrections,
     save_polished,
     transcribe_session,
@@ -3100,22 +3101,33 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                 pass
 
         def finished(title, error) -> None:
+            shown = selected_path()     # the user may have clicked another meeting meanwhile
+
+            def say(text, fg) -> None:
+                if shown == path:
+                    status_label.config(text=text, fg=fg)
+
             if error or not title:
-                status_label.config(
-                    text=f"Could not name it: {error}" if error
-                    else "Could not come up with a name.", fg=ACCENT)
+                say(f"Could not name it: {error}" if error
+                    else "Could not come up with a name.", ACCENT)
                 return
-            if load_title(path) != before:   # renamed while the model was thinking
-                status_label.config(
-                    text="Kept your name — the meeting was renamed meanwhile.", fg=MUTED)
-                return
+            kept = "Kept your name — the meeting was renamed meanwhile."
             try:
-                save_title(path, title, "auto")
+                if before == "":
+                    if not save_title_if_empty(path, title, "auto"):
+                        say(kept, MUTED)
+                        return
+                else:
+                    # shortcut: compare-then-save, a rename in another window in the same instant can be overwritten
+                    if load_title(path) != before:
+                        say(kept, MUTED)
+                        return
+                    save_title(path, title, "auto")
             except OSError as exc:
-                status_label.config(text=f"Could not save the name: {exc}", fg=ACCENT)
+                say(f"Could not save the name: {exc}", ACCENT)
                 return
-            status_label.config(text=f"Named: {title}", fg=GOOD)
-            refresh(preferred=path)
+            say(f"Named: {title}", GOOD)
+            refresh(preferred=shown)
 
         def work() -> None:
             title, error = "", None

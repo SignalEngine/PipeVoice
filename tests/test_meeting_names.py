@@ -17,7 +17,7 @@ def cfg():
     return types.SimpleNamespace(
         language="", deepgram_model="nova-3", local_model_size="base.en",
         local_device="cpu", local_compute_type="int8",
-        cleanup_provider="ollama", cleanup_model="m", bookmark_phrases="", ai_cleanup=True,
+        cleanup_provider="ollama", cleanup_model="m", bookmark_phrases="", meeting_auto_name=True,
     )
 
 
@@ -133,10 +133,10 @@ def test_list_export_and_search_use_the_title(tmp_path):
     assert "Chess ICT kickoff" in meetings_tab.session_search_text(path)
 
 
-def test_cloud_provider_with_ai_cleanup_off_never_sees_the_transcript(tmp_path):
+def test_auto_name_off_never_sends_the_transcript(tmp_path):
     write_session(tmp_path)
     off = cfg()
-    off.ai_cleanup, off.cleanup_provider = False, "gemini"
+    off.meeting_auto_name = False       # any provider, including local ollama
     with patch("wisprlite.cleanup.provider_ready", return_value=True), \
          patch("wisprlite.summarise.suggest_title", return_value="X") as suggest:
         _transcribe(tmp_path, off)
@@ -144,15 +144,47 @@ def test_cloud_provider_with_ai_cleanup_off_never_sees_the_transcript(tmp_path):
     assert meeting.load_title(tmp_path) == ""
 
 
-def test_local_ollama_is_named_even_with_ai_cleanup_off(tmp_path):
+def test_auto_name_on_names_the_meeting_even_with_ai_cleanup_off(tmp_path):
     write_session(tmp_path)
-    off = cfg()
-    off.ai_cleanup, off.cleanup_provider = False, "ollama"
+    on = cfg()
+    on.ai_cleanup, on.cleanup_provider = False, "gemini"
     with patch("wisprlite.cleanup.provider_ready", return_value=True), \
-         patch("wisprlite.summarise.suggest_title", return_value="Local name") as suggest:
-        _transcribe(tmp_path, off)
+         patch("wisprlite.summarise.suggest_title", return_value="Named") as suggest:
+        _transcribe(tmp_path, on)
     suggest.assert_called_once()
-    assert meeting.load_title(tmp_path) == "Local name"
+    assert meeting.load_title(tmp_path) == "Named"
+
+
+def test_save_title_if_empty_never_overwrites(tmp_path):
+    assert meeting.save_title_if_empty(tmp_path, " First ", "auto") is True
+    assert meeting.load_title(tmp_path) == "First"
+    assert meeting.save_title_if_empty(tmp_path, "Second", "auto") is False
+    assert meeting.load_title(tmp_path) == "First"
+    assert meeting.save_title_if_empty(tmp_path, "   ", "auto") is False
+
+
+def test_a_title_saved_during_the_model_call_wins_in_auto_naming(tmp_path):
+    write_session(tmp_path)
+
+    def slow(*_a, **_k):
+        meeting.save_title(tmp_path, "Typed meanwhile", "user")
+        return "Robot"
+
+    with patch("wisprlite.cleanup.provider_ready", return_value=True), \
+         patch("wisprlite.summarise.suggest_title", side_effect=slow):
+        _transcribe(tmp_path)
+    assert meeting.load_title(tmp_path) == "Typed meanwhile"
+
+
+def test_meeting_auto_name_setting_round_trips(tmp_path, monkeypatch):
+    from wisprlite import config
+
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.json")
+    cfg_ = config.Config.load()
+    assert cfg_.meeting_auto_name is True
+    cfg_.meeting_auto_name = False
+    cfg_.save()
+    assert config.Config.load().meeting_auto_name is False
 
 
 def test_suggest_title_has_a_20_second_timeout():

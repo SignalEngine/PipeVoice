@@ -179,6 +179,22 @@ def save_title(session_dir: str | Path, title: str, source: str) -> None:
     _write_json(path, {"title": title, "source": "user" if source == "user" else "auto"})
 
 
+def save_title_if_empty(session_dir: str | Path, title: str, source: str) -> bool:
+    """Write the name only if no title.json exists yet. Exclusive create, so a name
+    saved by another window in between is never overwritten. False = not written."""
+    title = clean_title(title)
+    if not title:
+        return False
+    path = Path(session_dir) / TITLE_FILE
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump({"title": title, "source": "user" if source == "user" else "auto"}, handle, indent=2)
+    return True
+
+
 def apply_speaker_map(
     segments: list[dict], speaker_map: dict[str, str] | None = None
 ) -> list[dict]:
@@ -736,15 +752,15 @@ def _auto_title(session_dir: Path, segments: list[dict], cfg) -> None:
         from .cleanup import provider_ready
         from .summarise import suggest_title
 
-        # Transcript text leaves the machine only when the user allowed AI cleanup
-        # (or the provider is local Ollama).
-        if not (getattr(cfg, "ai_cleanup", False) or cfg.cleanup_provider == "ollama"):
+        # Transcript text goes to the AI provider only if the user opted in to
+        # automatic meeting names (separate from dictation's "Polish with AI").
+        if not getattr(cfg, "meeting_auto_name", False):
             return
         if not provider_ready(cfg.cleanup_provider):
             return
         title = suggest_title(segments, cfg.cleanup_provider, cfg.cleanup_model)
-        if title and not load_title(session_dir):   # the user may have named it meanwhile
-            save_title(session_dir, title, "auto")
+        if title:
+            save_title_if_empty(session_dir, title, "auto")   # never overwrites a name
     except Exception as exc:
         log.warning("auto meeting name failed: %s", exc)
 

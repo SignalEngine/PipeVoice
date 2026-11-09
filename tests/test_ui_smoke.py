@@ -2323,3 +2323,99 @@ def test_a_slow_auto_name_does_not_overwrite_a_name_typed_meanwhile():
                 os.environ["PV_TAB"] = real_pv_tab
         assert any("Kept your name" in t for t in out["texts"]), out["texts"]
         assert meeting.load_title(session) == "Typed by the user"
+
+
+def test_an_auto_name_arriving_after_a_click_elsewhere_does_not_hijack_the_selection():
+    _skip_if_headless()
+    import os
+    import tempfile
+    import tkinter as tk
+
+    from wisprlite import meeting, meetings_tab, settings
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        for name, hh in (("meeting-20260729-120000", 12), ("meeting-20260729-100000", 10)):
+            d = base / name
+            d.mkdir()
+            (d / "meta.json").write_text(
+                f'{{"started_at": "2026-07-29T{hh}:00:00+00:00", "stopped_at":'
+                f' "2026-07-29T{hh}:10:00+00:00", "duration_seconds": 600,'
+                f' "transcription_backend": "deepgram", "status": "transcribed"}}',
+                encoding="utf-8")
+            (d / "transcript.json").write_text(
+                '{"segments": [{"t": 0.0, "speaker": "Them", "text": "Hello"}]}', encoding="utf-8")
+        first = base / "meeting-20260729-120000"
+
+        saved = (meeting.meetings_dir, meetings_tab.meetings_dir, meeting.default_meetings_dir,
+                 meetings_tab.default_meetings_dir, meetings_tab.suggest_title,
+                 meetings_tab.provider_ready)
+        for mod in (meeting, meetings_tab):
+            mod.meetings_dir = lambda: base
+            mod.default_meetings_dir = lambda: base
+        meetings_tab.suggest_title = lambda *_a, **_k: "Robot name"
+        meetings_tab.provider_ready = lambda _p: True
+
+        class InlineThread:
+            def __init__(self, target=None, **_k):
+                self._target = target
+
+            def start(self):
+                self._target()
+
+        real_thread = meetings_tab.threading.Thread
+        meetings_tab.threading.Thread = InlineThread
+        real_pv_tab = os.environ.get("PV_TAB")
+        os.environ["PV_TAB"] = "Meetings"
+        out = {}
+        real_mainloop = tk.Misc.mainloop
+
+        def walk(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from walk(child)
+
+        def drive(self, _n=0):
+            self.update_idletasks()
+            self.update()
+            rows = [w for w in walk(self) if w.winfo_class() == "Label"
+                    and str(w.cget("cursor")) == "hand2" and "Deepgram" in str(w.cget("text"))]
+            rows[0].event_generate("<Button-3>", x=2, y=2)      # select + menu on meeting 1
+            self.update()
+            for menu in (w for w in walk(self) if w.winfo_class() == "Menu"):
+                end = menu.index("end")
+                for i in range(end + 1 if end is not None else 0):
+                    if menu.type(i) == "command" and \
+                            menu.entrycget(i, "label") == "Name it from the transcript":
+                        menu.invoke(i)       # result is queued on the Tk loop, not yet shown
+            rows = [w for w in walk(self) if w.winfo_class() == "Label"
+                    and str(w.cget("cursor")) == "hand2" and "Deepgram" in str(w.cget("text"))]
+            for menu in (w for w in walk(self) if w.winfo_class() == "Menu"):
+                menu.unpost()               # a posted menu grabs the pointer and eats the click
+                menu.grab_release()
+            rows[1].event_generate("<Button-1>", x=2, y=2)      # click meeting 2 before it lands
+            self.update()
+            self.update()
+            texts = [str(w.cget("text")) for w in walk(self) if w.winfo_class() == "Label"]
+            out["texts"] = texts
+            self.destroy()
+
+        tk.Misc.mainloop = drive
+        tk._default_root = None
+        try:
+            settings.main()
+        finally:
+            tk.Misc.mainloop = real_mainloop
+            meetings_tab.threading.Thread = real_thread
+            (meeting.meetings_dir, meetings_tab.meetings_dir, meeting.default_meetings_dir,
+             meetings_tab.default_meetings_dir, meetings_tab.suggest_title,
+             meetings_tab.provider_ready) = saved
+            if real_pv_tab is None:
+                os.environ.pop("PV_TAB", None)
+            else:
+                os.environ["PV_TAB"] = real_pv_tab
+        assert meeting.load_title(first) == "Robot name"          # the name was still saved
+        assert not any(t.startswith("Named:") for t in out["texts"]), out["texts"]
+        # Meeting 2 (10:00) stays selected, so the new name shows in the list row only.
+        # If the selection jumped to meeting 1, the right-panel header would show it too.
+        assert out["texts"].count("Robot name") == 1, out["texts"]
