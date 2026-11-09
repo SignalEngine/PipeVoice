@@ -58,13 +58,17 @@ class ScreenRecording:
     """
 
     def __init__(self, region: tuple[int, int, int, int], out_dir: Path,
-                 *, fps: int = DEFAULT_FPS, device=None) -> None:
+                 *, fps: int = DEFAULT_FPS, device=None,
+                 record_audio: bool = True) -> None:
         left, top, width, height = region
         # x264 requires even dimensions for yuv420p. Round DOWN so the capture
         # never reaches outside the box the user actually drew.
         self.region = (left, top, width - (width % 2), height - (height % 2))
         self.fps = max(1, int(fps))
         self.device = device
+        # False: picture only (meeting video, whose sound comes from the meeting
+        # recorder's own wavs). No mic thread, no wav, no audio stream.
+        self.record_audio = bool(record_audio)
         self.out_dir = Path(out_dir)
         self.stem = _stamp()
 
@@ -118,15 +122,18 @@ class ScreenRecording:
 
     def start(self) -> None:
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self._wave = wave.open(str(self.audio_path), "wb")
-        self._wave.setparams(
-            (AUDIO_CHANNELS, AUDIO_WIDTH, AUDIO_RATE, 0, "NONE", "not compressed")
-        )
         self._threads = [
             threading.Thread(target=self._grab_loop, name="screenrec-video", daemon=True),
-            threading.Thread(target=self._audio_writer, name="screenrec-audio", daemon=True),
-            threading.Thread(target=self._capture_mic, name="screenrec-mic", daemon=True),
         ]
+        if self.record_audio:
+            self._wave = wave.open(str(self.audio_path), "wb")
+            self._wave.setparams(
+                (AUDIO_CHANNELS, AUDIO_WIDTH, AUDIO_RATE, 0, "NONE", "not compressed")
+            )
+            self._threads += [
+                threading.Thread(target=self._audio_writer, name="screenrec-audio", daemon=True),
+                threading.Thread(target=self._capture_mic, name="screenrec-mic", daemon=True),
+            ]
         for thread in self._threads:
             thread.start()
 
@@ -148,7 +155,7 @@ class ScreenRecording:
             self._record_error(RuntimeError("no frames captured"))
             return None
         video = self._mux()
-        if video is None and self.audio_path.exists():
+        if video is None and self.record_audio and self.audio_path.exists():
             # The narration is intact even when the picture is not; say where.
             self.errors.append(f"narration saved: {self.audio_path.name}")
         return video
@@ -222,6 +229,8 @@ class ScreenRecording:
         # header is written then, and adding a stream afterwards fails with
         # "Cannot rebase to zero time". The mic is always recorded, so the
         # audio track is always declared, even if it ends up empty.
+        if not self.record_audio:
+            return
         audio = self._container.add_stream("aac", rate=AUDIO_RATE)
         audio.layout = "mono"
         # PyAV's default bitrate for a 48kHz mono AAC stream isn't guaranteed
@@ -511,6 +520,35 @@ class ScreenRecording:
             return np.frombuffer(raw, dtype="<i2")
         except Exception:
             return None
+
+
+def monitor_under_mouse() -> tuple[int, int, int, int]:
+    """(left, top, width, height) of the monitor holding the mouse pointer.
+
+    Meetings start from a hotkey, so there is no drag-select: the screen the
+    pointer is on is the one being used. Falls back to the first monitor when
+    the pointer position is unknown (non-Windows, or the call fails).
+    """
+    import mss
+
+    with mss.mss() as sct:
+        monitors = list(sct.monitors[1:]) or [sct.monitors[0]]
+    try:
+        import ctypes
+
+        class _Point(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        point = _Point()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
+        for mon in monitors:
+            if (mon["left"] <= point.x < mon["left"] + mon["width"]
+                    and mon["top"] <= point.y < mon["top"] + mon["height"]):
+                return (mon["left"], mon["top"], mon["width"], mon["height"])
+    except Exception:
+        pass
+    mon = monitors[0]
+    return (mon["left"], mon["top"], mon["width"], mon["height"])
 
 
 def send(paths, destination: str, *, timeout: float = UPLOAD_TIMEOUT) -> tuple[bool, str]:

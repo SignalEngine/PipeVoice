@@ -767,6 +767,8 @@ def main(first_run: bool = False) -> None:
     screenrec_dir_var = tk.StringVar(value=cfg.screenrec_dir)
     screenrec_keep_var = tk.BooleanVar(value=cfg.screenrec_keep_local)
     screenrec_fps_var = tk.StringVar(value=str(cfg.screenrec_fps))
+    meeting_video_var = tk.BooleanVar(value=cfg.meeting_video)
+    meeting_video_send_var = tk.BooleanVar(value=cfg.meeting_video_send)
     bookmark_hotkey_var = tk.StringVar(value=cfg.bookmark_hotkey)
     bookmark_acoustic_var = tk.BooleanVar(value=cfg.bookmark_acoustic)
     bookmark_sensitivity_var = tk.DoubleVar(value=cfg.bookmark_sensitivity)
@@ -984,6 +986,23 @@ def main(first_run: bool = False) -> None:
     meeting_cap_btn.config(
         command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
     )
+
+    check(c, "Record the screen too (video)", meeting_video_var,
+          "Records the screen your mouse is on when the meeting starts. "
+          "Applies from the next meeting.")
+    check(c, "Send the video when the meeting ends (uses the Screen recording destination)",
+          meeting_video_send_var)
+    _video_dest_hint = tk.Label(c, text="", bg=CARD, fg=MUTED, font=("Segoe UI", 8),
+                                wraplength=470, justify="left")
+    _video_dest_hint.pack(anchor="w", padx=(43, 0), pady=(0, 8))
+
+    def _sync_video_dest_hint(*_):
+        empty = not screenrec_dest_var.get().strip()
+        _video_dest_hint.config(
+            text="Set a destination under Screen recording first" if empty else "")
+
+    _sync_video_dest_hint()
+    screenrec_dest_var.trace_add("write", _sync_video_dest_hint)
 
     r = row(c, "Bookmark hotkey", "Tap while recording to mark the current moment.")
     entry(r, bookmark_hotkey_var, width=14)
@@ -1969,6 +1988,8 @@ def main(first_run: bool = False) -> None:
         cfg.read_aloud_quiet_with_screenreader = bool(read_aloud_quiet_var.get())
         cfg.bookmark_hotkey = bookmark_hotkey_var.get().strip()
         cfg.bookmark_acoustic = bool(bookmark_acoustic_var.get())
+        cfg.meeting_video = bool(meeting_video_var.get())
+        cfg.meeting_video_send = bool(meeting_video_send_var.get())
         cfg.bookmark_phrases = bookmark_phrases_var.get().strip()
         try:
             cfg.bookmark_sensitivity = max(0.0, min(1.0, float(bookmark_sensitivity_var.get())))

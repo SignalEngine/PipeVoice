@@ -150,6 +150,9 @@ class Config:
     bookmark_phrases: str = DEFAULT_BOOKMARK_PHRASES
     meeting_max_minutes: int = 240  # safety cap for an unattended meeting capture
     meeting_retention_sessions: int = 20  # newest local meeting sessions to keep
+    meeting_video: bool = False  # also record the screen during meetings
+    meeting_video_fps: int = 4   # slides/screens, not motion; keeps an hour small
+    meeting_video_send: bool = False  # scp the finished video to screenrec_destination when the meeting ends
     output_mode: str = "paste"      # type | paste (paste restores your clipboard after)
     language: str = ""              # "" = auto-detect; else ISO code e.g. "en"
     device: str = ""                # mic index or name substring; "" = default

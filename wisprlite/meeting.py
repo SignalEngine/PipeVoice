@@ -696,6 +696,97 @@ def transcribe_session(
     return transcript
 
 
+VIDEO_STEM = "screen-video"
+MEETING_VIDEO_FILE = "meeting.mp4"
+MUX_AUDIO_BITRATE = 96_000
+_MIX_CHUNK = SAMPLE_RATE * 30   # samples mixed at a time, so a 4 h meeting never sits in RAM
+
+
+def _aligned_chunks(path, shift: int, chunk: int):
+    """Yield int16 chunks of exactly `chunk` samples (last may be short) of a wav
+    placed `shift` samples after t=0 (negative = trim head). Equal chunk sizes
+    keep two sources sample-aligned when they are summed chunk by chunk."""
+    import numpy as np
+
+    with wave.open(str(path), "rb") as handle:
+        if shift < 0:
+            handle.readframes(min(-shift, handle.getnframes()))
+        pending = [np.zeros(max(0, shift), dtype=np.int16)]
+        held = pending[0].size
+        while True:
+            raw = handle.readframes(chunk)
+            if raw:
+                data = np.frombuffer(raw, dtype="<i2")
+                pending.append(data)
+                held += data.size
+            while held >= chunk or (not raw and held):
+                joined = np.concatenate(pending)
+                yield joined[:chunk]
+                rest = joined[chunk:]
+                pending, held = [rest], rest.size
+            if not raw:
+                return
+
+
+def mux_meeting_video(video, mic_wav, desktop_wav, offsets, out) -> Path:
+    """Mix mic + desktop into one track and mux it under the video (video stream-copied).
+
+    `offsets` = {"video": first_frame_at, "mic": first_block_monotonic,
+    "desktop": first_block_monotonic}, all on the same monotonic clock. Audio is
+    placed relative to the first video frame. A missing wav or offset is left out.
+    """
+    import av
+    import numpy as np
+    from itertools import zip_longest
+
+    video, out = Path(video), Path(out)
+    t0 = offsets.get("video")
+    sources = []
+    for key, path in (("mic", mic_wav), ("desktop", desktop_wav)):
+        path = Path(path)
+        if not path.exists() or not _wav_has_frames(path):
+            continue
+        at = offsets.get(key)
+        shift = 0 if at is None or t0 is None else int(round((at - t0) * SAMPLE_RATE))
+        sources.append(_aligned_chunks(path, shift, _MIX_CHUNK))
+
+    tmp = out.with_name(out.stem + ".part" + out.suffix)
+    try:
+        with av.open(str(video)) as src, av.open(str(tmp), mode="w") as dst:
+            in_video = src.streams.video[0]
+            out_video = dst.add_stream_from_template(in_video)
+            out_audio = None
+            if sources:
+                out_audio = dst.add_stream("aac", rate=SAMPLE_RATE)
+                out_audio.layout = "mono"
+                out_audio.bit_rate = MUX_AUDIO_BITRATE
+                for parts in zip_longest(*sources):
+                    mix = np.zeros(max(len(p) for p in parts if p is not None), dtype=np.float32)
+                    for p in parts:
+                        if p is not None:
+                            mix[:len(p)] += p.astype(np.float32) / 32768.0
+                    pcm = (np.clip(mix, -1.0, 1.0) * 32767.0).astype("<i2")
+                    frame = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="s16", layout="mono")
+                    frame.sample_rate = SAMPLE_RATE
+                    for packet in out_audio.encode(frame):
+                        dst.mux(packet)
+                for packet in out_audio.encode():
+                    dst.mux(packet)
+            for packet in src.demux(in_video):
+                if packet.dts is None:
+                    continue
+                packet.stream = out_video
+                dst.mux(packet)
+        tmp.replace(out)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    return out
+
+
 class MeetingRecorder:
     def __init__(
         self,
@@ -708,6 +799,8 @@ class MeetingRecorder:
         bookmark_acoustic: bool = False,
         bookmark_sensitivity: float = 0.5,
         on_auto_stop: Callable[[str], None] | None = None,
+        video_fps: int = 0,
+        on_video_ready: Callable[[Path | None, str | None], None] | None = None,
     ) -> None:
         if base_dir is None:
             base_dir = meetings_dir()
@@ -716,6 +809,11 @@ class MeetingRecorder:
         self.max_minutes = max_minutes
         self.retention_sessions = max(1, int(retention_sessions))
         self._on_auto_stop = on_auto_stop
+        self.video_fps = max(0, int(video_fps))
+        self._on_video_ready = on_video_ready
+        self._video = None                 # the live ScreenRecording, None when off
+        self._video_error: str | None = None
+        self._video_mux_pending = False
         self.bookmark_hotkey = bookmark_hotkey
         self.bookmark_acoustic = bool(bookmark_acoustic)
         self.bookmark_sensitivity = max(0.0, min(1.0, float(bookmark_sensitivity)))
@@ -884,6 +982,8 @@ class MeetingRecorder:
             self._mic_silent_logged = False
             self._peaks = {"mic": 0.0, "desktop": 0.0}
             self._stop_reason = None
+            self._video = None
+            self._video_error = None
             self._stop.clear()
             self._active = True
         log.info("meeting started: mic=%s, rate=%d",
@@ -957,7 +1057,120 @@ class MeetingRecorder:
             if not any(thread.is_alive() for thread in self._threads):
                 self._threads = []
             raise
+        self._start_video()
         return self.session_dir
+
+    # -- screen video ----------------------------------------------------------
+
+    @property
+    def video_state(self) -> str:
+        """"off", "recording" or "failed" — the overlay's screen marker reads this."""
+        video = self._video
+        if video is not None and not video.video_failed.is_set():
+            return "recording"
+        if self._video_error or (video is not None and video.video_failed.is_set()):
+            return "failed"
+        return "off"
+
+    @property
+    def video_mux_pending(self) -> bool:
+        """True from stop() until the mux thread is about to report its result."""
+        return self._video_mux_pending
+
+    def _start_video(self) -> None:
+        """Film the screen under the meeting. Must never break the audio meeting."""
+        if self.video_fps <= 0 or self.session_dir is None:
+            return
+        try:
+            from . import screenrec
+
+            video = screenrec.ScreenRecording(
+                screenrec.monitor_under_mouse(), self.session_dir,
+                fps=self.video_fps, record_audio=False,
+            )
+            video.stem = VIDEO_STEM
+            video.start()
+            self._video = video
+        except Exception as exc:
+            self._video = None
+            self._video_error = f"{type(exc).__name__}: {exc}"
+            log.warning("meeting video failed to start: %s", self._video_error)
+            self._set_video_meta({"file": None, "error": self._video_error})
+
+    def _set_video_meta(self, info: dict) -> None:
+        if self.session_dir is None:
+            return
+        try:
+            with self._meta_lock:
+                path = self.session_dir / "meta.json"
+                try:
+                    meta = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(meta, dict):
+                        meta = {}
+                except (OSError, ValueError, TypeError):
+                    meta = {}
+                meta["video"] = info
+                pending = self.session_dir / "meta.json.tmp"
+                pending.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+                pending.replace(path)
+        except Exception:
+            log.warning("could not record video status in meta.json", exc_info=True)
+
+    def _finish_video(self, session_dir: Path, meta_offsets: dict) -> None:
+        """Stop the picture (audio waves are already closed) and hand the mux to a
+        non-daemon thread so quitting the app never truncates the mp4."""
+        video, self._video = self._video, None
+        if video is None:
+            return
+        try:
+            clip = video.stop()
+        except Exception as exc:
+            clip = None
+            video.errors.append(f"{type(exc).__name__}: {exc}")
+        if clip is None:
+            self._video_error = "; ".join(video.errors) or "no video captured"
+            log.warning("meeting video produced nothing: %s", self._video_error)
+            self._set_video_meta({"file": None, "error": self._video_error})
+            self._report_video(None, self._video_error)
+            return
+        if video.errors:
+            log.info("meeting video: capture warnings: %s", "; ".join(video.errors))
+        offsets = dict(meta_offsets)
+        offsets["video"] = video.first_frame_at
+        self._video_mux_pending = True
+        threading.Thread(
+            target=self._mux_worker, args=(session_dir, clip, offsets),
+            name="meeting-video-mux", daemon=False,
+        ).start()
+
+    def _mux_worker(self, session_dir: Path, clip: Path, offsets: dict) -> None:
+        out = session_dir / MEETING_VIDEO_FILE
+        error = None
+        try:
+            mux_meeting_video(clip, session_dir / "mic.wav", session_dir / "desktop.wav",
+                              offsets, out)
+            try:
+                clip.unlink()          # kept on failure, so the picture is never lost
+            except OSError:
+                pass
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            log.warning("meeting video mux failed: %s", error, exc_info=True)
+        self._set_video_meta(
+            {"file": None if error else out.name, "error": error,
+             **({"video_only": clip.name} if error else {})})
+        self._video_mux_pending = False
+        self._report_video(None if error else out, error)
+
+    def _report_video(self, path, error) -> None:
+        self._video_mux_pending = False
+        callback = self._on_video_ready
+        if callback is None:
+            return
+        try:
+            callback(path, error)
+        except Exception:
+            log.warning("on_video_ready callback failed", exc_info=True)
 
     def stop(self, reason: str = "stopped by user") -> Path | None:
         with self._lifecycle_lock:
@@ -1002,6 +1215,12 @@ class MeetingRecorder:
             from . import loudness
             loudness.normalize_wav_file(self.session_dir / "mic.wav")
             loudness.normalize_wav_file(self.session_dir / "desktop.wav")
+        # After the audio waves are closed. The picture is stopped here (quick);
+        # the slow mix + mux runs on its own thread so stop() never waits for it.
+        session_for_video = self.session_dir
+        video_offsets = {"mic": self._first_blocks["mic"], "desktop": self._first_blocks["desktop"]}
+        if self._video is not None and session_for_video is not None:
+            self._finish_video(session_for_video, video_offsets)
         stopped_at = datetime.now(timezone.utc)
         duration = max(0.0, time.monotonic() - started) if started is not None else 0.0
         self._write_meta(stopped_at.isoformat(), duration)
