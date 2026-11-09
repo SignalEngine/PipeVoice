@@ -1428,8 +1428,10 @@ class App:
         try:
             # Decided when the meeting STARTS: a settings change while the video
             # is still muxing must never send it somewhere the user did not pick.
-            self._meeting_video_plan = (bool(self.cfg.meeting_video_send),
-                                        (self.cfg.screenrec_destination or "").strip())
+            cfg = getattr(self, "cfg", None)
+            if cfg is not None:
+                self._meeting.video_send_plan = (
+                    bool(cfg.meeting_video_send), (cfg.screenrec_destination or "").strip())
             self._meeting.start()
         except Exception as exc:
             # Focus was started first, so it must be released here or it keeps a
@@ -1640,7 +1642,7 @@ class App:
             if self._meeting.video_mux_pending:
                 self._video_say("transcribing", "Preparing meeting video\u2026")
 
-    def _meeting_video_ready(self, path, error) -> None:
+    def _meeting_video_ready(self, path, error, plan=None) -> None:
         """Called once per meeting video from the mux thread (or stop() if nothing
         was captured). The local file is never deleted."""
         if error or path is None:
@@ -1654,7 +1656,7 @@ class App:
             size_mb = path.stat().st_size / 1e6
         except OSError:
             size_mb = 0.0
-        send_on, destination = getattr(self, "_meeting_video_plan", None) or (
+        send_on, destination = plan or (
             bool(self.cfg.meeting_video_send), (self.cfg.screenrec_destination or "").strip())
         if not send_on:
             log.info("meeting video: %.1f MB, sent=False", size_mb)

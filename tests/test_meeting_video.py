@@ -170,7 +170,7 @@ def test_stop_muxes_on_its_own_thread_then_reports_the_finished_file():
     with tempfile.TemporaryDirectory() as tmp:
         got = []
         rec = MeetingRecorder(pathlib.Path(tmp),
-                              on_video_ready=lambda p, e: got.append((p, e)))
+                              on_video_ready=lambda p, e, _plan=None: got.append((p, e)))
         with patch.dict(sys.modules, fake_audio_modules()):
             session = rec.start()
             wait_for(lambda: rec._first_blocks["mic"] is not None
@@ -195,7 +195,7 @@ def test_a_failed_mux_keeps_the_video_only_file_and_reports_the_error():
     with tempfile.TemporaryDirectory() as tmp:
         got = []
         rec = MeetingRecorder(pathlib.Path(tmp),
-                              on_video_ready=lambda p, e: got.append((p, e)))
+                              on_video_ready=lambda p, e, _plan=None: got.append((p, e)))
         with patch.dict(sys.modules, fake_audio_modules()):
             session = rec.start()
             (session / "screen-video.mp4").write_bytes(b"garbage")
@@ -230,8 +230,8 @@ def _clip(tmp):
     return path
 
 
-def _ready(app, path, error=None):
-    app._meeting_video_ready(path, error)
+def _ready(app, path, error=None, plan=None):
+    app._meeting_video_ready(path, error, plan)
     if app._meeting_video_sender is not None:
         app._meeting_video_sender.join(5)
 
@@ -353,11 +353,9 @@ def test_the_send_decision_is_taken_when_the_meeting_starts():
         calls = []
         with patch.object(screenrec, "send", lambda p, d, **_: (calls.append(d), (True, "ok"))[1]):
             app, said = _app(meeting_video_send=True, screenrec_destination="new@h:/x/")
-            app._meeting_video_plan = (False, "")     # what was set at meeting start
-            _ready(app, clip)
+            _ready(app, clip, plan=(False, ""))     # what was set at meeting start
             assert calls == []
-            app._meeting_video_plan = (True, "old@h:/in/")
-            _ready(app, clip)
+            _ready(app, clip, plan=(True, "old@h:/in/"))
             assert calls == ["old@h:/in/"]
 
 
@@ -369,3 +367,24 @@ def test_a_finished_mux_writes_to_its_own_meeting_not_the_next_one(tmp_path):
     rec._set_video_meta({"file": "meeting.mp4", "error": None}, a)
     assert json.loads((a / "meta.json").read_text())["video"]["file"] == "meeting.mp4"
     assert not (b / "meta.json").exists()
+
+
+def test_a_crafted_video_only_name_cannot_pick_another_file(tmp_path):
+    from wisprlite.meetings_tab import meeting_video_file
+
+    (tmp_path / "secret.txt").write_text("x")
+    (tmp_path / "meta.json").write_text(json.dumps(
+        {"video": {"error": "boom", "video_only": "secret.txt"}}))
+    assert meeting_video_file(tmp_path)[0] is None
+
+
+def test_retention_never_deletes_a_meeting_whose_video_is_muxing(tmp_path):
+    rec = MeetingRecorder(tmp_path, retention_sessions=1)
+    old = tmp_path / "meeting-20260101-000000"
+    old.mkdir()
+    rec._muxing.add(old)
+    rec._prune_sessions(reserve=1)
+    assert old.exists()
+    rec._muxing.clear()
+    rec._prune_sessions(reserve=1)
+    assert not old.exists()

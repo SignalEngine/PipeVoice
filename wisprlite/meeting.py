@@ -813,7 +813,11 @@ class MeetingRecorder:
         self._on_video_ready = on_video_ready
         self._video = None                 # the live ScreenRecording, None when off
         self._video_error: str | None = None
-        self._video_mux_pending = False
+        self._muxing: set = set()          # session dirs whose video is still being muxed
+        # Set by the app before start(): (send?, destination). Snapshotted per meeting
+        # so a later meeting or a settings change never redirects an earlier upload.
+        self.video_send_plan = None
+        self._session_plan = None
         self.bookmark_hotkey = bookmark_hotkey
         self.bookmark_acoustic = bool(bookmark_acoustic)
         self.bookmark_sensitivity = max(0.0, min(1.0, float(bookmark_sensitivity)))
@@ -984,6 +988,7 @@ class MeetingRecorder:
             self._stop_reason = None
             self._video = None
             self._video_error = None
+            self._session_plan = self.video_send_plan
             self._stop.clear()
             self._active = True
         log.info("meeting started: mic=%s, rate=%d",
@@ -1075,7 +1080,7 @@ class MeetingRecorder:
     @property
     def video_mux_pending(self) -> bool:
         """True from stop() until the mux thread is about to report its result."""
-        return self._video_mux_pending
+        return bool(self._muxing)
 
     def _start_video(self) -> None:
         """Film the screen under the meeting. Must never break the audio meeting."""
@@ -1133,7 +1138,7 @@ class MeetingRecorder:
             self._video_error = "; ".join(video.errors) or "no video captured"
             log.warning("meeting video produced nothing: %s", self._video_error)
             self._set_video_meta({"file": None, "error": self._video_error}, session_dir)
-            self._report_video(None, self._video_error)
+            self._report_video(None, self._video_error, self._session_plan)
             return
         if video.errors:
             log.info("meeting video: capture warnings: %s", "; ".join(video.errors))
@@ -1143,13 +1148,13 @@ class MeetingRecorder:
         # full audio, but never recorded as a clean, complete capture.
         offsets["partial"] = ("; ".join(video.errors) or "video stopped early") \
             if video.video_failed.is_set() else None
-        self._video_mux_pending = True
+        self._muxing.add(Path(session_dir))
         threading.Thread(
-            target=self._mux_worker, args=(session_dir, clip, offsets),
+            target=self._mux_worker, args=(session_dir, clip, offsets, self._session_plan),
             name="meeting-video-mux", daemon=False,
         ).start()
 
-    def _mux_worker(self, session_dir: Path, clip: Path, offsets: dict) -> None:
+    def _mux_worker(self, session_dir: Path, clip: Path, offsets: dict, plan=None) -> None:
         out = session_dir / MEETING_VIDEO_FILE
         error = None
         try:
@@ -1169,16 +1174,15 @@ class MeetingRecorder:
             {"file": None if error else out.name, "error": error,
              **({"partial": partial} if partial and not error else {}),
              **({"video_only": clip.name} if error else {})}, session_dir)
-        self._video_mux_pending = False
-        self._report_video(None if error else out, error)
+        self._muxing.discard(Path(session_dir))
+        self._report_video(None if error else out, error, plan)
 
-    def _report_video(self, path, error) -> None:
-        self._video_mux_pending = False
+    def _report_video(self, path, error, plan=None) -> None:
         callback = self._on_video_ready
         if callback is None:
             return
         try:
-            callback(path, error)
+            callback(path, error, plan)
         except Exception:
             log.warning("on_video_ready callback failed", exc_info=True)
 
@@ -1332,6 +1336,8 @@ class MeetingRecorder:
             sessions.sort(key=recording_time, reverse=True)
             keep = max(0, self.retention_sessions - reserve)
             for path in sessions[keep:]:
+                if path in self._muxing:
+                    continue        # its video is still being built from these files
                 try:
                     shutil.rmtree(path)
                 except Exception:
