@@ -1673,7 +1673,7 @@ class App:
 
         from .meeting import hold_session, release_session
 
-        hold_session(path.parent)   # retention must not delete it mid-upload
+        hold = hold_session(path.parent)   # retention must not delete it mid-upload
 
         def work() -> None:
             from . import screenrec
@@ -1687,7 +1687,7 @@ class App:
             except Exception as exc:
                 ok, message = False, f"{type(exc).__name__}: {exc}"
             finally:
-                release_session(path.parent)
+                release_session(hold)
             log.info("meeting video: %.1f MB, sent=%s", size_mb, ok)
             with self._video_msg_lock:
                 self._video_say(

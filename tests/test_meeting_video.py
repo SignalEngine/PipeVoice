@@ -143,16 +143,16 @@ def test_video_failure_at_start_never_stops_the_audio_meeting():
             try:
                 assert rec.active is True
                 assert rec.video_state == "failed"
-                meta = json.loads((session / "meta.json").read_text())
+                meta = {"video": json.loads((session / "video.json").read_text())}
                 assert "no monitor" in meta["video"]["error"]
                 assert meta["video"]["file"] is None
             finally:
                 rec.stop()
         # audio still produced, and the meta kept the video error through stop()
         assert (session / "mic.wav").exists()
-        meta = json.loads((session / "meta.json").read_text())
+        meta = {"video": json.loads((session / "video.json").read_text())}
         assert "no monitor" in meta["video"]["error"]
-        assert meta["mic"]["error"] is None
+        assert json.loads((session / "meta.json").read_text())["mic"]["error"] is None
 
 
 class _FakeVideo:
@@ -161,6 +161,7 @@ class _FakeVideo:
     def __init__(self, clip, first_frame_at):
         self.clip, self.first_frame_at = clip, first_frame_at
         self.errors, self.video_failed = [], threading.Event()
+        self._stop = threading.Event()   # ScreenRecording's grab-loop stop flag
 
     def stop(self):
         return self.clip
@@ -186,7 +187,7 @@ def test_stop_muxes_on_its_own_thread_then_reports_the_finished_file():
             assert len(container.streams.video) == 1
             assert len(container.streams.audio) == 1
         assert not (session / meeting.video_only_name(session)).exists()   # intermediate removed on success
-        meta = json.loads((session / "meta.json").read_text())
+        meta = {"video": json.loads((session / "video.json").read_text())}
         assert meta["video"] == {"file": meeting.meeting_video_name(session), "error": None}
         assert rec.video_mux_pending is False
 
@@ -204,7 +205,7 @@ def test_a_failed_mux_keeps_the_video_only_file_and_reports_the_error():
         wait_for(lambda: got, timeout=15)
         assert got[0][0] is None and got[0][1]
         assert (session / meeting.video_only_name(session)).exists()
-        meta = json.loads((session / "meta.json").read_text())
+        meta = {"video": json.loads((session / "video.json").read_text())}
         assert meta["video"]["file"] is None and meta["video"]["error"]
 
 
@@ -318,15 +319,15 @@ def test_send_video_target_and_the_reason_when_there_is_none(tmp_path):
     from wisprlite.meetings_tab import meeting_video_file
 
     assert meeting_video_file(tmp_path) == (None, "No video for this meeting")
-    (tmp_path / "meta.json").write_text(json.dumps({"video": {"file": None, "error": "boom"}}))
+    (tmp_path / "video.json").write_text(json.dumps({"file": None, "error": "boom"}))
     assert meeting_video_file(tmp_path) == (None, "Video failed: boom")
     leftover = meeting.video_only_name(tmp_path)
     (tmp_path / leftover).write_bytes(b"x")
     # Still being written (meeting or mux in progress): never offered for upload.
     assert meeting_video_file(tmp_path)[0] is None
     # Only after a FAILED mux names it as the leftover picture.
-    (tmp_path / "meta.json").write_text(json.dumps(
-        {"video": {"file": None, "error": "boom", "video_only": leftover}}))
+    (tmp_path / "video.json").write_text(json.dumps(
+        {"file": None, "error": "boom", "video_only": leftover}))
     assert meeting_video_file(tmp_path)[0] == tmp_path / leftover
     (tmp_path / meeting.meeting_video_name(tmp_path)).write_bytes(b"x")
     assert meeting_video_file(tmp_path)[0] == tmp_path / meeting.meeting_video_name(tmp_path)
@@ -368,16 +369,16 @@ def test_a_finished_mux_writes_to_its_own_meeting_not_the_next_one(tmp_path):
     a.mkdir(); b.mkdir()
     rec.session_dir = b                               # meeting B already started
     rec._set_video_meta({"file": "meeting.mp4", "error": None}, a)
-    assert json.loads((a / "meta.json").read_text())["video"]["file"] == "meeting.mp4"
-    assert not (b / "meta.json").exists()
+    assert json.loads((a / "video.json").read_text())["file"] == "meeting.mp4"
+    assert not (b / "video.json").exists()
 
 
 def test_a_crafted_video_only_name_cannot_pick_another_file(tmp_path):
     from wisprlite.meetings_tab import meeting_video_file
 
     (tmp_path / "secret.txt").write_text("x")
-    (tmp_path / "meta.json").write_text(json.dumps(
-        {"video": {"error": "boom", "video_only": "secret.txt"}}))
+    (tmp_path / "video.json").write_text(json.dumps(
+        {"error": "boom", "video_only": "secret.txt"}))
     assert meeting_video_file(tmp_path)[0] is None
 
 
@@ -385,10 +386,10 @@ def test_retention_never_deletes_a_meeting_whose_video_is_muxing(tmp_path):
     rec = MeetingRecorder(tmp_path, retention_sessions=1)
     old = tmp_path / "meeting-20260101-000000"
     old.mkdir()
-    rec._muxing.add(old)
+    hold = meeting.hold_session(old)            # e.g. Settings uploading it, other process
     rec._prune_sessions(reserve=1)
     assert old.exists()
-    rec._muxing.clear()
+    meeting.release_session(hold)
     rec._prune_sessions(reserve=1)
     assert not old.exists()
 
@@ -411,3 +412,29 @@ def test_retention_never_deletes_a_meeting_whose_video_is_uploading(tmp_path):
         _ready(app, clip, plan=(True, "u@h:/in/"))
     assert seen["exists"] is True
     assert not meeting.session_busy(old)        # released once the upload ends
+
+
+def test_filming_stops_the_moment_the_meeting_stops(tmp_path):
+    """Normalising audio takes time after stop; the screen must not be filmed then."""
+    rec = MeetingRecorder(tmp_path)
+    video = _FakeVideo(None, 0.0)
+    rec._video = video
+    rec._active = True
+    rec._threads = []
+    calls = []
+    rec._finish_writer = lambda: calls.append(video._stop.is_set())
+    rec._close_waves = lambda: None
+    try:
+        rec._stop_recording("test")
+    except Exception:
+        pass
+    assert calls and calls[0] is True
+
+
+def test_a_crashed_hold_goes_stale(tmp_path):
+    import os
+    marker = tmp_path / ".busy-crashed"
+    marker.touch()
+    old = time.time() - 7 * 3600
+    os.utime(marker, (old, old))
+    assert meeting.session_busy(tmp_path) is False

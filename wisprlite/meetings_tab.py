@@ -144,7 +144,7 @@ def meeting_video_file(session_dir: str | Path) -> tuple[Path | None, str]:
     """(file to send, why-not). meeting.mp4, else the video-only clip a failed mux
     left behind; with neither, the reason the Send video button is disabled."""
     folder = Path(session_dir)
-    video = _read_json(folder / "meta.json").get("video")
+    video = _read_json(folder / "video.json") or None
     from .meeting import meeting_video_name, video_only_name
 
     if (folder / meeting_video_name(folder)).is_file():
@@ -260,7 +260,7 @@ def meetings_signature(base_dir: str | Path | None = None) -> tuple:
                     for stream in ("mic", "desktop")
                 ),
                 # The video finishes after the meeting stops: refresh Send video then.
-                json.dumps(meta.get("video"), sort_keys=True),
+                (path / "video.json").stat().st_mtime_ns if (path / "video.json").is_file() else None,
                 (path / f"{path.name}.mp4").is_file(),
                 transcript_mtime,
             )
@@ -2185,7 +2185,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             return
         from .meeting import hold_session, release_session
 
-        hold_session(path)   # retention / Delete must not remove it mid-upload
+        hold = hold_session(path)   # retention / Delete must not remove it mid-upload
         video_btn.config(text="Sending\u2026", state="disabled")
         status_label.config(text="Sending the meeting video\u2026", fg=MUTED)
 
@@ -2207,7 +2207,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             except Exception as exc:
                 ok, message = False, f"{type(exc).__name__}: {exc}"
             finally:
-                release_session(path)
+                release_session(hold)
             try:
                 root.after(0, lambda: finished(ok, message))
             except Exception:

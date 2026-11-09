@@ -696,30 +696,43 @@ def transcribe_session(
     return transcript
 
 
+VIDEO_STATUS_FILE = "video.json"
 # Meeting folders a background job still reads (video mux, scp upload). Retention
 # and the Delete button skip these, or an upload could lose its source mid-flight.
-_busy_lock = threading.Lock()
-_busy: dict = {}
+# A marker FILE, because Settings (Delete, Send video) runs in its own process.
+# One uniquely named file per hold, so overlapping holds never release each other;
+# hold and release happen on different threads, so the caller keeps the marker.
+BUSY_PREFIX = ".busy-"
+BUSY_STALE_SECONDS = 6 * 3600   # a crash leaves its marker; never block Delete forever
 
 
-def hold_session(session_dir) -> None:
-    key = Path(session_dir).resolve()
-    with _busy_lock:
-        _busy[key] = _busy.get(key, 0) + 1
+def hold_session(session_dir) -> Path | None:
+    import uuid
+
+    marker = Path(session_dir) / f"{BUSY_PREFIX}{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    try:
+        marker.touch()
+        return marker
+    except OSError:
+        return None
 
 
-def release_session(session_dir) -> None:
-    key = Path(session_dir).resolve()
-    with _busy_lock:
-        if _busy.get(key, 0) <= 1:
-            _busy.pop(key, None)
-        else:
-            _busy[key] -= 1
+def release_session(marker) -> None:
+    if marker is None:
+        return
+    try:
+        Path(marker).unlink()
+    except OSError:
+        pass
 
 
 def session_busy(session_dir) -> bool:
-    with _busy_lock:
-        return Path(session_dir).resolve() in _busy
+    now = time.time()
+    try:
+        return any(now - m.stat().st_mtime < BUSY_STALE_SECONDS
+                   for m in Path(session_dir).glob(BUSY_PREFIX + "*"))
+    except OSError:
+        return False
 
 
 def meeting_video_name(session_dir) -> str:
@@ -1141,21 +1154,14 @@ class MeetingRecorder:
         folder = session_dir or self.session_dir
         if folder is None:
             return
+        # Its own file, not meta.json: transcription rewrites meta.json from a copy
+        # it read earlier, which would silently erase a result written meanwhile.
         try:
-            with self._meta_lock:
-                path = folder / "meta.json"
-                try:
-                    meta = json.loads(path.read_text(encoding="utf-8"))
-                    if not isinstance(meta, dict):
-                        meta = {}
-                except (OSError, ValueError, TypeError):
-                    meta = {}
-                meta["video"] = info
-                pending = folder / "meta.json.tmp"
-                pending.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-                pending.replace(path)
+            pending = folder / f"{VIDEO_STATUS_FILE}.tmp"
+            pending.write_text(json.dumps(info, indent=2), encoding="utf-8")
+            pending.replace(folder / VIDEO_STATUS_FILE)
         except Exception:
-            log.warning("could not record video status in meta.json", exc_info=True)
+            log.warning("could not record video status", exc_info=True)
 
     def _finish_video(self, session_dir: Path, meta_offsets: dict) -> None:
         """Stop the picture (audio waves are already closed) and hand the mux to a
@@ -1183,13 +1189,14 @@ class MeetingRecorder:
         offsets["partial"] = ("; ".join(video.errors) or "video stopped early") \
             if video.video_failed.is_set() else None
         self._muxing.add(Path(session_dir))
-        hold_session(session_dir)
+        hold = hold_session(session_dir)
         threading.Thread(
-            target=self._mux_worker, args=(session_dir, clip, offsets, self._session_plan),
+            target=self._mux_worker, args=(session_dir, clip, offsets, self._session_plan, hold),
             name="meeting-video-mux", daemon=False,
         ).start()
 
-    def _mux_worker(self, session_dir: Path, clip: Path, offsets: dict, plan=None) -> None:
+    def _mux_worker(self, session_dir: Path, clip: Path, offsets: dict, plan=None,
+                    hold=None) -> None:
         out = session_dir / meeting_video_name(session_dir)
         error = None
         try:
@@ -1215,7 +1222,7 @@ class MeetingRecorder:
             # this one is released, so the folder is never unprotected.
             self._report_video(None if error else out, error, plan)
         finally:
-            release_session(session_dir)
+            release_session(hold)
 
     def _report_video(self, path, error, plan=None) -> None:
         callback = self._on_video_ready
@@ -1239,6 +1246,11 @@ class MeetingRecorder:
             self._stop_reason = reason
 
         self._stop.set()
+        # Stop FILMING now, not after the audio post-processing below: anything
+        # on screen after the user pressed stop must never enter the video.
+        video = self._video
+        if video is not None:
+            video._stop.set()
         self._checkpoint_wakeup.set()
         timer = self._limit_timer
         self._limit_timer = None
