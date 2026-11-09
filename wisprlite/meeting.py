@@ -148,6 +148,37 @@ def save_speaker_map(session_dir: str | Path, speaker_map: dict[str, str]) -> No
     _write_json(Path(session_dir) / SPEAKER_MAP_FILE, clean)
 
 
+MAX_VIDEO_FPS = 15
+TITLE_FILE = "title.json"
+TITLE_MAX = 80
+
+
+def clean_title(title) -> str:
+    return " ".join(str(title or "").split())[:TITLE_MAX].strip()
+
+
+def load_title(session_dir: str | Path) -> str:
+    """The meeting's name overlay (user-typed or auto), "" when none."""
+    try:
+        value = json.loads((Path(session_dir) / TITLE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return ""
+    return clean_title(value.get("title")) if isinstance(value, dict) else ""
+
+
+def save_title(session_dir: str | Path, title: str, source: str) -> None:
+    """Persist the name atomically; an empty title deletes the overlay."""
+    path = Path(session_dir) / TITLE_FILE
+    title = clean_title(title)
+    if not title:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    _write_json(path, {"title": title, "source": "user" if source == "user" else "auto"})
+
+
 def apply_speaker_map(
     segments: list[dict], speaker_map: dict[str, str] | None = None
 ) -> list[dict]:
@@ -693,7 +724,25 @@ def transcribe_session(
     meta["status"] = "transcribed"
     meta["transcript_file"] = "transcript.json"
     _write_json(meta_path, meta)
+    _auto_title(session_dir, segments, cfg)
     return transcript
+
+
+def _auto_title(session_dir: Path, segments: list[dict], cfg) -> None:
+    """Name an unnamed meeting from its transcript. Never raises, never overwrites."""
+    try:
+        if load_title(session_dir):
+            return
+        from .cleanup import provider_ready
+        from .summarise import suggest_title
+
+        if not provider_ready(cfg.cleanup_provider):
+            return
+        title = suggest_title(segments, cfg.cleanup_provider, cfg.cleanup_model)
+        if title and not load_title(session_dir):   # the user may have named it meanwhile
+            save_title(session_dir, title, "auto")
+    except Exception as exc:
+        log.warning("auto meeting name failed: %s", exc)
 
 
 VIDEO_STATUS_FILE = "video.json"
@@ -856,7 +905,7 @@ class MeetingRecorder:
         self.max_minutes = max_minutes
         self.retention_sessions = max(1, int(retention_sessions))
         self._on_auto_stop = on_auto_stop
-        self.video_fps = max(0, int(video_fps))
+        self.video_fps = video_fps
         self._on_video_ready = on_video_ready
         self._video = None                 # the live ScreenRecording, None when off
         self._video_error: str | None = None
@@ -1555,6 +1604,15 @@ class MeetingRecorder:
                 )
                 return
         self._drain_queue()
+
+    @property
+    def video_fps(self) -> int:
+        return self._video_fps
+
+    @video_fps.setter
+    def video_fps(self, value) -> None:
+        # Pure-python capture cannot keep up beyond this at 1080p+.
+        self._video_fps = min(MAX_VIDEO_FPS, max(0, int(value)))
 
     def _drain_queue(self) -> None:
         """Write what is still in hand, before the files get closed."""

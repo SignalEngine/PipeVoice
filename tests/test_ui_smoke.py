@@ -2064,3 +2064,167 @@ def test_old_teams_clashing_meeting_hotkey_migrates_once(tmp_path, monkeypatch):
     cfg.meeting_hotkey = "ctrl+shift+m"       # user picks it again on purpose
     cfg.save()
     assert config.Config.load().meeting_hotkey == "ctrl+shift+m"
+
+
+def test_right_click_a_meeting_row_offers_the_menu_and_rename_updates_the_row():
+    _skip_if_headless()
+    import os
+    import tempfile
+    import tkinter as tk
+
+    from wisprlite import meeting, meetings_tab, settings
+
+    errors = []
+    real_report = tk.Tk.report_callback_exception
+    tk.Tk.report_callback_exception = lambda _s, t, v, _tb: errors.append(f"{t.__name__}: {v}")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            session = base / "meeting-20260729-120000"
+            session.mkdir()
+            (session / "meta.json").write_text(
+                '{"started_at": "2026-07-29T12:00:00+00:00", "stopped_at":'
+                ' "2026-07-29T12:01:30+00:00", "duration_seconds": 90,'
+                ' "transcription_backend": "deepgram", "status": "transcribed"}',
+                encoding="utf-8")
+            (session / "transcript.json").write_text(
+                '{"segments": [{"t": 0.0, "speaker": "You", "text": "Hello"}]}',
+                encoding="utf-8")
+            unnamed = base / "meeting-20260729-100000"
+            unnamed.mkdir()
+            (unnamed / "meta.json").write_text(
+                '{"started_at": "2026-07-29T10:00:00+00:00", "stopped_at":'
+                ' "2026-07-29T10:01:00+00:00", "duration_seconds": 60,'
+                ' "status": "recorded"}', encoding="utf-8")
+
+            real_dirs = (meeting.meetings_dir, meetings_tab.meetings_dir,
+                         meeting.default_meetings_dir, meetings_tab.default_meetings_dir)
+            for mod in (meeting, meetings_tab):
+                mod.meetings_dir = lambda: base
+                mod.default_meetings_dir = lambda: base
+            real_ask = meetings_tab.ask_meeting_title
+            meetings_tab.ask_meeting_title = lambda _p, _c: "Chess ICT kickoff"
+            real_pv_tab = os.environ.get("PV_TAB")
+            os.environ["PV_TAB"] = "Meetings"
+            out = {}
+            real_mainloop = tk.Misc.mainloop
+
+            def walk(widget):
+                for child in widget.winfo_children():
+                    yield child
+                    yield from walk(child)
+
+            def drive(self, _n=0):
+                self.update_idletasks()
+                self.update()
+                secondary = [w for w in walk(self) if w.winfo_class() == "Label"
+                             and "Deepgram" in str(w.cget("text"))
+                             and str(w.cget("cursor")) == "hand2"]
+                assert secondary, "the transcribed meeting row was not rendered"
+                label = secondary[0]
+                label.event_generate("<Button-3>", x=2, y=2)
+                self.update()
+                menus = [w for w in walk(self) if w.winfo_class() == "Menu"]
+                labels = []
+                target = None
+                for menu in menus:
+                    end = menu.index("end")
+                    if end is None:
+                        continue
+                    commands = {menu.entrycget(i, "label"): i for i in range(end + 1)
+                                if menu.type(i) == "command"}
+                    if "Rename…" in commands:
+                        labels = list(commands)
+                        target = (menu, commands["Rename…"])
+                out["labels"] = labels
+                if target:
+                    target[0].invoke(target[1])
+                    self.update()
+                out["texts"] = [str(w.cget("text")) for w in walk(self)
+                                if w.winfo_class() == "Label"]
+                self.destroy()
+
+            tk.Misc.mainloop = drive
+            try:
+                settings.main()
+            finally:
+                tk.Misc.mainloop = real_mainloop
+                (meeting.meetings_dir, meetings_tab.meetings_dir,
+                 meeting.default_meetings_dir, meetings_tab.default_meetings_dir) = real_dirs
+                meetings_tab.ask_meeting_title = real_ask
+                if real_pv_tab is None:
+                    os.environ.pop("PV_TAB", None)
+                else:
+                    os.environ["PV_TAB"] = real_pv_tab
+
+            for name in ("Rename…", "Open folder", "Export all…", "Delete…"):
+                assert name in out["labels"], out
+            assert meeting.load_title(session) == "Chess ICT kickoff"
+            assert "Chess ICT kickoff" in out["texts"], out["texts"]
+            assert not errors, errors
+    finally:
+        tk.Tk.report_callback_exception = real_report
+
+
+def test_video_smoothness_saves_the_chosen_fps_and_keeps_an_untouched_odd_value():
+    _skip_if_headless()
+    import os
+    import tkinter as tk
+    from tkinter import ttk
+
+    from wisprlite import config, settings
+
+    saved = {}
+    real_save = config.Config.save
+    real_load = config.Config.load.__func__
+    real_mainloop = tk.Misc.mainloop
+    real_pv_tab = os.environ.get("PV_TAB")
+
+    def run(start_fps, pick):
+        cfg = real_load(config.Config)
+        cfg.meeting_video_fps = start_fps
+        config.Config.load = classmethod(lambda cls: cfg)
+        config.Config.save = lambda self, *a, **k: saved.update(fps=self.meeting_video_fps)
+        saved.clear()
+        os.environ["PV_TAB"] = "Meetings"
+
+        def drive(self, _n=0):
+            self.update_idletasks()
+            self.update()
+            stack = [self]
+            combo = save_btn = None
+            while stack:
+                w = stack.pop()
+                stack.extend(w.winfo_children())
+                if isinstance(w, ttk.Combobox) and "fps" in str(w.cget("values")):
+                    combo = w
+                if w.winfo_class() == "TButton" and str(w.cget("text")) == "Save":
+                    save_btn = w if save_btn is None else save_btn
+            saved["shown"] = combo.get()
+            if pick:
+                combo.set(pick)
+            if save_btn is not None:
+                save_btn.invoke()
+                self.update()
+            self.destroy()
+
+        tk.Misc.mainloop = drive
+        tk._default_root = None     # an earlier test can leave a stale default root; vars would bind to it
+        try:
+            settings.main()
+        finally:
+            tk.Misc.mainloop = real_mainloop
+        return dict(saved)
+
+    try:
+        assert run(8, None)["shown"] == "Smooth (10 fps)"
+        r = run(8, None)
+        assert r.get("fps") == 8            # saved, and an untouched value is not rewritten to 10
+        assert run(4, "Very smooth (15 fps)").get("fps") == 15
+    finally:
+        config.Config.save = real_save
+        config.Config.load = classmethod(real_load)
+        if real_pv_tab is None:
+            os.environ.pop("PV_TAB", None)
+        else:
+            os.environ["PV_TAB"] = real_pv_tab
