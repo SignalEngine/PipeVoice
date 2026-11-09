@@ -1,0 +1,246 @@
+{
+ "backend": "deepgram",
+ "text": "Them 1: Hey, long time no see! How was the trip? Did you end up going to the coast?\nYou: We did, it rained the whole time but the kids loved it anyway.\nThem 1: Ha, that is the way it goes. We were lucky, the sun came out on the Saturday.\nYou: Nice. And how are your two doing at school now?\nThem 1: The little one just lost a tooth and has been telling everybody, the older one is obsessed with football.\nYou: Mine too, we spent most of the weekend kicking a ball around the garden.\nThem 1: The garden is a disaster here, the lawn has gone completely brown after the heat.\nYou: Same. I keep saying I will water it and then I forget.\nThem 1: You and me both. So what is new at the office, anything exciting happening?\nYou: Not much, we moved desks last month and the coffee machine is finally fixed.\nThem 1: That is the real news right there.\nYou: Honestly it is. People were getting desperate.\nThem 1: I can imagine. Oh, by the way, did you see the match on Sunday, that last goal was incredible.\nYou: I missed it, we were stuck in traffic coming back. Was it as good as everybody says?\nThem 1: Better, my neighbour actually cried, he has supported them for forty years.\nYou: Wow. Maybe I should watch the highlights tonight.\nThem 1: You should. Anyway, I wanted to ask whether you are coming to the barbecue next month?\nYou: Wouldn't miss it. Should I bring something? I can do a salad or the dessert.\nThem 1: Dessert would be great, nobody ever brings dessert.\nYou: Done. I will make that lemon tart you liked last time.\nThem 1: Perfect. Oh and somebody mentioned pricing on some software you were looking at, was that for work?\nYou: Ah, just a quick look at something, nothing decided, I will tell you when there is news.\nThem 1: Fair enough. How is your mum, did she get the hip sorted?\nYou: She did, she is walking again and complaining about the physio, which means she is feeling better.\nThem 1: Brilliant news, give her my love.\nYou: I will. How about your dad, is he still doing the marathon thing?\nThem 1: He is, he did a half marathon in the spring and now he wants a full one, we cannot stop him.\nYou: Good for him. I get tired just thinking about it.\nYou: Are you still doing the Thursday football with the old crowd?\nThem 1: When my knee allows it. I pulled something in the spring and I am being sensible, for once.\nYou: Sensible is not a word anyone would use about that group.\nThem 1: True, last time somebody turned up in sandals. Sandals! He slipped in the first five minutes.\nYou: That is brilliant. Was he hurt?\nThem 1: Only his pride. We have not let him forget it, there is a photo going around.\nYou: Send me the photo, I need it.\nThem 1: I will. Oh, did you ever sort out the car, the one making the funny noise?\nYou: Yes, it was a loose bracket, forty minutes and a bill I would rather not discuss.\nThem 1: That sounds about right. Ours needs new tyres before the winter, I keep putting it off.\nYou: Do it soon, my brother left it too late once and slid into a hedge.\nThem 1: Good advice, I will book it for the weekend. Have you been watching anything good on television?\nYou: We finally started that detective series everyone raves about, three episodes in and I have no idea who did it.\nThem 1: Do not tell me anything, I am about to start it myself.\nYou: My lips are sealed. It is slow at the beginning but worth it.\nThem 1: Noted. Right, you must have a hundred things to do, so go.\nThem 1: Me too. Right, I should let you go, I have to pick up the little one in ten minutes.\nYou: Of course. Lovely to catch up, let us not leave it so long next time.\nThem 1: Agreed, see you at the barbecue!\nYou: See you there, take care.",
+ "segments": [
+  {
+   "t": 4.0,
+   "speaker": "Them 1",
+   "text": "Hey, long time no see! How was the trip? Did you end up going to the coast?"
+  },
+  {
+   "t": 20.8,
+   "speaker": "You",
+   "text": "We did, it rained the whole time but the kids loved it anyway."
+  },
+  {
+   "t": 30.5,
+   "speaker": "Them 1",
+   "text": "Ha, that is the way it goes. We were lucky, the sun came out on the Saturday."
+  },
+  {
+   "t": 41.3,
+   "speaker": "You",
+   "text": "Nice. And how are your two doing at school now?"
+  },
+  {
+   "t": 55.2,
+   "speaker": "Them 1",
+   "text": "The little one just lost a tooth and has been telling everybody, the older one is obsessed with football."
+  },
+  {
+   "t": 67.9,
+   "speaker": "You",
+   "text": "Mine too, we spent most of the weekend kicking a ball around the garden."
+  },
+  {
+   "t": 78.0,
+   "speaker": "Them 1",
+   "text": "The garden is a disaster here, the lawn has gone completely brown after the heat."
+  },
+  {
+   "t": 91.9,
+   "speaker": "You",
+   "text": "Same. I keep saying I will water it and then I forget."
+  },
+  {
+   "t": 102.5,
+   "speaker": "Them 1",
+   "text": "You and me both. So what is new at the office, anything exciting happening?"
+  },
+  {
+   "t": 117.5,
+   "speaker": "You",
+   "text": "Not much, we moved desks last month and the coffee machine is finally fixed."
+  },
+  {
+   "t": 128.2,
+   "speaker": "Them 1",
+   "text": "That is the real news right there."
+  },
+  {
+   "t": 140.5,
+   "speaker": "You",
+   "text": "Honestly it is. People were getting desperate."
+  },
+  {
+   "t": 148.6,
+   "speaker": "Them 1",
+   "text": "I can imagine. Oh, by the way, did you see the match on Sunday, that last goal was incredible."
+  },
+  {
+   "t": 164.0,
+   "speaker": "You",
+   "text": "I missed it, we were stuck in traffic coming back. Was it as good as everybody says?"
+  },
+  {
+   "t": 180.7,
+   "speaker": "Them 1",
+   "text": "Better, my neighbour actually cried, he has supported them for forty years."
+  },
+  {
+   "t": 193.5,
+   "speaker": "You",
+   "text": "Wow. Maybe I should watch the highlights tonight."
+  },
+  {
+   "t": 206.0,
+   "speaker": "Them 1",
+   "text": "You should. Anyway, I wanted to ask whether you are coming to the barbecue next month?"
+  },
+  {
+   "t": 220.7,
+   "speaker": "You",
+   "text": "Wouldn't miss it. Should I bring something? I can do a salad or the dessert."
+  },
+  {
+   "t": 230.8,
+   "speaker": "Them 1",
+   "text": "Dessert would be great, nobody ever brings dessert."
+  },
+  {
+   "t": 243.0,
+   "speaker": "You",
+   "text": "Done. I will make that lemon tart you liked last time."
+  },
+  {
+   "t": 254.7,
+   "speaker": "Them 1",
+   "text": "Perfect. Oh and somebody mentioned pricing on some software you were looking at, was that for work?"
+  },
+  {
+   "t": 267.3,
+   "speaker": "You",
+   "text": "Ah, just a quick look at something, nothing decided, I will tell you when there is news."
+  },
+  {
+   "t": 279.1,
+   "speaker": "Them 1",
+   "text": "Fair enough. How is your mum, did she get the hip sorted?"
+  },
+  {
+   "t": 293.0,
+   "speaker": "You",
+   "text": "She did, she is walking again and complaining about the physio, which means she is feeling better."
+  },
+  {
+   "t": 307.4,
+   "speaker": "Them 1",
+   "text": "Brilliant news, give her my love."
+  },
+  {
+   "t": 319.1,
+   "speaker": "You",
+   "text": "I will. How about your dad, is he still doing the marathon thing?"
+  },
+  {
+   "t": 332.9,
+   "speaker": "Them 1",
+   "text": "He is, he did a half marathon in the spring and now he wants a full one, we cannot stop him."
+  },
+  {
+   "t": 351.6,
+   "speaker": "You",
+   "text": "Good for him. I get tired just thinking about it."
+  },
+  {
+   "t": 362.7,
+   "speaker": "You",
+   "text": "Are you still doing the Thursday football with the old crowd?"
+  },
+  {
+   "t": 375.1,
+   "speaker": "Them 1",
+   "text": "When my knee allows it. I pulled something in the spring and I am being sensible, for once."
+  },
+  {
+   "t": 390.1,
+   "speaker": "You",
+   "text": "Sensible is not a word anyone would use about that group."
+  },
+  {
+   "t": 399.7,
+   "speaker": "Them 1",
+   "text": "True, last time somebody turned up in sandals. Sandals! He slipped in the first five minutes."
+  },
+  {
+   "t": 416.0,
+   "speaker": "You",
+   "text": "That is brilliant. Was he hurt?"
+  },
+  {
+   "t": 423.6,
+   "speaker": "Them 1",
+   "text": "Only his pride. We have not let him forget it, there is a photo going around."
+  },
+  {
+   "t": 438.9,
+   "speaker": "You",
+   "text": "Send me the photo, I need it."
+  },
+  {
+   "t": 451.1,
+   "speaker": "Them 1",
+   "text": "I will. Oh, did you ever sort out the car, the one making the funny noise?"
+  },
+  {
+   "t": 465.5,
+   "speaker": "You",
+   "text": "Yes, it was a loose bracket, forty minutes and a bill I would rather not discuss."
+  },
+  {
+   "t": 476.6,
+   "speaker": "Them 1",
+   "text": "That sounds about right. Ours needs new tyres before the winter, I keep putting it off."
+  },
+  {
+   "t": 492.1,
+   "speaker": "You",
+   "text": "Do it soon, my brother left it too late once and slid into a hedge."
+  },
+  {
+   "t": 506.1,
+   "speaker": "Them 1",
+   "text": "Good advice, I will book it for the weekend. Have you been watching anything good on television?"
+  },
+  {
+   "t": 517.9,
+   "speaker": "You",
+   "text": "We finally started that detective series everyone raves about, three episodes in and I have no idea who did it."
+  },
+  {
+   "t": 530.3,
+   "speaker": "Them 1",
+   "text": "Do not tell me anything, I am about to start it myself."
+  },
+  {
+   "t": 542.0,
+   "speaker": "You",
+   "text": "My lips are sealed. It is slow at the beginning but worth it."
+  },
+  {
+   "t": 551.0,
+   "speaker": "Them 1",
+   "text": "Noted. Right, you must have a hundred things to do, so go."
+  },
+  {
+   "t": 565.4,
+   "speaker": "Them 1",
+   "text": "Me too. Right, I should let you go, I have to pick up the little one in ten minutes."
+  },
+  {
+   "t": 580.2,
+   "speaker": "You",
+   "text": "Of course. Lovely to catch up, let us not leave it so long next time."
+  },
+  {
+   "t": 593.3,
+   "speaker": "Them 1",
+   "text": "Agreed, see you at the barbecue!"
+  },
+  {
+   "t": 601.5,
+   "speaker": "You",
+   "text": "See you there, take care."
+  }
+ ]
+}

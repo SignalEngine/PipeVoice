@@ -1,0 +1,211 @@
+{
+ "backend": "deepgram",
+ "text": "Them 1: Morning everyone, shall we get started? I am Dana, head of marketing at Harbour Freight Partners.\nYou: Morning Dana, great to meet properly. I am the project lead on our side, and I have Sam from design joining shortly.\nThem 1: Wonderful. Let us start with the brief, did you manage to read through it?\nYou: Yes, I did, and I have a few questions, mainly about the case study library.\nThem 1: Go ahead, that is the part everybody cares about most internally.\nYou: How many case studies do you expect at launch, and who supplies the content?\nThem 1: About twelve at launch, and we will supply the text and photos in a shared folder.\nYou: Good. I'll send you a content template after this call so everything arrives in the same shape.\nThem 1: That would really help, thank you.\nYou: Okay. Let me just share my screen so we can look at the plan together.\nThem 1: Sure, I can see it now, give me a second to find the right window.\nYou: So design sign-off week two, build weeks three to five, launch end of week six. Does that match your expectation?\nThem 1: Yes, though our CEO wants to see the homepage early, ideally before the end of the first week.\nYou: Okay. We'll share the first homepage concept by Thursday so your CEO can react to it.\nYou: Next, navigation. We suggest five top level items: services, case studies, about, news and contact.\nThem 1: We have a lot of services, will five items be enough, or will it feel crowded?\nYou: Services becomes a mega menu, so the detail lives one level down and the top bar stays clean.\nThem 1: I like that. Our current site has fourteen items and nobody can find anything.\nYou: That is exactly the problem we want to remove. Fewer choices, clearer labels.\nThem 1: Our operations people will also want a page for each depot, with opening hours and a map.\nYou: That is easy to add as a template, we can generate the depot pages from a spreadsheet.\nThem 1: Even better, the spreadsheet already exists and somebody keeps it up to date, thankfully.\nThem 1: Brilliant. What about the quote request form, who builds the connection to our CRM?\nYou: We do. I'll check with our developer how the CRM connection works and let you know what we find.\nThem 1: Great, that is the part my sales director worries about.\nYou: If it breaks I'll call them straight away, they have always been quick to fix things on the integration side.\nThem 1: Good to know. And budget, the fixed fee covers three rounds of design revisions, correct?\nYou: Correct. After the third round extra revisions are billed hourly, but most clients never need that.\nThem 1: Fine. One more thing, our legal team needs to approve the privacy wording on the form.\nYou: I'll think about it and come back with a proposal for how we handle the approval step.\nThem 1: That works. They are slow, so the sooner the better.\nYou: Understood. I'll put together a one page plan for the legal review and send it to you on Friday.\nThem 1: Perfect. Sam, welcome, we were just talking about the homepage concept.\nYou: Sam, we agreed to show the first concept on Thursday, can you make that work?\nThem 1: Hi both, sorry I am late. Thursday is fine, I will bring two directions.\nYou: Good. Dana, I'll schedule a weekly check in so nothing drifts.\nThem 1: I like that, Monday mornings are best for me.\nYou: Then we are set. I'll update the timeline document and share it with you both after this call.\nThem 1: Thank you, that is helpful. Anything else for today?\nThem 1: No, I think that covers it, thank you both.\nYou: Thanks all, speak Monday.",
+ "segments": [
+  {
+   "t": 4.0,
+   "speaker": "Them 1",
+   "text": "Morning everyone, shall we get started? I am Dana, head of marketing at Harbour Freight Partners."
+  },
+  {
+   "t": 17.9,
+   "speaker": "You",
+   "text": "Morning Dana, great to meet properly. I am the project lead on our side, and I have Sam from design joining shortly."
+  },
+  {
+   "t": 34.9,
+   "speaker": "Them 1",
+   "text": "Wonderful. Let us start with the brief, did you manage to read through it?"
+  },
+  {
+   "t": 49.4,
+   "speaker": "You",
+   "text": "Yes, I did, and I have a few questions, mainly about the case study library."
+  },
+  {
+   "t": 60.9,
+   "speaker": "Them 1",
+   "text": "Go ahead, that is the part everybody cares about most internally."
+  },
+  {
+   "t": 73.0,
+   "speaker": "You",
+   "text": "How many case studies do you expect at launch, and who supplies the content?"
+  },
+  {
+   "t": 88.1,
+   "speaker": "Them 1",
+   "text": "About twelve at launch, and we will supply the text and photos in a shared folder."
+  },
+  {
+   "t": 104.1,
+   "speaker": "You",
+   "text": "Good. I'll send you a content template after this call so everything arrives in the same shape."
+  },
+  {
+   "t": 116.0,
+   "speaker": "Them 1",
+   "text": "That would really help, thank you."
+  },
+  {
+   "t": 125.8,
+   "speaker": "You",
+   "text": "Okay. Let me just share my screen so we can look at the plan together."
+  },
+  {
+   "t": 137.5,
+   "speaker": "Them 1",
+   "text": "Sure, I can see it now, give me a second to find the right window."
+  },
+  {
+   "t": 180.2,
+   "speaker": "You",
+   "text": "So design sign-off week two, build weeks three to five, launch end of week six. Does that match your expectation?"
+  },
+  {
+   "t": 196.2,
+   "speaker": "Them 1",
+   "text": "Yes, though our CEO wants to see the homepage early, ideally before the end of the first week."
+  },
+  {
+   "t": 210.5,
+   "speaker": "You",
+   "text": "Okay. We'll share the first homepage concept by Thursday so your CEO can react to it."
+  },
+  {
+   "t": 227.0,
+   "speaker": "You",
+   "text": "Next, navigation. We suggest five top level items: services, case studies, about, news and contact."
+  },
+  {
+   "t": 240.1,
+   "speaker": "Them 1",
+   "text": "We have a lot of services, will five items be enough, or will it feel crowded?"
+  },
+  {
+   "t": 253.2,
+   "speaker": "You",
+   "text": "Services becomes a mega menu, so the detail lives one level down and the top bar stays clean."
+  },
+  {
+   "t": 270.4,
+   "speaker": "Them 1",
+   "text": "I like that. Our current site has fourteen items and nobody can find anything."
+  },
+  {
+   "t": 283.7,
+   "speaker": "You",
+   "text": "That is exactly the problem we want to remove. Fewer choices, clearer labels."
+  },
+  {
+   "t": 294.5,
+   "speaker": "Them 1",
+   "text": "Our operations people will also want a page for each depot, with opening hours and a map."
+  },
+  {
+   "t": 317.1,
+   "speaker": "You",
+   "text": "That is easy to add as a template, we can generate the depot pages from a spreadsheet."
+  },
+  {
+   "t": 329.7,
+   "speaker": "Them 1",
+   "text": "Even better, the spreadsheet already exists and somebody keeps it up to date, thankfully."
+  },
+  {
+   "t": 342.2,
+   "speaker": "Them 1",
+   "text": "Brilliant. What about the quote request form, who builds the connection to our CRM?"
+  },
+  {
+   "t": 351.8,
+   "speaker": "You",
+   "text": "We do. I'll check with our developer how the CRM connection works and let you know what we find."
+  },
+  {
+   "t": 367.3,
+   "speaker": "Them 1",
+   "text": "Great, that is the part my sales director worries about."
+  },
+  {
+   "t": 379.5,
+   "speaker": "You",
+   "text": "If it breaks I'll call them straight away, they have always been quick to fix things on the integration side."
+  },
+  {
+   "t": 394.2,
+   "speaker": "Them 1",
+   "text": "Good to know. And budget, the fixed fee covers three rounds of design revisions, correct?"
+  },
+  {
+   "t": 409.4,
+   "speaker": "You",
+   "text": "Correct. After the third round extra revisions are billed hourly, but most clients never need that."
+  },
+  {
+   "t": 425.6,
+   "speaker": "Them 1",
+   "text": "Fine. One more thing, our legal team needs to approve the privacy wording on the form."
+  },
+  {
+   "t": 453.8,
+   "speaker": "You",
+   "text": "I'll think about it and come back with a proposal for how we handle the approval step."
+  },
+  {
+   "t": 468.0,
+   "speaker": "Them 1",
+   "text": "That works. They are slow, so the sooner the better."
+  },
+  {
+   "t": 479.8,
+   "speaker": "You",
+   "text": "Understood. I'll put together a one page plan for the legal review and send it to you on Friday."
+  },
+  {
+   "t": 492.1,
+   "speaker": "Them 1",
+   "text": "Perfect. Sam, welcome, we were just talking about the homepage concept."
+  },
+  {
+   "t": 523.0,
+   "speaker": "You",
+   "text": "Sam, we agreed to show the first concept on Thursday, can you make that work?"
+  },
+  {
+   "t": 533.1,
+   "speaker": "Them 1",
+   "text": "Hi both, sorry I am late. Thursday is fine, I will bring two directions."
+  },
+  {
+   "t": 548.7,
+   "speaker": "You",
+   "text": "Good. Dana, I'll schedule a weekly check in so nothing drifts."
+  },
+  {
+   "t": 558.4,
+   "speaker": "Them 1",
+   "text": "I like that, Monday mornings are best for me."
+  },
+  {
+   "t": 566.7,
+   "speaker": "You",
+   "text": "Then we are set. I'll update the timeline document and share it with you both after this call."
+  },
+  {
+   "t": 583.6,
+   "speaker": "Them 1",
+   "text": "Thank you, that is helpful. Anything else for today?"
+  },
+  {
+   "t": 595.4,
+   "speaker": "Them 1",
+   "text": "No, I think that covers it, thank you both."
+  },
+  {
+   "t": 603.2,
+   "speaker": "You",
+   "text": "Thanks all, speak Monday."
+  }
+ ]
+}

@@ -1,0 +1,221 @@
+{
+ "backend": "deepgram",
+ "text": "Them 1: Hi, thanks for making the time, I know it is a busy week.\nYou: No problem at all, happy to be here. How is your week going so far?\nThem 1: Pretty hectic, we have a board meeting on Thursday and everybody is scrambling.\nYou: That sounds familiar. Tell me a bit about what your support team looks like today.\nThem 1: We are eleven people split across two shifts, mostly handling email and some chat, and it is getting out of hand.\nYou: Eleven agents is a good size for Relay. What are you using at the moment?\nThem 1: A shared inbox plus a lot of spreadsheets, honestly. Nothing that deserves to be called a system.\nYou: Okay. And what would a good outcome look like for you in the next quarter?\nThem 1: Faster first replies, and our director wants clear reporting. That is the main thing she keeps asking me for.\nYou: Understood. Let me walk you through how the inbox and the reporting fit together.\nThem 1: Sure, go ahead.\nYou: Give me a moment to open the demo workspace on my screen.\nYou: So every conversation lands in one queue, you can assign it, tag it and see response times per agent on the dashboard.\nThem 1: That sounds good. Before we go further I want to be sure about the money side, because pricing is the first thing finance will ask me.\nThem 1: We would need eleven seats, and we would probably pay for the year upfront, so I am trying to get a feel for the price per seat on the Team plan.\nYou: Right, I will pull the numbers up for you in a second, bear with me.\nThem 1: No rush. Finance wants a seat price and whether paying annually changes anything, because the budget is per year.\nThem 1: And I assume the trial works on the same plan, we would like to try it before we commit anybody.\nYou: Absolutely, let me find the exact wording for the trial.\nThem 1: Great. While you look, our security person also wants to join the next call, he is very particular.\nYou: Good, we love security people, they ask the best questions.\nThem 1: He will want to know about single sign-on, our whole company logs in through SAML and he will not allow separate passwords.\nThem 1: So the single sign-on setup and which plan has SAML sign-on is probably the biggest question for him, plus user provisioning if you have it.\nYou: That is a common requirement, I will make sure the right person is on the next call.\nThem 1: Perfect. He also cares about where the data lives, we are in Germany so we want to keep conversation data inside the European Union.\nYou: Understood. We can pick the region when the workspace is created.\nThem 1: Good. And how long do you keep our conversations? Our legal team has a rule about retention, they prefer thirty days at most for customer chats.\nThem 1: So the data retention period and whether we can shorten it is something I need to take back to legal, they will ask about deleting old conversations from backups too.\nYou: Let me note that down, retention and backups.\nThem 1: Thanks. Now, integrations. We live in Slack and our sales team uses Salesforce, so the connection to Slack and Salesforce matters.\nYou: Both are built in, you can switch them on from the settings page in a couple of clicks.\nThem 1: Nice. And what about moving our old tickets, we have about two years of history in Zendesk.\nYou: We can import tickets, contacts and macros from Zendesk. Migration is not something we charge for.\nThem 1: That would make my life much easier. How long does onboarding usually take for a team our size?\nYou: Most teams are live in about two weeks.\nThem 1: That fits, we would want to be live before the end of next month.\nYou: Then we have plenty of time. Anything else on your list?\nThem 1: Just the reporting, I think I would like to see that dashboard properly in a follow up, maybe with my director there.\nYou: Of course. Shall we put something in the diary for next week?\nThem 1: Yes, Tuesday works well for us, in the morning if you can.\nYou: Tuesday morning it is. I will send an invite after this call.\nThem 1: Wonderful. Thank you again, this was useful.\nYou: My pleasure, speak to you Tuesday.",
+ "segments": [
+  {
+   "t": 4.0,
+   "speaker": "Them 1",
+   "text": "Hi, thanks for making the time, I know it is a busy week."
+  },
+  {
+   "t": 15.7,
+   "speaker": "You",
+   "text": "No problem at all, happy to be here. How is your week going so far?"
+  },
+  {
+   "t": 29.1,
+   "speaker": "Them 1",
+   "text": "Pretty hectic, we have a board meeting on Thursday and everybody is scrambling."
+  },
+  {
+   "t": 43.8,
+   "speaker": "You",
+   "text": "That sounds familiar. Tell me a bit about what your support team looks like today."
+  },
+  {
+   "t": 56.6,
+   "speaker": "Them 1",
+   "text": "We are eleven people split across two shifts, mostly handling email and some chat, and it is getting out of hand."
+  },
+  {
+   "t": 72.3,
+   "speaker": "You",
+   "text": "Eleven agents is a good size for Relay. What are you using at the moment?"
+  },
+  {
+   "t": 85.9,
+   "speaker": "Them 1",
+   "text": "A shared inbox plus a lot of spreadsheets, honestly. Nothing that deserves to be called a system."
+  },
+  {
+   "t": 97.7,
+   "speaker": "You",
+   "text": "Okay. And what would a good outcome look like for you in the next quarter?"
+  },
+  {
+   "t": 110.7,
+   "speaker": "Them 1",
+   "text": "Faster first replies, and our director wants clear reporting. That is the main thing she keeps asking me for."
+  },
+  {
+   "t": 126.3,
+   "speaker": "You",
+   "text": "Understood. Let me walk you through how the inbox and the reporting fit together."
+  },
+  {
+   "t": 140.7,
+   "speaker": "Them 1",
+   "text": "Sure, go ahead."
+  },
+  {
+   "t": 145.5,
+   "speaker": "You",
+   "text": "Give me a moment to open the demo workspace on my screen."
+  },
+  {
+   "t": 181.8,
+   "speaker": "You",
+   "text": "So every conversation lands in one queue, you can assign it, tag it and see response times per agent on the dashboard."
+  },
+  {
+   "t": 197.8,
+   "speaker": "Them 1",
+   "text": "That sounds good. Before we go further I want to be sure about the money side, because pricing is the first thing finance will ask me."
+  },
+  {
+   "t": 214.5,
+   "speaker": "Them 1",
+   "text": "We would need eleven seats, and we would probably pay for the year upfront, so I am trying to get a feel for the price per seat on the Team plan."
+  },
+  {
+   "t": 232.1,
+   "speaker": "You",
+   "text": "Right, I will pull the numbers up for you in a second, bear with me."
+  },
+  {
+   "t": 245.8,
+   "speaker": "Them 1",
+   "text": "No rush. Finance wants a seat price and whether paying annually changes anything, because the budget is per year."
+  },
+  {
+   "t": 262.6,
+   "speaker": "Them 1",
+   "text": "And I assume the trial works on the same plan, we would like to try it before we commit anybody."
+  },
+  {
+   "t": 279.2,
+   "speaker": "You",
+   "text": "Absolutely, let me find the exact wording for the trial."
+  },
+  {
+   "t": 291.6,
+   "speaker": "Them 1",
+   "text": "Great. While you look, our security person also wants to join the next call, he is very particular."
+  },
+  {
+   "t": 302.9,
+   "speaker": "You",
+   "text": "Good, we love security people, they ask the best questions."
+  },
+  {
+   "t": 316.7,
+   "speaker": "Them 1",
+   "text": "He will want to know about single sign-on, our whole company logs in through SAML and he will not allow separate passwords."
+  },
+  {
+   "t": 335.9,
+   "speaker": "Them 1",
+   "text": "So the single sign-on setup and which plan has SAML sign-on is probably the biggest question for him, plus user provisioning if you have it."
+  },
+  {
+   "t": 354.4,
+   "speaker": "You",
+   "text": "That is a common requirement, I will make sure the right person is on the next call."
+  },
+  {
+   "t": 369.0,
+   "speaker": "Them 1",
+   "text": "Perfect. He also cares about where the data lives, we are in Germany so we want to keep conversation data inside the European Union."
+  },
+  {
+   "t": 386.9,
+   "speaker": "You",
+   "text": "Understood. We can pick the region when the workspace is created."
+  },
+  {
+   "t": 395.8,
+   "speaker": "Them 1",
+   "text": "Good. And how long do you keep our conversations? Our legal team has a rule about retention, they prefer thirty days at most for customer chats."
+  },
+  {
+   "t": 410.6,
+   "speaker": "Them 1",
+   "text": "So the data retention period and whether we can shorten it is something I need to take back to legal, they will ask about deleting old conversations from backups too."
+  },
+  {
+   "t": 430.7,
+   "speaker": "You",
+   "text": "Let me note that down, retention and backups."
+  },
+  {
+   "t": 447.1,
+   "speaker": "Them 1",
+   "text": "Thanks. Now, integrations. We live in Slack and our sales team uses Salesforce, so the connection to Slack and Salesforce matters."
+  },
+  {
+   "t": 460.0,
+   "speaker": "You",
+   "text": "Both are built in, you can switch them on from the settings page in a couple of clicks."
+  },
+  {
+   "t": 472.3,
+   "speaker": "Them 1",
+   "text": "Nice. And what about moving our old tickets, we have about two years of history in Zendesk."
+  },
+  {
+   "t": 484.5,
+   "speaker": "You",
+   "text": "We can import tickets, contacts and macros from Zendesk. Migration is not something we charge for."
+  },
+  {
+   "t": 494.9,
+   "speaker": "Them 1",
+   "text": "That would make my life much easier. How long does onboarding usually take for a team our size?"
+  },
+  {
+   "t": 509.0,
+   "speaker": "You",
+   "text": "Most teams are live in about two weeks."
+  },
+  {
+   "t": 518.3,
+   "speaker": "Them 1",
+   "text": "That fits, we would want to be live before the end of next month."
+  },
+  {
+   "t": 533.0,
+   "speaker": "You",
+   "text": "Then we have plenty of time. Anything else on your list?"
+  },
+  {
+   "t": 544.2,
+   "speaker": "Them 1",
+   "text": "Just the reporting, I think I would like to see that dashboard properly in a follow up, maybe with my director there."
+  },
+  {
+   "t": 561.3,
+   "speaker": "You",
+   "text": "Of course. Shall we put something in the diary for next week?"
+  },
+  {
+   "t": 572.9,
+   "speaker": "Them 1",
+   "text": "Yes, Tuesday works well for us, in the morning if you can."
+  },
+  {
+   "t": 585.5,
+   "speaker": "You",
+   "text": "Tuesday morning it is. I will send an invite after this call."
+  },
+  {
+   "t": 596.8,
+   "speaker": "Them 1",
+   "text": "Wonderful. Thank you again, this was useful."
+  },
+  {
+   "t": 604.6,
+   "speaker": "You",
+   "text": "My pleasure, speak to you Tuesday."
+  }
+ ]
+}

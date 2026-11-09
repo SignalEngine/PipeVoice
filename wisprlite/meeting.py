@@ -743,7 +743,18 @@ def transcribe_session(
     meta["transcript_file"] = "transcript.json"
     _write_json(meta_path, meta)
     _auto_title(session_dir, segments, cfg, selected_backend)
+    _auto_promises(session_dir, segments, cfg)
     return transcript
+
+
+def _auto_promises(session_dir: Path, segments: list[dict], cfg) -> None:
+    """Find what the user promised. Never raises: a failure must not fail the transcription."""
+    try:
+        from . import promises
+
+        promises.build_promises(session_dir, segments, cfg)
+    except Exception as exc:
+        log.warning("promises failed: %s", exc)
 
 
 def _auto_title(session_dir: Path, segments: list[dict], cfg, backend: str = "local") -> None:

@@ -1,0 +1,19 @@
+{
+ "promises": [
+  "Good. I'll send you a content template after this call so everything arrives in the same shape.",
+  "Okay. We'll share the first homepage concept by Thursday so your CEO can react to it.",
+  "We do. I'll check with our developer how the CRM connection works and let you know what we find.",
+  "Understood. I'll put together a one page plan for the legal review and send it to you on Friday.",
+  "Good. Dana, I'll schedule a weekly check in so nothing drifts.",
+  "Then we are set. I'll update the timeline document and share it with you both after this call."
+ ],
+ "non_promises": [
+  "Okay. Let me just share my screen so we can look at the plan together.",
+  "I'll think about it and come back with a proposal for how we handle the approval step.",
+  "If it breaks I'll call them straight away, they have always been quick to fix things on the integration side."
+ ],
+ "due": {
+  "Okay. We'll share the first homepage concept by Thursday so your CEO can react to it.": "by Thursday",
+  "Understood. I'll put together a one page plan for the legal review and send it to you on Friday.": "Friday"
+ }
+}
