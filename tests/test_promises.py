@@ -94,6 +94,7 @@ def test_an_ai_failure_keeps_the_regex_list():
 
     assert promises.ai_filter(cands, boom) == cands
     assert promises.ai_filter(cands, lambda m: "not json") == cands
+    assert promises.ai_filter(cands, lambda m: "[true]") == cands  # a bool is not an index
 
 
 def test_build_saves_promises_json_and_uses_the_ai_only_when_the_provider_is_ready(tmp_path):

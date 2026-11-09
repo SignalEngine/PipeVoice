@@ -78,7 +78,7 @@ def ai_filter(candidates: list[dict], completion) -> list[dict]:
         from .knowledge import _parse_json
 
         keep = _parse_json(reply, list)
-        if keep is None or not all(isinstance(i, int) and 0 <= i < len(candidates) for i in keep):
+        if keep is None or not all(type(i) is int and 0 <= i < len(candidates) for i in keep):
             return candidates
         return [candidates[i] for i in sorted(set(keep))]
     except Exception as exc:
