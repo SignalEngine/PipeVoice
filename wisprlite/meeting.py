@@ -696,8 +696,16 @@ def transcribe_session(
     return transcript
 
 
-VIDEO_STEM = "screen-video"
-MEETING_VIDEO_FILE = "meeting.mp4"
+def meeting_video_name(session_dir) -> str:
+    """Unique per meeting (meeting-YYYYMMDD-HHMMSS.mp4): every upload lands in the
+    same remote inbox, so a fixed name would overwrite the previous meeting."""
+    return f"{Path(session_dir).name}.mp4"
+
+
+def video_only_name(session_dir) -> str:
+    """The picture-only clip, kept if the final mux fails. Unique for the same reason."""
+    return f"{Path(session_dir).name}-screen.mp4"
+
 MUX_AUDIO_BITRATE = 96_000
 _MIX_CHUNK = SAMPLE_RATE * 30   # samples mixed at a time, so a 4 h meeting never sits in RAM
 
@@ -1093,7 +1101,7 @@ class MeetingRecorder:
                 screenrec.monitor_under_mouse(), self.session_dir,
                 fps=self.video_fps, record_audio=False,
             )
-            video.stem = VIDEO_STEM
+            video.stem = video_only_name(self.session_dir)[:-4]
             video.start()
             self._video = video
         except Exception as exc:
@@ -1155,7 +1163,7 @@ class MeetingRecorder:
         ).start()
 
     def _mux_worker(self, session_dir: Path, clip: Path, offsets: dict, plan=None) -> None:
-        out = session_dir / MEETING_VIDEO_FILE
+        out = session_dir / meeting_video_name(session_dir)
         error = None
         try:
             mux_meeting_video(clip, session_dir / "mic.wav", session_dir / "desktop.wav",

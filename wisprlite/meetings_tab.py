@@ -145,14 +145,16 @@ def meeting_video_file(session_dir: str | Path) -> tuple[Path | None, str]:
     left behind; with neither, the reason the Send video button is disabled."""
     folder = Path(session_dir)
     video = _read_json(folder / "meta.json").get("video")
-    if (folder / "meeting.mp4").is_file():
-        return folder / "meeting.mp4", ""
+    from .meeting import meeting_video_name, video_only_name
+
+    if (folder / meeting_video_name(folder)).is_file():
+        return folder / meeting_video_name(folder), ""
     # The video-only clip only once a mux has FAILED on it: during the meeting
     # or the mux it is still being written, and an upload would be truncated.
     leftover = video.get("video_only") if isinstance(video, dict) else None
     # Only the one name the recorder writes: meta.json must never pick an
     # arbitrary file (e.g. "../something") for upload.
-    if leftover == "screen-video.mp4" and (folder / leftover).is_file():
+    if leftover == video_only_name(folder) and (folder / leftover).is_file():
         return folder / leftover, ""
     error = video.get("error") if isinstance(video, dict) else None
     return None, f"Video failed: {error}" if error else "No video for this meeting"
@@ -259,7 +261,7 @@ def meetings_signature(base_dir: str | Path | None = None) -> tuple:
                 ),
                 # The video finishes after the meeting stops: refresh Send video then.
                 json.dumps(meta.get("video"), sort_keys=True),
-                (path / "meeting.mp4").is_file(),
+                (path / f"{path.name}.mp4").is_file(),
                 transcript_mtime,
             )
         except OSError:

@@ -175,19 +175,19 @@ def test_stop_muxes_on_its_own_thread_then_reports_the_finished_file():
             session = rec.start()
             wait_for(lambda: rec._first_blocks["mic"] is not None
                      and rec._first_blocks["desktop"] is not None)
-            _synthetic_video(session / "screen-video.mp4", seconds=2)
-            rec._video = _FakeVideo(session / "screen-video.mp4",
+            _synthetic_video(session / meeting.video_only_name(session), seconds=2)
+            rec._video = _FakeVideo(session / meeting.video_only_name(session),
                                     min(rec._first_blocks.values()))
             rec.stop()
         wait_for(lambda: got, timeout=15)
         path, error = got[0]
-        assert error is None and path == session / "meeting.mp4"
+        assert error is None and path == session / meeting.meeting_video_name(session)
         with av.open(str(path)) as container:
             assert len(container.streams.video) == 1
             assert len(container.streams.audio) == 1
-        assert not (session / "screen-video.mp4").exists()   # intermediate removed on success
+        assert not (session / meeting.video_only_name(session)).exists()   # intermediate removed on success
         meta = json.loads((session / "meta.json").read_text())
-        assert meta["video"] == {"file": "meeting.mp4", "error": None}
+        assert meta["video"] == {"file": meeting.meeting_video_name(session), "error": None}
         assert rec.video_mux_pending is False
 
 
@@ -198,12 +198,12 @@ def test_a_failed_mux_keeps_the_video_only_file_and_reports_the_error():
                               on_video_ready=lambda p, e, _plan=None: got.append((p, e)))
         with patch.dict(sys.modules, fake_audio_modules()):
             session = rec.start()
-            (session / "screen-video.mp4").write_bytes(b"garbage")
-            rec._video = _FakeVideo(session / "screen-video.mp4", 0.0)
+            (session / meeting.video_only_name(session)).write_bytes(b"garbage")
+            rec._video = _FakeVideo(session / meeting.video_only_name(session), 0.0)
             rec.stop()
         wait_for(lambda: got, timeout=15)
         assert got[0][0] is None and got[0][1]
-        assert (session / "screen-video.mp4").exists()
+        assert (session / meeting.video_only_name(session)).exists()
         meta = json.loads((session / "meta.json").read_text())
         assert meta["video"]["file"] is None and meta["video"]["error"]
 
@@ -320,15 +320,18 @@ def test_send_video_target_and_the_reason_when_there_is_none(tmp_path):
     assert meeting_video_file(tmp_path) == (None, "No video for this meeting")
     (tmp_path / "meta.json").write_text(json.dumps({"video": {"file": None, "error": "boom"}}))
     assert meeting_video_file(tmp_path) == (None, "Video failed: boom")
-    (tmp_path / "screen-video.mp4").write_bytes(b"x")
+    leftover = meeting.video_only_name(tmp_path)
+    (tmp_path / leftover).write_bytes(b"x")
     # Still being written (meeting or mux in progress): never offered for upload.
     assert meeting_video_file(tmp_path)[0] is None
     # Only after a FAILED mux names it as the leftover picture.
     (tmp_path / "meta.json").write_text(json.dumps(
-        {"video": {"file": None, "error": "boom", "video_only": "screen-video.mp4"}}))
-    assert meeting_video_file(tmp_path)[0] == tmp_path / "screen-video.mp4"
-    (tmp_path / "meeting.mp4").write_bytes(b"x")
-    assert meeting_video_file(tmp_path)[0] == tmp_path / "meeting.mp4"
+        {"video": {"file": None, "error": "boom", "video_only": leftover}}))
+    assert meeting_video_file(tmp_path)[0] == tmp_path / leftover
+    (tmp_path / meeting.meeting_video_name(tmp_path)).write_bytes(b"x")
+    assert meeting_video_file(tmp_path)[0] == tmp_path / meeting.meeting_video_name(tmp_path)
+    # Two meetings never share an upload name (same remote inbox).
+    assert meeting.meeting_video_name("a/meeting-1") != meeting.meeting_video_name("a/meeting-2")
 
 
 # -- overlay pill state ---------------------------------------------------------
