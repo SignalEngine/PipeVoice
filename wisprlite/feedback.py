@@ -4,6 +4,9 @@ launched as its own process via ``--feedback`` (like --about)."""
 
 from __future__ import annotations
 
+from . import theme
+from .theme import px
+
 import json
 import platform
 import threading
@@ -38,7 +41,7 @@ def main() -> None:
         return
     from . import winui
 
-    root = tk.Tk(); root.title("Send feedback — Pipevoice"); root.configure(bg=BG); root.resizable(False, False)
+    root = tk.Tk(); theme.init(root); root.title("Send feedback — Pipevoice"); root.configure(bg=BG); root.resizable(False, False)
     ico = config.asset_path("wisprlite.ico")
     if ico:
         try: root.iconbitmap(ico)
@@ -48,40 +51,40 @@ def main() -> None:
     try: style.theme_use("clam")
     except Exception: pass
     style.configure("Accent.TButton", background=ACCENT, foreground="#1a0c0d",
-                    font=("Segoe UI", 9, "bold"), padding=8, borderwidth=0)
+                    font=theme.font("body_strong"), padding=px(8), borderwidth=0)
     style.map("Accent.TButton", background=[("active", "#e8838b")])
     style.configure("TCombobox", fieldbackground=CARD, background=CARD, foreground=FG, arrowcolor=MUTED)
 
-    wrap = tk.Frame(root, bg=BG, padx=26, pady=22); wrap.pack(fill="both", expand=True)
-    tk.Label(wrap, text="Send feedback", bg=BG, fg=FG, font=("Segoe UI", 15, "bold")).pack(anchor="w")
+    wrap = tk.Frame(root, bg=BG, padx=px(26), pady=px(22)); wrap.pack(fill="both", expand=True)
+    tk.Label(wrap, text="Send feedback", bg=BG, fg=FG, font=theme.font("subtitle")).pack(anchor="w")
     tk.Label(wrap, text="Found a bug or want a feature? Tell me — it goes straight to my inbox.",
-             bg=BG, fg=MUTED, font=("Segoe UI", 9), wraplength=430, justify="left").pack(anchor="w", pady=(2, 14))
+             bg=BG, fg=MUTED, font=theme.font("body"), wraplength=px(494), justify="left").pack(anchor="w", pady=px((2, 14)))
 
-    tk.Label(wrap, text="Type", bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w")
+    tk.Label(wrap, text="Type", bg=BG, fg=MUTED, font=theme.font("body")).pack(anchor="w")
     cat_var = tk.StringVar(value=CATEGORIES[0][1])
     ttk.Combobox(wrap, textvariable=cat_var, state="readonly",
-                 values=[l for _, l in CATEGORIES], width=32).pack(anchor="w", pady=(2, 12))
+                 values=[l for _, l in CATEGORIES], width=32).pack(anchor="w", pady=px((2, 12)))
 
-    tk.Label(wrap, text="Message", bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w")
+    tk.Label(wrap, text="Message", bg=BG, fg=MUTED, font=theme.font("body")).pack(anchor="w")
     msg = tk.Text(wrap, height=6, width=54, bg=CARD, fg=FG, insertbackground=FG,
-                  relief="flat", font=("Segoe UI", 10), wrap="word")
-    msg.pack(anchor="w", pady=(2, 12))
+                  relief="flat", font=theme.font("body"), wrap="word")
+    msg.pack(anchor="w", pady=px((2, 12)))
 
     tk.Label(wrap, text="Your email (optional — only if you'd like a reply)",
-             bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w")
-    email = tk.Entry(wrap, bg=CARD, fg=FG, insertbackground=FG, relief="flat", font=("Segoe UI", 10), width=54)
-    email.pack(anchor="w", pady=(2, 10), ipady=4)
+             bg=BG, fg=MUTED, font=theme.font("body")).pack(anchor="w")
+    email = tk.Entry(wrap, bg=CARD, fg=FG, insertbackground=FG, relief="flat", font=theme.font("body"), width=54)
+    email.pack(anchor="w", pady=px((2, 10)), ipady=px(4))
 
     tk.Label(wrap, text=f"Sends your message + PipeVoice {__version__} + your Windows version. "
                         "Nothing else — no audio, no transcripts — and only when you click Send.",
-             bg=BG, fg=MUTED, font=("Segoe UI", 8), wraplength=430, justify="left").pack(anchor="w", pady=(0, 12))
+             bg=BG, fg=MUTED, font=theme.font("caption"), wraplength=px(494), justify="left").pack(anchor="w", pady=px((0, 12)))
 
-    status = tk.Label(wrap, text="", bg=BG, fg=MUTED, font=("Segoe UI", 9)); status.pack(anchor="w")
+    status = tk.Label(wrap, text="", bg=BG, fg=MUTED, font=theme.font("body")); status.pack(anchor="w")
 
-    row = tk.Frame(wrap, bg=BG); row.pack(fill="x", pady=(8, 0))
+    row = tk.Frame(wrap, bg=BG); row.pack(fill="x", pady=px((8, 0)))
     send_btn = ttk.Button(row, text="Send", style="Accent.TButton"); send_btn.pack(side="left")
     gh = tk.Label(row, text="Prefer GitHub? Open an issue ↗", bg=BG, fg=ACCENT, cursor="hand2",
-                  font=("Segoe UI", 9, "underline")); gh.pack(side="left", padx=(14, 0))
+                  font=theme.font("body", underline=True)); gh.pack(side="left", padx=px((14, 0)))
     gh.bind("<Button-1>", lambda e: webbrowser.open(ISSUES_URL))
 
     def do_send():
@@ -109,7 +112,7 @@ def main() -> None:
     send_btn.config(command=do_send)
 
     root.update_idletasks()
-    w = max(500, root.winfo_reqwidth()); h = root.winfo_reqheight()
+    w = max(px(575), root.winfo_reqwidth()); h = root.winfo_reqheight()
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 3}")
     winui.dark_titlebar(root)

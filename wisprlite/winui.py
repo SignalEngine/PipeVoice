@@ -4,6 +4,9 @@ Windows builds, so callers can always call them.
 
 from __future__ import annotations
 
+from . import theme
+from .theme import px
+
 import ctypes
 
 DARK = "#13151d"
@@ -20,6 +23,9 @@ PALETTE = {
     "search_current": "#e5c07b",
     # subtle field border instead of clam's default WHITE bevel; coral on focus.
     "border": "#39414f",
+    # feature accents (used from build 2; contrast-tested now)
+    "feat_history": "#60a5fa", "feat_meetings": "#98c379", "feat_screenrec": "#56b6c2",
+    "feat_voices": "#a78bfa", "feat_guide": "#94a3b8",
 }
 
 
@@ -41,22 +47,22 @@ def apply_theme(root):
     # base: kill the white bevel (lightcolor/darkcolor = card), subtle dark border
     style.configure(".", background=p["bg"], foreground=p["fg"], fieldbackground=p["card"],
                     bordercolor=p["border"], lightcolor=p["card"], darkcolor=p["card"],
-                    troughcolor=p["card"], font=("Segoe UI", 10))
-    style.configure("TLabel", background=p["bg"], foreground=p["fg"], font=("Segoe UI", 10))
-    style.configure("Muted.TLabel", background=p["bg"], foreground=p["muted"], font=("Segoe UI", 9))
-    style.configure("Head.TLabel", background=p["bg"], foreground=p["accent"], font=("Segoe UI", 13, "bold"))
-    style.configure("TButton", background=p["card"], foreground=p["fg"], padding=6, borderwidth=0)
+                    troughcolor=p["card"], font=theme.font("body"))
+    style.configure("TLabel", background=p["bg"], foreground=p["fg"], font=theme.font("body"))
+    style.configure("Muted.TLabel", background=p["bg"], foreground=p["muted"], font=theme.font("body"))
+    style.configure("Head.TLabel", background=p["bg"], foreground=p["accent"], font=theme.font("body_large_strong"))
+    style.configure("TButton", background=p["card"], foreground=p["fg"], padding=px(6), borderwidth=0)
     style.map("TButton", background=[("active", "#262a3a")])
     style.configure("Accent.TButton", background=p["accent"], foreground="#1a0c0d",
-                    font=("Segoe UI", 9, "bold"), padding=7, borderwidth=0)
+                    font=theme.font("body_strong"), padding=px(7), borderwidth=0)
     style.map("Accent.TButton", background=[("active", p["accent_hi"])])
     # Green, for the one action a recording is waiting on. Distinct from the
     # coral accent so "Transcribe" does not compete with Save for the eye.
     style.configure("Go.TButton", background=p["good"], foreground="#10131a",
-                    padding=6, borderwidth=0)
+                    padding=px(6), borderwidth=0)
     style.map("Go.TButton", background=[("active", "#a9d189"), ("disabled", p["card"])])
     style.map("Go.TButton", foreground=[("disabled", p["muted"])])
-    style.configure("Pick.TButton", background="#2a2f3d", foreground=p["fg"], padding=6, borderwidth=0)
+    style.configure("Pick.TButton", background="#2a2f3d", foreground=p["fg"], padding=px(6), borderwidth=0)
     style.map("Pick.TButton", background=[("active", "#333a4a")])
     style.configure("TCheckbutton", background=p["bg"], foreground=p["fg"])
     style.map("TCheckbutton", background=[("active", p["bg"])])
@@ -76,9 +82,9 @@ def apply_theme(root):
               bordercolor=[("focus", p["accent"])],
               lightcolor=[("focus", p["accent"])], darkcolor=[("focus", p["accent"])],
               background=[("readonly", p["card"]), ("active", p["card"])])
-    style.configure("TNotebook", background=p["bg"], borderwidth=0, tabmargins=(10, 8, 0, 0))
+    style.configure("TNotebook", background=p["bg"], borderwidth=0, tabmargins=px((10, 8, 0, 0)))
     style.configure("TNotebook.Tab", background=p["card"], foreground=p["muted"],
-                    padding=(26, 12), font=("Segoe UI", 10, "bold"), borderwidth=0)
+                    padding=px((26, 12)), font=theme.font("body_strong"), borderwidth=0)
     style.map("TNotebook.Tab", background=[("selected", p["bg"])],
               foreground=[("selected", p["accent"]), ("active", p["fg"])])
     style.configure("Footer.TFrame", background=p["card"])
@@ -145,10 +151,10 @@ def tooltip(widget, text: str, *, delay: int = 450) -> None:
             tip = tk.Toplevel(widget)
             tip.wm_overrideredirect(True)
             tip.configure(bg=p["accent"])  # 1px coral hairline
-            frame = tk.Frame(tip, bg=p["popover"], padx=11, pady=8)
-            frame.pack(padx=1, pady=1)
+            frame = tk.Frame(tip, bg=p["popover"], padx=px(11), pady=px(8))
+            frame.pack(padx=px(1), pady=px(1))
             tk.Label(frame, text=text, bg=p["popover"], fg=p["fg"], justify="left",
-                     wraplength=320, font=("Segoe UI", 9)).pack()
+                     wraplength=px(368), font=theme.font("body")).pack()
             tip.update_idletasks()
             width, height = tip.winfo_reqwidth(), tip.winfo_reqheight()
             screen_w, screen_h = tip.winfo_screenwidth(), tip.winfo_screenheight()
@@ -213,7 +219,7 @@ def dark_titlebar(root, color: str = DARK) -> None:
         pass
 
 
-def fit_scroll_body(canvas, window_id, max_width: int = 1080) -> None:
+def fit_scroll_body(canvas, window_id, max_width: int | None = None) -> None:
     """Keep a scrolling canvas's inner frame width-tracked, capped and centred.
 
     A canvas item created with create_window keeps its *natural* width forever
@@ -224,7 +230,7 @@ def fit_scroll_body(canvas, window_id, max_width: int = 1080) -> None:
     """
 
     def _fit(event):
-        width = min(event.width, max_width)
+        width = min(event.width, max_width if max_width is not None else px(1242))
         canvas.itemconfigure(window_id, width=width)
         canvas.coords(window_id, max(0, (event.width - width) // 2), 0)
 
@@ -273,7 +279,7 @@ def collapsible_settings(container, link, hides, palette_bg, wheel=None):
         holder.pack_forget()
         for widget, kwargs in hides:
             widget.pack(**kwargs)
-        link.config(text=shut_text, font=("Segoe UI", 9, "underline"))
+        link.config(text=shut_text, font=theme.font("body", underline=True))
         return True
 
     def toggle(_event=None):
@@ -281,8 +287,8 @@ def collapsible_settings(container, link, hides, palette_bg, wheel=None):
             return
         for widget, _kwargs in hides:
             widget.pack_forget()
-        holder.pack(fill="both", expand=True, padx=18, pady=(0, 12))
-        link.config(text=open_text, font=("Segoe UI", 9, "bold"))
+        holder.pack(fill="both", expand=True, padx=px(18), pady=px((0, 12)))
+        link.config(text=open_text, font=theme.font("body_strong"))
 
     link.bind("<Button-1>", toggle)
     # Clicking the tab you are already on is "take me back to the list" — the

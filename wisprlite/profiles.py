@@ -10,6 +10,9 @@ them for one utterance only.
 
 from __future__ import annotations
 
+from . import theme
+from .theme import px
+
 import os
 
 from . import config, voices, winui
@@ -103,6 +106,8 @@ def main() -> None:
     )
 
     root = tk.Tk()
+
+    theme.init(root)
     root.title("Pipevoice app profiles")
     root.configure(bg=BG)
     ico = config.asset_path("wisprlite.ico")
@@ -114,21 +119,21 @@ def main() -> None:
 
     style = winui.apply_theme(root)
 
-    head = tk.Frame(root, bg=BG, padx=22, pady=18)
+    head = tk.Frame(root, bg=BG, padx=px(22), pady=px(18))
     head.pack(fill="x")
-    tk.Label(head, text="App profiles", bg=BG, fg=ACCENT, font=("Segoe UI", 16, "bold")).pack(anchor="w")
+    tk.Label(head, text="App profiles", bg=BG, fg=ACCENT, font=theme.font("subtitle")).pack(anchor="w")
     tk.Label(head, text="Give an app its own behaviour. Terminal: raw + Enter. Chat: polished + auto-send.\n"
                         "Editor: no AI cleanup. Search your open apps, or Browse to pick any program.",
-             bg=BG, fg=MUTED, font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(5, 0))
+             bg=BG, fg=MUTED, font=theme.font("body"), justify="left").pack(anchor="w", pady=px((5, 0)))
 
     # Live readout of the focused app's exe — the exact string a profile matches on.
     # Skips our own windows + the shell, so switching to your target app and back
     # keeps showing that app (not this editor).
     focus_var = tk.StringVar(value="Focused app:  detecting…")
     tk.Label(head, textvariable=focus_var, bg=BG, fg="#98c379",
-             font=("Consolas", 9, "bold")).pack(anchor="w", pady=(11, 0))
+             font=("Consolas", 9, "bold")).pack(anchor="w", pady=px((11, 0)))
     tk.Label(head, text="↑ click into the app you want, and this shows the exact name to match on.",
-             bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w")
+             bg=BG, fg=MUTED, font=theme.font("caption")).pack(anchor="w")
     _seen = {"exe": ""}
 
     def _poll_focus():
@@ -146,12 +151,12 @@ def main() -> None:
 
     root.after(400, _poll_focus)
 
-    footer = tk.Frame(root, bg=BG, padx=22, pady=12)
+    footer = tk.Frame(root, bg=BG, padx=px(22), pady=px(12))
     footer.pack(side="bottom", fill="x")
 
     bodyf = tk.Frame(root, bg=BG)
     bodyf.pack(fill="both", expand=True)
-    canvas = tk.Canvas(bodyf, bg=BG, highlightthickness=0, width=640, height=360)
+    canvas = tk.Canvas(bodyf, bg=BG, highlightthickness=0, width=px(640), height=px(360))
     vbar = ttk.Scrollbar(bodyf, orient="vertical", command=canvas.yview)
     canvas.configure(yscrollcommand=vbar.set)
     vbar.pack(side="right", fill="y")
@@ -167,18 +172,18 @@ def main() -> None:
     def add_card(exe="", voice=""):
         overrides_voice = voice
         wrap = tk.Frame(holder, bg=BG)
-        wrap.pack(fill="x", padx=18, pady=(0, 12))
+        wrap.pack(fill="x", padx=px(18), pady=px((0, 12)))
         c = tk.Frame(wrap, bg=CARD)
         c.pack(fill="x")
-        inner = tk.Frame(c, bg=CARD, padx=18, pady=16)
+        inner = tk.Frame(c, bg=CARD, padx=px(18), pady=px(16))
         inner.pack(fill="x")
         card = {}
 
-        tk.Label(inner, text="APP", bg=CARD, fg=MUTED, font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        tk.Label(inner, text="APP", bg=CARD, fg=MUTED, font=theme.font("body_strong")).pack(anchor="w")
         tk.Label(inner, text="Type to search your open apps, or Browse to pick any program (.exe).",
-                 bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w", pady=(2, 0))
+                 bg=CARD, fg=MUTED, font=theme.font("caption")).pack(anchor="w", pady=px((2, 0)))
         pick = tk.Frame(inner, bg=CARD)
-        pick.pack(fill="x", pady=(6, 0))
+        pick.pack(fill="x", pady=px((6, 0)))
         exe_var = tk.StringVar(value=exe)
         cb = ttk.Combobox(pick, textvariable=exe_var, values=app_values, width=32)
         cb.pack(side="left")
@@ -199,19 +204,19 @@ def main() -> None:
             if path:
                 var.set(os.path.basename(path))
 
-        ttk.Button(pick, text="Browse…", style="Pick.TButton", command=browse).pack(side="left", padx=(8, 0))
+        ttk.Button(pick, text="Browse…", style="Pick.TButton", command=browse).pack(side="left", padx=px((8, 0)))
         ttk.Button(pick, text="Remove",
                    command=lambda: (wrap.destroy(), card in cards and cards.remove(card))).pack(side="right")
 
         vrow = tk.Frame(inner, bg=CARD)
-        vrow.pack(fill="x", pady=(14, 0))
-        tk.Label(vrow, text="VOICE", bg=CARD, fg=MUTED, font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        vrow.pack(fill="x", pady=px((14, 0)))
+        tk.Label(vrow, text="VOICE", bg=CARD, fg=MUTED, font=theme.font("body_strong")).pack(anchor="w")
         tk.Label(vrow, text="The polish preset to use in this app. Create/edit voices in Settings → Manage voices.",
-                 bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w", pady=(2, 0))
+                 bg=CARD, fg=MUTED, font=theme.font("caption")).pack(anchor="w", pady=px((2, 0)))
         voice_opts = voices.names(cfg) or ["Tidy"]
         cur = overrides_voice if overrides_voice in voice_opts else voice_opts[0]
         voice_var = tk.StringVar(value=cur)
-        ttk.Combobox(vrow, textvariable=voice_var, values=voice_opts, state="readonly", width=24).pack(anchor="w", pady=(5, 0))
+        ttk.Combobox(vrow, textvariable=voice_var, values=voice_opts, state="readonly", width=24).pack(anchor="w", pady=px((5, 0)))
 
         card.update(exe=exe_var, voice=voice_var)
         cards.append(card)
@@ -238,13 +243,13 @@ def main() -> None:
 
     ttk.Button(footer, text="+ Add app profile", command=lambda: add_card()).pack(side="left")
     ttk.Button(footer, text="Save", style="Accent.TButton", command=save).pack(side="right")
-    ttk.Button(footer, text="Cancel", command=root.destroy).pack(side="right", padx=(0, 8))
+    ttk.Button(footer, text="Cancel", command=root.destroy).pack(side="right", padx=px((0, 8)))
 
     root.update_idletasks()
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-    w = max(700, root.winfo_reqwidth())
-    h = min(max(460, root.winfo_reqheight() + 16), sh - 150)
-    root.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(16, (sh - h) // 5)}")
+    w = max(px(805), root.winfo_reqwidth())
+    h = min(max(px(460), root.winfo_reqheight() + px(16)), sh - px(150))
+    root.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(px(16), (sh - h) // 5)}")
     winui.dark_titlebar(root)
     root.mainloop()
 

@@ -6,6 +6,9 @@ status formatting, and search navigation can be tested on headless machines.
 
 from __future__ import annotations
 
+from . import theme
+from .theme import px
+
 import json
 import os
 import re
@@ -812,23 +815,23 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         "correction_tags": {},
     }
 
-    head = tk.Frame(container, bg=BG, padx=18, pady=14)
+    head = tk.Frame(container, bg=BG, padx=px(18), pady=px(14))
     head.pack(fill="x")
     tk.Label(
         head,
         text="Meetings",
         bg=BG,
         fg=ACCENT,
-        font=("Segoe UI", 14, "bold"),
+        font=theme.font("subtitle"),
     ).pack(side="left")
-    count_label = tk.Label(head, text="", bg=BG, fg=MUTED, font=("Segoe UI", 9))
-    count_label.pack(side="left", padx=(10, 0))
+    count_label = tk.Label(head, text="", bg=BG, fg=MUTED, font=theme.font("body"))
+    count_label.pack(side="left", padx=px((10, 0)))
 
     # A way out to the full instructions. Opening this tab for the first time
     # showed a list of dates and six grey buttons with no explanation of what
     # any of it did.
     guide_link = tk.Label(head, text="How this works  \u2197", bg=BG, fg=ACCENT,
-                          cursor="hand2", font=("Segoe UI", 9, "underline"))
+                          cursor="hand2", font=theme.font("body", underline=True))
     # Only when there IS a Guide to reach. Opened standalone via
     # `python -m wisprlite meetings` there are no tabs, and a visible link that
     # does nothing is worse than no link.
@@ -847,8 +850,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     settings_link = None
     if with_settings:
         settings_link = tk.Label(head, text="Settings  ⚙", bg=BG, fg=ACCENT,
-                                 cursor="hand2", font=("Segoe UI", 9, "underline"))
-        settings_link.pack(side="right", padx=(0, 14))
+                                 cursor="hand2", font=theme.font("body", underline=True))
+        settings_link.pack(side="right", padx=px((0, 14)))
         tooltip(settings_link, "Meeting hotkey, bookmarks, PipeFocus, where recordings "
                                "are kept and how many.")
 
@@ -858,21 +861,24 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
              "computer's audio are captured separately, so nobody gets mixed up. Then "
              "transcribe it, name the speakers, turn it into notes, and see their "
              "questions answered from your docs.",
-        bg=BG, fg=MUTED, anchor="w", justify="left", wraplength=900,
-        font=("Segoe UI", 9), padx=18,
+        bg=BG, fg=MUTED, anchor="w", justify="left", wraplength=px(1035),
+        font=theme.font("body"), padx=px(18),
     )
-    intro.pack(fill="x", pady=(0, 10))
+    intro.pack(fill="x", pady=px((0, 10)))
+    # container can be the Tk root (--meetings), whose <Configure> fires for every child.
+    container.bind("<Configure>", lambda e: e.widget is container and intro.config(
+        wraplength=max(px(200), e.width - px(36) - px(4))), add="+")
 
     # "Before your next call": docs, notes and a way to try a question. Outside
     # the collapsible settings so it is always the first thing on the tab.
-    prep = tk.Frame(container, bg=CARD, padx=12, pady=8)
-    prep.pack(fill="x", padx=18, pady=(0, 10))
+    prep = tk.Frame(container, bg=CARD, padx=px(12), pady=px(8))
+    prep.pack(fill="x", padx=px(18), pady=px((0, 10)))
     tk.Label(prep, text="Before your next call", bg=CARD, fg=ACCENT, anchor="w",
-             font=("Segoe UI", 10, "bold")).pack(fill="x")
+             font=theme.font("body_strong")).pack(fill="x")
     # Collapsed by default: open it takes ~170px the meeting below needs.
     prep_body = tk.Frame(prep, bg=CARD)
     prep_toggle = ttk.Button(prep, text="Show ▾", width=8)
-    prep_toggle.place(relx=1.0, y=-2, anchor="ne")
+    prep_toggle.place(relx=1.0, y=px(-2), anchor="ne")
 
     def toggle_prep() -> None:
         if prep_body.winfo_manager():
@@ -884,34 +890,34 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
 
     prep_toggle.config(command=toggle_prep)
     prep_docs_row = tk.Frame(prep_body, bg=CARD)
-    prep_docs_row.pack(fill="x", pady=(4, 0))
+    prep_docs_row.pack(fill="x", pady=px((4, 0)))
     prep_docs_label = tk.Label(prep_docs_row, text="", bg=CARD, fg=FG, anchor="w",
-                               font=("Segoe UI", 9))
+                               font=theme.font("body"))
     prep_docs_label.pack(side="left")
     prep_docs_btn = ttk.Button(prep_docs_row, text="Choose docs folder\u2026")
-    prep_docs_btn.pack(side="left", padx=(10, 0))
+    prep_docs_btn.pack(side="left", padx=px((10, 0)))
     prep_hint = tk.Label(prep_body, text="", bg=CARD, fg=MUTED, anchor="w", justify="left",
-                         wraplength=860, font=("Segoe UI", 8))
+                         wraplength=px(989), font=theme.font("caption"))
     prep_hint.pack(fill="x")
     tk.Label(prep_body, text="Who is it with, what will they ask? Used for your next call. "
                         "Standing context belongs in the docs folder.",
-             bg=CARD, fg=MUTED, anchor="w", justify="left", wraplength=860,
-             font=("Segoe UI", 8)).pack(fill="x", pady=(6, 2))
+             bg=CARD, fg=MUTED, anchor="w", justify="left", wraplength=px(989),
+             font=theme.font("caption")).pack(fill="x", pady=px((6, 2)))
     prep_notes = tk.Text(prep_body, height=3, wrap="word", bg=BG, fg=FG, relief="flat",
-                         insertbackground=FG, font=("Segoe UI", 9))
+                         insertbackground=FG, font=theme.font("body"))
     prep_notes.pack(fill="x")
     prep_ask_row = tk.Frame(prep_body, bg=CARD)
-    prep_ask_row.pack(fill="x", pady=(6, 0))
+    prep_ask_row.pack(fill="x", pady=px((6, 0)))
     tk.Label(prep_ask_row, text="Try a question:", bg=CARD, fg=MUTED,
-             font=("Segoe UI", 9)).pack(side="left", padx=(0, 8))
+             font=theme.font("body")).pack(side="left", padx=px((0, 8)))
     prep_question = tk.StringVar()
     prep_entry = ttk.Entry(prep_ask_row, textvariable=prep_question)
     prep_entry.pack(side="left", fill="x", expand=True)
     prep_ask_btn = ttk.Button(prep_ask_row, text="Ask")
-    prep_ask_btn.pack(side="left", padx=(8, 0))
+    prep_ask_btn.pack(side="left", padx=px((8, 0)))
     prep_result = tk.Label(prep_body, text="", bg=CARD, fg=FG, anchor="w", justify="left",
-                           wraplength=860, font=("Segoe UI", 9))
-    prep_result.pack(fill="x", pady=(4, 0))
+                           wraplength=px(989), font=theme.font("body"))
+    prep_result.pack(fill="x", pady=px((4, 0)))
 
     def refresh_prep() -> None:
         cfg = config.Config.load()
@@ -993,8 +999,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     # pady must be a SINGLE distance on a widget constructor — a (0, 12) tuple is
     # only valid on pack()/grid() and raises TclError: bad screen distance "0 12",
     # which kills the window before it draws.
-    body = tk.Frame(container, bg=BG, padx=18)
-    body.pack(fill="both", expand=True, pady=(0, 12))
+    body = tk.Frame(container, bg=BG, padx=px(18))
+    body.pack(fill="both", expand=True, pady=px((0, 12)))
 
     if settings_link is not None:
         settings_panel = collapsible_settings(
@@ -1003,7 +1009,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
              (body, {"fill": "both", "expand": True, "pady": (0, 12)})],
             BG, wheel)
 
-    left = tk.Frame(body, bg=CARD, width=400)
+    left = tk.Frame(body, bg=CARD, width=px(400))
     left.pack(side="left", fill="y")
     left.pack_propagate(False)
     tk.Label(
@@ -1012,9 +1018,9 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         bg=CARD,
         fg=MUTED,
         anchor="w",
-        font=("Segoe UI", 8, "bold"),
-        padx=12,
-        pady=9,
+        font=theme.font("body_strong"),
+        padx=px(12),
+        pady=px(9),
     ).pack(fill="x")
     list_wrap = tk.Frame(left, bg=CARD)
     list_wrap.pack(fill="both", expand=True)
@@ -1023,7 +1029,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         bg=CARD,
         highlightthickness=0,
         borderwidth=0,
-        width=380,
+        width=px(380),
         takefocus=True,
     )
     list_bar = ttk.Scrollbar(
@@ -1049,19 +1055,19 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     wheel(session_canvas)
 
     right = tk.Frame(body, bg=BG)
-    right.pack(side="left", fill="both", expand=True, padx=(14, 0))
+    right.pack(side="left", fill="both", expand=True, padx=px((14, 0)))
     # Summary-first layout: a header (title left, Copy for AI / Transcribe / ⋯
     # right), a pill tab bar, then one content frame per tab. The right-hand
     # buttons are packed first so a narrow pane clips the title, never them.
     style.configure("Meet.Accent.TButton", background=ACCENT, foreground="#1a0c0d",
-                    font=("Segoe UI", 9, "bold"), padding=7, borderwidth=0)
+                    font=theme.font("body_strong"), padding=px(7), borderwidth=0)
     style.map("Meet.Accent.TButton", background=[("active", PALETTE["accent_hi"]),
                                                   ("disabled", CARD)],
               foreground=[("disabled", MUTED)])
     detail_head = tk.Frame(right, bg=BG)
     detail_head.pack(fill="x")
     head_right = tk.Frame(detail_head, bg=BG)
-    head_right.pack(side="right", padx=(8, 0))
+    head_right.pack(side="right", padx=px((8, 0)))
     head_left = tk.Frame(detail_head, bg=BG)
     head_left.pack(side="left", fill="x", expand=True)
     session_title = tk.Label(
@@ -1070,7 +1076,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         bg=BG,
         fg=FG,
         anchor="w",
-        font=("Segoe UI", 11, "bold"),
+        font=theme.font("body_large_strong"),
     )
     session_title.pack(fill="x")
     session_meta = tk.Label(
@@ -1079,9 +1085,12 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         bg=BG,
         fg=MUTED,
         anchor="w",
-        font=("Segoe UI", 9),
+        justify="left",
+        font=theme.font("body"),
     )
-    session_meta.pack(fill="x", pady=(2, 8))
+    session_meta.pack(fill="x", pady=px((2, 8)))
+    head_left.bind("<Configure>", lambda e: session_meta.config(
+        wraplength=max(px(120), e.width - px(4))), add="+")
     # Header buttons. Transcribe is only packed while the selected meeting can
     # be transcribed; then it is the filled one and Copy for AI steps down.
     transcribe_btn = ttk.Button(head_right, text="Transcribe", state="disabled",
@@ -1090,25 +1099,25 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                              style="Meet.Accent.TButton")
     copy_ai_btn.pack(side="left")
     more_btn = ttk.Button(head_right, text="\u22ef", width=3)
-    more_btn.pack(side="left", padx=(7, 0))
+    more_btn.pack(side="left", padx=px((7, 0)))
 
     TAB_NAMES = (("summary", "Summary"), ("transcript", "Transcript"),
                  ("questions", "Questions"), ("stats", "Stats"))
     tab_bar = tk.Frame(right, bg=BG)
-    tab_bar.pack(fill="x", pady=(0, 8))
+    tab_bar.pack(fill="x", pady=px((0, 8)))
     tab_pills: dict = {}
     for _key, _label in TAB_NAMES:
         _cell = tk.Frame(tab_bar, bg=BG)
-        _cell.pack(side="left", padx=(0, 4))
+        _cell.pack(side="left", padx=px((0, 4)))
         _pill = tk.Button(
             _cell, text=_label, bg=BG, fg=MUTED, activebackground=ROW_HOVER,
             activeforeground=FG, relief="flat", borderwidth=0, cursor="hand2",
-            font=("Segoe UI", 9, "bold"), padx=12, pady=6, takefocus=True,
+            font=theme.font("body_strong"), padx=px(12), pady=px(6), takefocus=True,
             highlightthickness=1, highlightbackground=BG, highlightcolor=ACCENT,
             command=lambda k=_key: select_tab(k),
         )
         _pill.pack(fill="x")
-        _line = tk.Frame(_cell, bg=BG, height=2)
+        _line = tk.Frame(_cell, bg=BG, height=px(2))
         _line.pack(fill="x")
         tab_pills[_key] = (_pill, _line)
 
@@ -1121,10 +1130,12 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         fg=MUTED,
         anchor="w",
         justify="left",
-        wraplength=600,
-        font=("Segoe UI", 9),
+        wraplength=px(690),
+        font=theme.font("body"),
     )
-    status_label.pack(side="bottom", fill="x", pady=(8, 0))
+    status_label.pack(side="bottom", fill="x", pady=px((8, 0)))
+    right.bind("<Configure>", lambda e: status_label.config(
+        wraplength=max(px(200), e.width - px(4))), add="+")
     tab_content = tk.Frame(right, bg=BG)
     tab_content.pack(fill="both", expand=True)
     tab_frames = {key: tk.Frame(tab_content, bg=BG) for key, _l in TAB_NAMES}
@@ -1146,7 +1157,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         return holder, inner
 
     search_row = tk.Frame(tab_frames["transcript"], bg=BG)
-    search_row.pack(fill="x", pady=(0, 8))
+    search_row.pack(fill="x", pady=px((0, 8)))
     search_var = tk.StringVar()
     search_entry = ttk.Entry(search_row, textvariable=search_var)
     search_entry.pack(side="left", fill="x", expand=True)
@@ -1154,13 +1165,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     search_all_check = tk.Checkbutton(
         search_row, text="All meetings", variable=search_all_var,
         bg=BG, fg=MUTED, activebackground=BG, activeforeground=FG,
-        selectcolor=CARD, font=("Segoe UI", 9), takefocus=False,
+        selectcolor=CARD, font=theme.font("body"), takefocus=False,
     )
-    search_all_check.pack(side="left", padx=(8, 0))
+    search_all_check.pack(side="left", padx=px((8, 0)))
     prev_btn = ttk.Button(search_row, text="Prev", width=6, state="disabled")
-    prev_btn.pack(side="left", padx=(7, 0))
+    prev_btn.pack(side="left", padx=px((7, 0)))
     next_btn = ttk.Button(search_row, text="Next", width=6, state="disabled")
-    next_btn.pack(side="left", padx=(5, 0))
+    next_btn.pack(side="left", padx=px((5, 0)))
     match_label = tk.Label(
         search_row,
         text="0/0",
@@ -1170,7 +1181,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         anchor="e",
         font=("Consolas", 9),
     )
-    match_label.pack(side="left", padx=(7, 0))
+    match_label.pack(side="left", padx=px((7, 0)))
 
     summarise_controls = tk.Frame(tab_frames["summary"], bg=BG)
     tk.Label(
@@ -1178,7 +1189,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         text="Summarise",
         bg=BG,
         fg=FG,
-        font=("Segoe UI", 9, "bold"),
+        font=theme.font("body_strong"),
     ).pack(side="left")
     summary_mode_var = tk.StringVar(value="Bullets")
     summary_mode = ttk.Combobox(
@@ -1188,22 +1199,22 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         state="readonly",
         width=10,
     )
-    summary_mode.pack(side="left", padx=(8, 0))
+    summary_mode.pack(side="left", padx=px((8, 0)))
     summarise_btn = ttk.Button(
         summarise_controls,
         text="Summarise",
         state="disabled",
     )
-    summarise_btn.pack(side="left", padx=(7, 0))
+    summarise_btn.pack(side="left", padx=px((7, 0)))
 
     # A recording with no transcript has nothing to show and no obvious next
     # step — the Transcribe control was one small grey button among six at the
     # bottom edge. This banner puts the next action where the eye already is.
     needs_transcribe = tk.Frame(tab_frames["transcript"], bg=CARD)
-    _nt_inner = tk.Frame(needs_transcribe, bg=CARD, padx=14, pady=12)
+    _nt_inner = tk.Frame(needs_transcribe, bg=CARD, padx=px(14), pady=px(12))
     _nt_inner.pack(fill="x")
     tk.Label(_nt_inner, text="This recording has not been transcribed yet",
-             bg=CARD, fg=FG, font=("Segoe UI", 10, "bold"),
+             bg=CARD, fg=FG, font=theme.font("body_strong"),
              anchor="w").pack(side="left")
     transcribe_cta = ttk.Button(_nt_inner, text="Transcribe now",
                                 style="Go.TButton")
@@ -1215,38 +1226,38 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     bleed_label = tk.Label(
         bleed_banner,
         text="", bg=CARD, fg=WARN, anchor="w", justify="left",
-        wraplength=760, padx=14, pady=10,
+        wraplength=px(874), padx=px(14), pady=px(10),
     )
     bleed_label.pack(fill="x")
 
     stats_holder, stats_inner = scrolled(tab_frames["stats"])
     stats_holder.pack(fill="both", expand=True)
     stats_empty = tk.Label(tab_frames["stats"], text="", bg=BG, fg=MUTED, anchor="w",
-                           justify="left", font=("Segoe UI", 10), pady=8)
+                           justify="left", font=theme.font("body"), pady=px(8))
     # Two zero-height anchors keep stats above highlights however they are
     # packed: each panel goes "before" its anchor, and an anchor is always packed.
-    stats_anchor = tk.Frame(stats_inner, bg=CARD, height=1)
+    stats_anchor = tk.Frame(stats_inner, bg=CARD, height=px(1))
     stats_anchor.pack(fill="x")
-    highlights_anchor = tk.Frame(stats_inner, bg=CARD, height=1)
+    highlights_anchor = tk.Frame(stats_inner, bg=CARD, height=px(1))
     highlights_anchor.pack(fill="x")
     highlights_panel = tk.Frame(stats_inner, bg=CARD)
     highlights_title = tk.Label(highlights_panel, text="Highlights", bg=CARD, fg=ACCENT,
-                                font=("Segoe UI", 9, "bold"), anchor="w")
-    highlights_title.pack(fill="x", padx=10, pady=(7, 2))
+                                font=theme.font("body_strong"), anchor="w")
+    highlights_title.pack(fill="x", padx=px(10), pady=px((7, 2)))
     highlights_body = tk.Frame(highlights_panel, bg=CARD)
-    highlights_body.pack(fill="x", padx=10, pady=(0, 7))
+    highlights_body.pack(fill="x", padx=px(10), pady=px((0, 7)))
 
     # Who-spoke figures. Computed from the transcript already on disk — no LLM,
     # no key, no cost — so it works for offline users exactly as for everyone
     # else, and appears whether or not a summary has been generated.
     stats_panel = tk.Frame(stats_inner, bg=CARD)
     stats_text = tk.Label(stats_panel, text="", bg=CARD, fg=FG, anchor="w",
-                          justify="left", padx=14, pady=10,
+                          justify="left", padx=px(14), pady=px(10),
                           font=("Consolas", 9))
     stats_text.pack(fill="x")
 
     summary_empty = tk.Label(tab_frames["summary"], text="", bg=BG, fg=MUTED, anchor="w",
-                             justify="left", font=("Segoe UI", 10), pady=8)
+                             justify="left", font=theme.font("body"), pady=px(8))
     summary_panel = tk.Frame(tab_frames["summary"], bg=CARD)
     summary_head = tk.Frame(summary_panel, bg=CARD)
     summary_head.pack(fill="x")
@@ -1261,13 +1272,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         relief="flat",
         borderwidth=0,
         cursor="hand2",
-        font=("Segoe UI", 9, "bold"),
-        padx=10,
-        pady=7,
+        font=theme.font("body_strong"),
+        padx=px(10),
+        pady=px(7),
     )
     # Not packed: the Summary tab is the summary; a collapse toggle inside it did nothing useful.
     summary_copy_btn = ttk.Button(summary_head, text="Copy", state="disabled")
-    summary_copy_btn.pack(side="right", padx=(0, 7), pady=(5, 5))
+    summary_copy_btn.pack(side="right", padx=px((0, 7)), pady=px((5, 5)))
     summary_body = tk.Frame(summary_panel, bg=CARD)
     summary_body.pack(fill="both", expand=True)
     summary_text = tk.Text(
@@ -1280,10 +1291,10 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         borderwidth=0,
         highlightthickness=0,
         wrap="word",
-        font=("Segoe UI", 9),
+        font=theme.font("body"),
         height=4,
-        padx=12,
-        pady=8,
+        padx=px(12),
+        pady=px(8),
         state="disabled",
     )
     summary_bar = ttk.Scrollbar(
@@ -1301,7 +1312,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     # the Questions tab, always expanded.
     answers_panel, answers_body = scrolled(tab_frames["questions"])
     questions_empty = tk.Label(tab_frames["questions"], text="", bg=BG, fg=MUTED,
-                               anchor="w", justify="left", font=("Segoe UI", 10), pady=8)
+                               anchor="w", justify="left", font=theme.font("body"), pady=px(8))
 
     def expand_answers() -> None:
         """Bring the user to the Questions tab (they have something to see or do)."""
@@ -1309,21 +1320,21 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
 
     answers_notes = tk.Text(answers_body, bg=CARD, fg=FG, height=3, wrap="word",
                             relief="flat", highlightthickness=1,
-                            highlightbackground=MUTED, font=("Segoe UI", 9))
-    answers_notes.pack(fill="x", padx=10)
+                            highlightbackground=MUTED, font=theme.font("body"))
+    answers_notes.pack(fill="x", padx=px(10))
     tk.Label(answers_body, text="Call notes (optional): paste this meeting's brief.",
-             bg=CARD, fg=MUTED, anchor="w", font=("Segoe UI", 8),
-             padx=10).pack(fill="x")
+             bg=CARD, fg=MUTED, anchor="w", font=theme.font("caption"),
+             padx=px(10)).pack(fill="x")
     answers_bar = tk.Frame(answers_body, bg=CARD)
-    answers_bar.pack(fill="x", padx=10, pady=(4, 4))
+    answers_bar.pack(fill="x", padx=px(10), pady=px((4, 4)))
     answers_btn = ttk.Button(answers_bar, text="Answer from my docs")
     answers_btn.pack(side="left")
     answers_status = tk.Label(answers_bar, text="", bg=CARD, fg=MUTED, anchor="w",
-                              justify="left", wraplength=480, font=("Segoe UI", 8))
-    answers_status.pack(side="left", padx=(8, 0))
+                              justify="left", wraplength=px(552), font=theme.font("caption"))
+    answers_status.pack(side="left", padx=px((8, 0)))
     pick_docs_btn = ttk.Button(answers_body, text="Choose docs folder\u2026")
     answers_list = tk.Frame(answers_body, bg=CARD)
-    answers_list.pack(fill="x", padx=10, pady=(0, 8))
+    answers_list.pack(fill="x", padx=px(10), pady=px((0, 8)))
 
     transcript_wrap = tk.Frame(tab_frames["transcript"], bg=CARD)
     transcript_wrap.pack(fill="both", expand=True)
@@ -1338,9 +1349,9 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         borderwidth=0,
         highlightthickness=0,
         wrap="word",
-        font=("Segoe UI", 10),
-        padx=12,
-        pady=10,
+        font=theme.font("body"),
+        padx=px(12),
+        pady=px(10),
         state="disabled",
     )
     transcript_bar = ttk.Scrollbar(
@@ -1351,23 +1362,23 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     transcript.pack(side="left", fill="both", expand=True)
     wheel(transcript)
     transcript.tag_configure("speaker_you", foreground=ACCENT,
-                             font=("Segoe UI", 10, "bold"), spacing1=8)
+                             font=theme.font("body_strong"), spacing1=8)
     for index, colour in enumerate(SPEAKER_COLOURS):
         transcript.tag_configure(
             f"speaker_{index}",
             foreground=colour,
-            font=("Segoe UI", 10, "bold"),
+            font=theme.font("body_strong"),
             spacing1=8,
         )
     transcript.tag_configure(
-        "timestamp", foreground=MUTED, font=("Segoe UI", 8)
+        "timestamp", foreground=MUTED, font=theme.font("caption")
     )
     transcript.tag_configure(
-        "body", foreground=FG, font=("Segoe UI", 10),
+        "body", foreground=FG, font=theme.font("body"),
         spacing1=4, spacing2=2, spacing3=8,
     )
     transcript.tag_configure(
-        "placeholder", foreground=MUTED, font=("Segoe UI", 10),
+        "placeholder", foreground=MUTED, font=theme.font("body"),
         spacing1=4, spacing2=2, spacing3=8,
     )
     transcript.tag_configure(
@@ -1377,14 +1388,14 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         "search_current", background=SEARCH_CURRENT, foreground=BG
     )
     summary_text.tag_configure(
-        "heading", foreground=ACCENT, font=("Segoe UI", 9, "bold"), spacing1=5
+        "heading", foreground=ACCENT, font=theme.font("body_strong"), spacing1=5
     )
     summary_text.tag_configure("bullet", foreground=ACCENT, lmargin1=14, lmargin2=14)
     summary_text.tag_configure("checkbox", foreground=ACCENT, lmargin1=14, lmargin2=14)
     summary_text.tag_configure("bullet_text", foreground=FG, lmargin1=14, lmargin2=30)
     summary_text.tag_configure("body", foreground=FG)
-    summary_text.tag_configure("bold", foreground=FG, font=("Segoe UI", 9, "bold"))
-    summary_text.tag_configure("italic", foreground=FG, font=("Segoe UI", 9, "italic"))
+    summary_text.tag_configure("bold", foreground=FG, font=theme.font("body_strong"))
+    summary_text.tag_configure("italic", foreground=FG, font=theme.font("body", italic=True))
 
     # The old bottom row is no longer packed. Its buttons stay as (unpacked)
     # objects so their .config(state=...) calls keep working; their commands are
@@ -1423,17 +1434,17 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         dialog = tk.Toplevel(root)
         dialog.overrideredirect(True)
         dialog.configure(bg=PALETTE["border"])
-        panel = tk.Frame(dialog, bg=CARD, padx=9, pady=7)
-        panel.pack(fill="both", expand=True, padx=1, pady=1)
+        panel = tk.Frame(dialog, bg=CARD, padx=px(9), pady=px(7))
+        panel.pack(fill="both", expand=True, padx=px(1), pady=px(1))
         tk.Label(
             panel, text=raw_speaker, bg=CARD, fg=speaker_colour or ACCENT,
-            font=("Segoe UI", 9, "bold"),
-        ).pack(side="left", padx=(0, 6))
+            font=theme.font("body_strong"),
+        ).pack(side="left", padx=px((0, 6)))
         entry = ttk.Entry(panel, width=22)
         entry.insert(0, state["speaker_map"].get(raw_speaker, ""))
         play_btn = ttk.Button(panel, text="▶", width=2, state="disabled", takefocus=False)
         play_btn.pack(side="left")
-        entry.pack(side="left", padx=(0, 6))
+        entry.pack(side="left", padx=px((0, 6)))
         if sys.platform != "win32":
             tooltip(play_btn, "Audio preview is only available on Windows.")
         save_btn = ttk.Button(panel, text="Save", style="Accent.TButton", takefocus=False)
@@ -1720,9 +1731,9 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         if not has_summary:
             summary_empty.config(text="No summary yet. Pick a style and press Summarise.")
             summary_empty.pack(fill="x")
-        summarise_controls.pack(fill="x", pady=(0, 8))
+        summarise_controls.pack(fill="x", pady=px((0, 8)))
         if has_summary:
-            summary_panel.pack(fill="both", expand=True, pady=(0, 8))
+            summary_panel.pack(fill="both", expand=True, pady=px((0, 8)))
 
     def display_highlights(bookmarks, segments):
         for child in highlights_body.winfo_children():
@@ -1739,13 +1750,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             label = f"{stamp} — {preview}" if preview else stamp
             button = tk.Label(highlights_body, text=label, bg=CARD, fg=FG,
                               activeforeground=ACCENT, cursor="hand2", anchor="w",
-                              justify="left", wraplength=560, padx=5, pady=4)
+                              justify="left", wraplength=px(644), padx=px(5), pady=px(4))
             button.pack(fill="x")
             if text:
                 button.bind("<Button-1>",
                             lambda _event, needle=item.get("first_text") or text:
                             _see_transcript(needle))
-        highlights_panel.pack(fill="x", pady=(0, 8), before=highlights_anchor)
+        highlights_panel.pack(fill="x", pady=px((0, 8)), before=highlights_anchor)
         sync_stats_empty()
 
     def sync_stats_empty() -> None:
@@ -1814,7 +1825,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                     transcript.tag_configure(
                         click_tag,
                         foreground=transcript.tag_cget(speaker_tag, "foreground"),
-                        font=("Segoe UI", 10, "bold"),
+                        font=theme.font("body_strong"),
                         spacing1=8,
                         # NO cursor= : a Text TAG has no -cursor option (only the
                         # widget does). Passing it raises TclError: unknown option
@@ -1940,16 +1951,16 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         dialog = tk.Toplevel(root)
         dialog.overrideredirect(True)
         dialog.configure(bg=PALETTE["border"])
-        panel = tk.Frame(dialog, bg=CARD, padx=9, pady=7)
-        panel.pack(fill="both", expand=True, padx=1, pady=1)
-        tk.Label(panel, text=original, bg=CARD, fg=ACCENT).pack(side="left", padx=(0, 6))
+        panel = tk.Frame(dialog, bg=CARD, padx=px(9), pady=px(7))
+        panel.pack(fill="both", expand=True, padx=px(1), pady=px(1))
+        tk.Label(panel, text=original, bg=CARD, fg=ACCENT).pack(side="left", padx=px((0, 6)))
         entry = ttk.Entry(panel, width=max(18, min(36, len(original) + 8)))
         entry.insert(0, original)
-        entry.pack(side="left", padx=(0, 7))
+        entry.pack(side="left", padx=px((0, 7)))
         future_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             panel, text="Also fix this in future dictation", variable=future_var
-        ).pack(side="left", padx=(0, 7))
+        ).pack(side="left", padx=px((0, 7)))
         save_btn = ttk.Button(panel, text="Save", style="Accent.TButton")
         save_btn.pack(side="left")
         closed = {"value": False}
@@ -2216,7 +2227,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         # Header buttons: Transcribe only while it applies, and then it is the
         # filled one; otherwise Copy for AI is.
         if session["can_transcribe"]:
-            transcribe_btn.pack(side="left", padx=(0, 7), before=copy_ai_btn)
+            transcribe_btn.pack(side="left", padx=px((0, 7)), before=copy_ai_btn)
             copy_ai_btn.config(style="TButton")
         else:
             transcribe_btn.pack_forget()
@@ -2228,14 +2239,14 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             # settings window on open for anyone with a recording still waiting
             # to be transcribed. transcript_wrap is always packed, and packing
             # these in sequence before it keeps the order.
-            needs_transcribe.pack(fill="x", pady=(0, 8), before=transcript_wrap)
+            needs_transcribe.pack(fill="x", pady=px((0, 8)), before=transcript_wrap)
         else:
             needs_transcribe.pack_forget()
 
         who_spoke = render_stats(raw_segments, state["speaker_map"]) if raw_segments else ""
         if who_spoke:
             stats_text.config(text=who_spoke)
-            stats_panel.pack(fill="x", pady=(0, 8), before=stats_anchor)
+            stats_panel.pack(fill="x", pady=px((0, 8)), before=stats_anchor)
         else:
             stats_panel.pack_forget()
         state["has_transcript"] = bool(body_text)
@@ -2248,7 +2259,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                      "appear twice, once from each side. Nothing has been removed. "
                      "Wearing headphones prevents it on the next recording."
             )
-            bleed_banner.pack(fill="x", pady=(0, 8), before=transcript_wrap)
+            bleed_banner.pack(fill="x", pady=px((0, 8)), before=transcript_wrap)
         else:
             bleed_banner.pack_forget()
         copy_btn.config(state="normal" if body_text else "disabled")
@@ -2364,7 +2375,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         threading.Thread(target=work, name="meeting-video-send", daemon=False).start()
 
     def add_session_row(session: dict, index: int) -> None:
-        row = tk.Frame(session_rows, bg=CARD, padx=12, pady=10, cursor="hand2")
+        row = tk.Frame(session_rows, bg=CARD, padx=px(12), pady=px(10), cursor="hand2")
         row.pack(fill="x")
         top = tk.Frame(row, bg=CARD)
         top.pack(fill="x")
@@ -2378,20 +2389,20 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             top, text="●", bg=CARD, fg=dot_colour,
             font=("Segoe UI Symbol", 9), cursor="hand2",
         )
-        dot.pack(side="left", padx=(0, 7))
+        dot.pack(side="left", padx=px((0, 7)))
         tooltip(dot, session["status"].capitalize())
         name = session.get("title") or ""
         shown_title = (name[:36].rstrip() + "…") if len(name) > 36 else name
         title = tk.Label(
             top, text=shown_title or session["display_started"], bg=CARD, fg=FG,
-            font=("Segoe UI", 10, "bold"), anchor="w", cursor="hand2",
+            font=theme.font("body_strong"), anchor="w", cursor="hand2",
         )
         title.pack(side="left", fill="x", expand=True)
         if len(name) > 36:
             tooltip(title, name)
         duration = tk.Label(
             top, text=session["duration"], bg=CARD, fg=FG,
-            font=("Segoe UI", 9, "bold"), anchor="e", cursor="hand2",
+            font=theme.font("body_strong"), anchor="e", cursor="hand2",
         )
         duration.pack(side="right")
 
@@ -2419,21 +2430,21 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             count, snippet = hit
             hit_count = tk.Label(
                 row, text=f"{count} match{'' if count == 1 else 'es'}", bg=CARD,
-                fg=GOOD, anchor="w", font=("Segoe UI", 8, "bold"),
+                fg=GOOD, anchor="w", font=theme.font("body_strong"),
             )
-            hit_count.pack(fill="x", pady=(3, 0))
+            hit_count.pack(fill="x", pady=px((3, 0)))
             hit_text = tk.Label(
                 row, text=snippet, bg=CARD, fg=FG, anchor="w", justify="left",
-                wraplength=340, font=("Segoe UI", 8),
+                wraplength=px(391), font=theme.font("caption"),
             )
             hit_text.pack(fill="x")
             hit_labels = (hit_count, hit_text)
 
         secondary = tk.Label(
             row, text=" · ".join(secondary_bits), bg=CARD, fg=MUTED,
-            font=("Segoe UI", 8), anchor="w", cursor="hand2",
+            font=theme.font("caption"), anchor="w", cursor="hand2",
         )
-        secondary.pack(fill="x", padx=(19, 0), pady=(3, 0))
+        secondary.pack(fill="x", padx=px((19, 0)), pady=px((3, 0)))
 
         widgets = (row, top, dot, title, duration, secondary, *hit_labels)
         row_info = {
@@ -2469,7 +2480,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             widget.bind("<Enter>", enter, add="+")
             widget.bind("<Leave>", leave, add="+")
 
-        tk.Frame(session_rows, bg=DIV, height=1).pack(fill="x", padx=12)
+        tk.Frame(session_rows, bg=DIV, height=px(1)).pack(fill="x", padx=px(12))
 
     def refresh(
         preferred: Path | None = None,
@@ -2522,7 +2533,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             state["visible_sessions"] = None
             tk.Label(
                 session_rows, text="No meetings recorded yet.", bg=CARD, fg=MUTED,
-                font=("Segoe UI", 9), padx=14, pady=20,
+                font=theme.font("body"), padx=px(14), pady=px(20),
             ).pack(anchor="w")
             session_title.config(text="No meetings yet")
             session_meta.config(text="")
@@ -2832,27 +2843,27 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             head, detail = knowledge.describe_item(item)
             dim = item.get("status") != "answered"
             box = tk.Frame(answers_list, bg=CARD)
-            box.pack(fill="x", pady=3)
+            box.pack(fill="x", pady=px(3))
             tk.Label(box, text=f"{format_bookmark_time(item.get('t') or 0)}  {item.get('question', '')}",
-                     bg=CARD, fg=MUTED, anchor="w", justify="left", wraplength=520,
-                     font=("Segoe UI", 8)).pack(fill="x")
+                     bg=CARD, fg=MUTED, anchor="w", justify="left", wraplength=px(598),
+                     font=theme.font("caption")).pack(fill="x")
             row_ = tk.Frame(box, bg=CARD)
             row_.pack(fill="x")
             text_col = tk.Frame(row_, bg=CARD)
             text_col.pack(side="left", fill="x", expand=True)
             tk.Label(text_col, text=head, bg=CARD, fg=MUTED if dim else FG, anchor="w",
-                     justify="left", wraplength=470,
-                     font=("Segoe UI", 9, "bold")).pack(fill="x")
+                     justify="left", wraplength=px(540),
+                     font=theme.font("body_strong")).pack(fill="x")
             if detail:
                 tk.Label(text_col, text=detail, bg=CARD, fg=MUTED, anchor="w",
-                         justify="left", wraplength=470, font=("Segoe UI", 8)).pack(fill="x")
+                         justify="left", wraplength=px(540), font=theme.font("caption")).pack(fill="x")
             for mark, vote in (("\U0001F44D", "up"), ("\U0001F44E", "down")):
                 def click(i=index, v=vote, cur=item.get("vote")):
                     knowledge.set_vote(path, i, None if cur == v else v)
                     render_answers(path)
                 tk.Button(row_, text=mark, command=click, relief="flat", borderwidth=0,
                           bg=ACCENT if item.get("vote") == vote else CARD, fg=FG,
-                          cursor="hand2").pack(side="right", padx=2)
+                          cursor="hand2").pack(side="right", padx=px(2))
 
     def need_docs(reveal: bool = True) -> None:
         """No docs, page or notes yet: say so and offer the folder picker.
@@ -2865,7 +2876,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         if not pick_docs_btn.winfo_ismapped():
             # Its own row: beside the status text the pair overflows a narrow
             # pane and the status gets clipped away entirely.
-            pick_docs_btn.pack(anchor="w", padx=10, pady=(0, 4), before=answers_list)
+            pick_docs_btn.pack(anchor="w", padx=px(10), pady=px((0, 4)), before=answers_list)
 
     def pick_docs() -> None:
         chosen = filedialog.askdirectory(title="Choose your docs folder")
@@ -3477,9 +3488,11 @@ def main() -> None:
     from . import winui
 
     root = tk.Tk()
+
+    theme.init(root)
     root.title("Pipevoice meetings")
     root.configure(bg=BG)
-    root.minsize(780, 440)
+    root.minsize(px(897), px(440))
     ico = config.asset_path("wisprlite.ico")
     if ico:
         try:
@@ -3488,14 +3501,14 @@ def main() -> None:
             pass
     winui.apply_theme(root)
 
-    closebar = tk.Frame(root, bg=BG, padx=18, pady=12)
+    closebar = tk.Frame(root, bg=BG, padx=px(18), pady=px(12))
     closebar.pack(side="bottom", fill="x")
     ttk.Button(closebar, text="Close", command=root.destroy).pack(side="right")
     build(root, root)
 
     root.update_idletasks()
-    width = max(900, root.winfo_reqwidth())
-    height = min(680, max(520, root.winfo_reqheight()))
+    width = max(px(1035), root.winfo_reqwidth())
+    height = min(px(680), max(px(520), root.winfo_reqheight()))
     screen_w, screen_h = root.winfo_screenwidth(), root.winfo_screenheight()
     root.geometry(
         f"{width}x{height}+{(screen_w - width) // 2}+"
