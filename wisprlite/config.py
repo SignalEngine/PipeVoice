@@ -185,6 +185,7 @@ class Config:
     deepgram_finish_timeout: float = 6.0  # seconds to wait for Deepgram's final words
     paste_speed: str = "normal"       # fast | normal | slow — clipboard-paste timing
     last_version: str = ""            # app version last run, to detect a fresh update
+    meeting_hotkey_migrated: bool = False  # one-time Teams-clash move (ctrl+shift+m -> ctrl+alt+m)
     paste_default_migrated: bool = False  # one-time type -> paste move for existing installs
     launches: int = 0                 # count of app starts (for the one-time star nudge)
     star_prompt_shown: bool = False   # one-time "star us on GitHub" nudge already shown
@@ -251,6 +252,7 @@ class Config:
             # 1,760 of them are most of the users. Seed once here too.
             changed = cfg.apply_starter_vocab()
             changed = cfg.migrate_paste_default() or changed
+            changed = cfg.migrate_meeting_hotkey() or changed
             if cfg.output_mode == "type":   # typing is gone; every load, not once
                 cfg.output_mode = "paste"
                 changed = True
@@ -266,6 +268,7 @@ class Config:
             cfg.openai_model = os.getenv("WISPRLITE_MODEL", cfg.openai_model)
             cfg.apply_starter_vocab()
             cfg.paste_default_migrated = True   # born on paste; nothing to migrate
+            cfg.meeting_hotkey_migrated = True
             cfg.save()   # marker included, so it never runs twice
         return cfg
 
@@ -282,6 +285,21 @@ class Config:
         self.paste_default_migrated = True
         if self.output_mode == "type":
             self.output_mode = "paste"
+        return True
+
+    def migrate_meeting_hotkey(self) -> bool:
+        """Move Ctrl+Shift+M (Teams' mute toggle) to Ctrl+Alt+M, ONCE."""
+        if self.meeting_hotkey_migrated:
+            return False
+        self.meeting_hotkey_migrated = True
+        keys = lambda k: frozenset(p for p in str(k or "").lower().replace(" ", "").split("+") if p)
+        others = [getattr(self, f) for f in vars(self) if f.endswith("hotkey") and f != "meeting_hotkey"]
+        others += [v.get("hotkey") for v in (self.voice_hotkeys or []) if isinstance(v, dict)]
+        target = keys("ctrl+alt+m")
+        # Never move onto keys another hotkey fires on (same keys, or a subset like ctrl+alt).
+        clash = any(k and k <= target for k in map(keys, others))
+        if keys(self.meeting_hotkey) == keys("ctrl+shift+m") and not clash:
+            self.meeting_hotkey = "ctrl+alt+m"
         return True
 
     def apply_starter_vocab(self) -> bool:

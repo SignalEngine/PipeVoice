@@ -1012,3 +1012,55 @@ def test_a_quiet_meeting_wav_is_normalised_when_the_recording_stops():
                 f"{stream}.wav left at {loudness.peak_dbfs(samples):.1f} dBFS — "
                 "stop() is not normalising"
             )
+
+
+# ---- silent mic alarm -------------------------------------------------------
+
+def _feed(recorder, label, level, seconds):
+    """Feed `seconds` of constant-level audio in 50 ms blocks, like the real callback."""
+    block = np.full(meeting.MIC_BLOCKSIZE, level, dtype=np.float32)
+    for _ in range(int(seconds / 0.05)):
+        recorder._write_block(label, block)
+
+
+def _interleave(recorder, mic, desktop, seconds):
+    block_m = np.full(meeting.MIC_BLOCKSIZE, mic, dtype=np.float32)
+    block_d = np.full(meeting.MIC_BLOCKSIZE, desktop, dtype=np.float32)
+    for _ in range(int(seconds / 0.05)):
+        recorder._write_block("mic", block_m)
+        recorder._write_block("desktop", block_d)
+
+
+def test_dead_mic_with_remote_speech_is_flagged_after_20s(caplog):
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        _interleave(recorder, 0.0003, 0.05, 10)
+        assert recorder.mic_silent_suspected is False
+        _interleave(recorder, 0.0003, 0.05, 12)
+        with caplog.at_level("WARNING", logger="wisprlite.meeting"):
+            assert recorder.mic_silent_suspected is True
+            assert recorder.mic_silent_suspected is True
+        assert sum("mic silent" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_live_mic_is_not_flagged():
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        _interleave(recorder, 0.02, 0.05, 30)
+        assert recorder.mic_silent_suspected is False
+
+
+def test_silent_desktop_does_not_flag_a_quiet_mic():
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        _interleave(recorder, 0.0003, 0.0003, 30)
+        assert recorder.mic_silent_suspected is False
+
+
+def test_a_loud_mic_block_resets_the_silent_clock():
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        _interleave(recorder, 0.0003, 0.05, 15)
+        _feed(recorder, "mic", 0.02, 0.05)
+        _interleave(recorder, 0.0003, 0.05, 15)
+        assert recorder.mic_silent_suspected is False

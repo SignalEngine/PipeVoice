@@ -855,6 +855,7 @@ class App:
             "levels": self._meeting.levels,
             "errors": self._meeting.fatal_errors,
             "bleed": self._meeting.bleed_suspected,
+            "mic_silent": self._meeting.mic_silent_suspected,
         }
 
     # ---- screen recording ------------------------------------------------

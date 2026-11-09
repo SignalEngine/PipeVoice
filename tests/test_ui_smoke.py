@@ -447,7 +447,7 @@ def test_export_button_invokes_export_callback_writes_file():
                                 text = str(child.cget("text"))
                             except (tk.TclError, AttributeError):
                                 text = ""
-                            if cls == "TButton" and text == "Export":
+                            if cls == "TButton" and text == "Export all":
                                 export_buttons.append(child)
                             walk(child)
 
@@ -2049,3 +2049,18 @@ def test_about_tab_shows_what_it_does_and_the_release_notes():
         assert any("Who spoke shows names" in t for t in texts)
     finally:
         root.destroy()
+
+
+def test_old_teams_clashing_meeting_hotkey_migrates_once(tmp_path, monkeypatch):
+    import json
+    from wisprlite import config
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"meeting_hotkey": "ctrl+shift+M", "paste_default_migrated": True,
+                                "starter_vocab_seeded": True}))
+    monkeypatch.setattr(config, "CONFIG_PATH", path)
+    assert config.Config.load().meeting_hotkey == "ctrl+alt+m"
+    assert json.loads(path.read_text())["meeting_hotkey"] == "ctrl+alt+m"
+    cfg = config.Config.load()
+    cfg.meeting_hotkey = "ctrl+shift+m"       # user picks it again on purpose
+    cfg.save()
+    assert config.Config.load().meeting_hotkey == "ctrl+shift+m"
