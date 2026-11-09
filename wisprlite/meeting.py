@@ -338,6 +338,7 @@ BLEED_LIVE_MIN_SAMPLES = 120   # ~6s of remote speech before judging
 MIC_SILENT_LEVEL = 0.002       # mic RMS below this is a dead/muted mic (a real voice is ~0.01-0.03)
 MIC_ALIVE_PEAK = 0.004         # any mic sample this loud (breath, keys, room) proves the mic is live;
                                # James's muted mic peaked at 0.0015 across a whole 31 min call
+MIC_ALARM_DESKTOP_LEVEL = 0.01  # remote audio this loud counts as "they are talking"
 MIC_SILENT_SECONDS = 20.0      # of remote speech with that dead mic before warning
 BLEED_LIVE_RATIO = 0.75        # mic loud this often DURING remote speech = speakers
 
@@ -1306,7 +1307,7 @@ class MeetingRecorder:
                 peak = float(np.max(np.abs(data))) if data.size else 0.0
                 if label == "mic" and peak >= MIC_ALIVE_PEAK:
                     self._mic_silent_s = 0.0
-                elif label == "desktop" and rms >= BLEED_LIVE_LEVEL:
+                elif label == "desktop" and rms >= MIC_ALARM_DESKTOP_LEVEL:
                     self._mic_silent_s += data.size / SAMPLE_RATE
                 self._peaks[label] = max(self._peaks[label], peak)
             pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()

@@ -30,3 +30,10 @@ def test_no_move_onto_a_combo_already_in_use(tmp_path, monkeypatch):
 def test_other_hotkeys_untouched(tmp_path, monkeypatch):
     cfg, _ = _load(tmp_path, monkeypatch, {"meeting_hotkey": "f9"})
     assert cfg.meeting_hotkey == "f9"
+
+
+def test_no_move_when_keys_overlap_in_another_order_or_subset(tmp_path, monkeypatch):
+    for other in ("alt+ctrl+m", "ctrl+alt"):
+        cfg, _ = _load(tmp_path, monkeypatch,
+                       {"meeting_hotkey": "ctrl+shift+m", "screenrec_hotkey": other})
+        assert cfg.meeting_hotkey == "ctrl+shift+m", other
