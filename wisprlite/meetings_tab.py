@@ -144,10 +144,14 @@ def meeting_video_file(session_dir: str | Path) -> tuple[Path | None, str]:
     """(file to send, why-not). meeting.mp4, else the video-only clip a failed mux
     left behind; with neither, the reason the Send video button is disabled."""
     folder = Path(session_dir)
-    for name in ("meeting.mp4", "screen-video.mp4"):
-        if (folder / name).is_file():
-            return folder / name, ""
     video = _read_json(folder / "meta.json").get("video")
+    if (folder / "meeting.mp4").is_file():
+        return folder / "meeting.mp4", ""
+    # The video-only clip only once a mux has FAILED on it: during the meeting
+    # or the mux it is still being written, and an upload would be truncated.
+    leftover = video.get("video_only") if isinstance(video, dict) else None
+    if leftover and (folder / leftover).is_file():
+        return folder / leftover, ""
     error = video.get("error") if isinstance(video, dict) else None
     return None, f"Video failed: {error}" if error else "No video for this meeting"
 

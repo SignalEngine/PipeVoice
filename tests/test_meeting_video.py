@@ -321,6 +321,11 @@ def test_send_video_target_and_the_reason_when_there_is_none(tmp_path):
     (tmp_path / "meta.json").write_text(json.dumps({"video": {"file": None, "error": "boom"}}))
     assert meeting_video_file(tmp_path) == (None, "Video failed: boom")
     (tmp_path / "screen-video.mp4").write_bytes(b"x")
+    # Still being written (meeting or mux in progress): never offered for upload.
+    assert meeting_video_file(tmp_path)[0] is None
+    # Only after a FAILED mux names it as the leftover picture.
+    (tmp_path / "meta.json").write_text(json.dumps(
+        {"video": {"file": None, "error": "boom", "video_only": "screen-video.mp4"}}))
     assert meeting_video_file(tmp_path)[0] == tmp_path / "screen-video.mp4"
     (tmp_path / "meeting.mp4").write_bytes(b"x")
     assert meeting_video_file(tmp_path)[0] == tmp_path / "meeting.mp4"
@@ -339,3 +344,28 @@ def test_the_pill_state_carries_the_video_status_for_the_screen_marker():
     assert app._meeting_overlay_state()["video"] == "failed"
     rec._video, rec._video_error = None, "boom"        # never started
     assert app._meeting_overlay_state()["video"] == "failed"
+
+
+def test_the_send_decision_is_taken_when_the_meeting_starts():
+    """Changing settings while the video muxes must not redirect or enable the upload."""
+    with tempfile.TemporaryDirectory() as tmp:
+        clip = _clip(tmp)
+        calls = []
+        with patch.object(screenrec, "send", lambda p, d, **_: (calls.append(d), (True, "ok"))[1]):
+            app, said = _app(meeting_video_send=True, screenrec_destination="new@h:/x/")
+            app._meeting_video_plan = (False, "")     # what was set at meeting start
+            _ready(app, clip)
+            assert calls == []
+            app._meeting_video_plan = (True, "old@h:/in/")
+            _ready(app, clip)
+            assert calls == ["old@h:/in/"]
+
+
+def test_a_finished_mux_writes_to_its_own_meeting_not_the_next_one(tmp_path):
+    rec = MeetingRecorder(tmp_path)
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(); b.mkdir()
+    rec.session_dir = b                               # meeting B already started
+    rec._set_video_meta({"file": "meeting.mp4", "error": None}, a)
+    assert json.loads((a / "meta.json").read_text())["video"]["file"] == "meeting.mp4"
+    assert not (b / "meta.json").exists()

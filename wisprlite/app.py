@@ -1426,6 +1426,10 @@ class App:
         self._meeting_errors_reported.clear()
         self._start_pipefocus()
         try:
+            # Decided when the meeting STARTS: a settings change while the video
+            # is still muxing must never send it somewhere the user did not pick.
+            self._meeting_video_plan = (bool(self.cfg.meeting_video_send),
+                                        (self.cfg.screenrec_destination or "").strip())
             self._meeting.start()
         except Exception as exc:
             # Focus was started first, so it must be released here or it keeps a
@@ -1650,8 +1654,9 @@ class App:
             size_mb = path.stat().st_size / 1e6
         except OSError:
             size_mb = 0.0
-        destination = (self.cfg.screenrec_destination or "").strip()
-        if not self.cfg.meeting_video_send:
+        send_on, destination = getattr(self, "_meeting_video_plan", None) or (
+            bool(self.cfg.meeting_video_send), (self.cfg.screenrec_destination or "").strip())
+        if not send_on:
             log.info("meeting video: %.1f MB, sent=False", size_mb)
             with self._video_msg_lock:
                 self._video_say("done", "\u2713 Meeting video ready")

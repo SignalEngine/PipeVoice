@@ -1097,12 +1097,14 @@ class MeetingRecorder:
             log.warning("meeting video failed to start: %s", self._video_error)
             self._set_video_meta({"file": None, "error": self._video_error})
 
-    def _set_video_meta(self, info: dict) -> None:
-        if self.session_dir is None:
+    def _set_video_meta(self, info: dict, session_dir: Path | None = None) -> None:
+        # The mux finishes after stop(); a NEW meeting may own self.session_dir by then.
+        folder = session_dir or self.session_dir
+        if folder is None:
             return
         try:
             with self._meta_lock:
-                path = self.session_dir / "meta.json"
+                path = folder / "meta.json"
                 try:
                     meta = json.loads(path.read_text(encoding="utf-8"))
                     if not isinstance(meta, dict):
@@ -1110,7 +1112,7 @@ class MeetingRecorder:
                 except (OSError, ValueError, TypeError):
                     meta = {}
                 meta["video"] = info
-                pending = self.session_dir / "meta.json.tmp"
+                pending = folder / "meta.json.tmp"
                 pending.write_text(json.dumps(meta, indent=2), encoding="utf-8")
                 pending.replace(path)
         except Exception:
@@ -1130,13 +1132,17 @@ class MeetingRecorder:
         if clip is None:
             self._video_error = "; ".join(video.errors) or "no video captured"
             log.warning("meeting video produced nothing: %s", self._video_error)
-            self._set_video_meta({"file": None, "error": self._video_error})
+            self._set_video_meta({"file": None, "error": self._video_error}, session_dir)
             self._report_video(None, self._video_error)
             return
         if video.errors:
             log.info("meeting video: capture warnings: %s", "; ".join(video.errors))
         offsets = dict(meta_offsets)
         offsets["video"] = video.first_frame_at
+        # The picture died part-way (video_failed): still worth keeping with the
+        # full audio, but never recorded as a clean, complete capture.
+        offsets["partial"] = ("; ".join(video.errors) or "video stopped early") \
+            if video.video_failed.is_set() else None
         self._video_mux_pending = True
         threading.Thread(
             target=self._mux_worker, args=(session_dir, clip, offsets),
@@ -1156,9 +1162,13 @@ class MeetingRecorder:
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             log.warning("meeting video mux failed: %s", error, exc_info=True)
+        partial = offsets.get("partial")
+        if partial:
+            log.warning("meeting video is partial: %s", partial)
         self._set_video_meta(
             {"file": None if error else out.name, "error": error,
-             **({"video_only": clip.name} if error else {})})
+             **({"partial": partial} if partial and not error else {}),
+             **({"video_only": clip.name} if error else {})}, session_dir)
         self._video_mux_pending = False
         self._report_video(None if error else out, error)
 
