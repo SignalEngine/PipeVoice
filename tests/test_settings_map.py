@@ -229,7 +229,7 @@ TAB_SIGNATURE = {
     "Meetings": "Before your next call",
     "Screen recordings": "Press your screen recording hotkey",
     "Voices": "VOICES & APP PROFILES",
-    "Guide": "How it works",
+    "Guide": "ON THIS PAGE",
     "Settings": "General",
     "About": "All releases ↗",
 }

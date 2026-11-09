@@ -208,6 +208,22 @@ def _launch_child(arg: str) -> None:
         pass
 
 
+# The Guide's table of contents. The heading above each section uses the same
+# words; tests/test_guide.py fails if a chip and a heading drift apart.
+GUIDE_SECTIONS = [
+    ("Dictation", "dictation"),
+    ("Engines", "engines"),
+    ("Polish", "polish"),
+    ("Meetings", "meetings"),
+    ("After a meeting", "after"),
+    ("Screen recordings", "screenrec"),
+    ("Voices", "voices"),
+    ("Read aloud", "readaloud"),
+    ("Make it yours", "yours"),
+    ("Help", "help"),
+]
+
+
 def _build_guide(parent, wheel) -> None:
     """Populate the Guide tab: how it works, engine speed, polish, tips."""
     import tkinter as tk
@@ -237,8 +253,10 @@ def _build_guide(parent, wheel) -> None:
         """A section heading: large, spaced, and with a rule under it."""
         holder = tk.Frame(g, bg=BG)
         holder.pack(fill="x", padx=px(26), pady=px((top, 0)))
-        tk.Label(holder, text=t, bg=BG, fg=FG, font=theme.font("body_large_strong"),
-                 anchor="w", justify="left").pack(fill="x")
+        heading = tk.Label(holder, text=t, bg=BG, fg=FG, font=theme.font("body_large_strong"),
+                           anchor="w", justify="left")
+        heading.pack(fill="x")
+        heading.pv_guide_heading = True
         tk.Frame(holder, bg=ACCENT, height=px(2), width=px(44)).pack(anchor="w", pady=px((5, 0)))
         tk.Frame(g, bg=BG, height=px(9)).pack(fill="x")
         if key:
@@ -287,6 +305,7 @@ def _build_guide(parent, wheel) -> None:
         for label, key in entries:
             chip = tk.Label(strip, text=label, bg=BG, fg=FG, cursor="hand2",
                             font=theme.font("body"), padx=px(10), pady=px(4))
+            chip.pv_guide_chip = True
             chips.append(chip)
 
             def jump(_event, k=key):
@@ -306,37 +325,34 @@ def _build_guide(parent, wheel) -> None:
             width = strip.winfo_width()
             if width <= 1:
                 return
+            # place() at computed x/y: in a grid, rows share column widths, so the
+            # widest chip in a column pushed the first row's last chip off the edge.
+            gap, x, y, row_h = px(7), 0, 0, 0
             for chip in chips:
-                chip.grid_forget()
-            row = col = used = 0
-            for chip in chips:
-                need = chip.winfo_reqwidth() + 7
-                if used and used + need > width:
-                    row += 1
-                    col = used = 0
-                chip.grid(row=row, column=col, padx=px((0, 7)), pady=px(2), sticky="w")
-                used += need
-                col += 1
+                w, h = chip.winfo_reqwidth(), chip.winfo_reqheight()
+                if x and x + w > width:
+                    x, y = 0, y + row_h + px(4)
+                    row_h = 0
+                chip.place(x=x, y=y)
+                x += w + gap
+                row_h = max(row_h, h)
+            strip.configure(height=y + row_h)
 
         strip.bind("<Configure>", lambda e: reflow(), add="+")
         strip.after(0, reflow)
 
-    contents([
-        ("How it works", "how"),
-        ("Engines", "engines"),
-        ("Polish", "polish"),
-        ("Meetings", "meetings"),
-        ("After a meeting", "after"),
-        ("Make it yours", "yours"),
-        ("Help", "help"),
-    ])
-    head("How it works", top=14, key="how")
-    body("Hold your hotkey, talk, then release — your words type in wherever the cursor is: "
-         "editor, browser, terminal, anywhere. Default hotkey is Ctrl + \\.")
-    body("The second (clipboard) hotkey copies what you say instead of typing it — handy for "
-         "pasting feedback into another window.")
+    contents(GUIDE_SECTIONS)
+    head("Dictation", top=14, key="dictation")
+    body("Hold your push-to-talk key, talk, then let go. Your words are typed where your "
+         "cursor is: editor, browser, terminal, anywhere. The default key is Ctrl + \\.")
+    body("You can switch to toggle mode: tap once to start, tap again to stop.")
+    body("The clipboard key copies what you say instead of typing it. Use it to paste "
+         "feedback into another window.")
+    body("A word came out wrong? Open History and press Fix this on that row. It opens the "
+         "Word fixes list with the wrong text filled in.")
+    body("Settings for all of this are in History → ⚙ Dictation settings.")
 
-    head("Pick your engine — speed lives here", key="engines")
+    head("Engines", key="engines")
     body("Transcription is the slow part; polish is fast. The engine you choose is the single "
          "biggest factor in how snappy Pipevoice feels.")
     item("Gemini", "Genuinely free — no credit card. One Gemini key transcribes AND powers AI "
@@ -353,13 +369,15 @@ def _build_guide(parent, wheel) -> None:
          badge="PRIVATE · FREE", badge_color=MUTED)
     body("Rule of thumb: want free with zero setup? Use Gemini. Want top accuracy cheap? Groq. "
          "Want words to stream as you talk? Deepgram. Fully private/offline? Local Whisper.")
+    body("Pick the engine, your accent and your microphone in ⚙ Settings → General.")
     link("Get a free Gemini key  ↗", "gemini")
     link("Get a free Groq key  ↗", "groq")
     link("Get a Deepgram key ($200 free)  ↗", "deepgram")
 
-    head("Polish (Flow mode) — optional", key="polish")
-    body("Cleans up filler words, punctuation and casing after transcription. It is fast — the wait "
-         "you feel is transcription, not polish. Turn it on under Transcription.")
+    head("Polish", key="polish")
+    body("Polish cleans up filler words, punctuation and casing after transcription. It is fast. "
+         "The wait you feel is transcription, not polish.")
+    body("Turn it on with “Polish with AI (Flow mode)” in History → ⚙ Dictation settings → Polish & text.")
     item("Google Gemini", "Free tier, and most people already have a Google account. The easiest "
          "free option if you don't have OpenAI credit.", badge="FREE · EASIEST", badge_color=GOOD)
     item("OpenAI", "Uses your OpenAI key — same one as the transcription engine.")
@@ -370,107 +388,133 @@ def _build_guide(parent, wheel) -> None:
     link("Get an OpenRouter key  ↗", "openrouter")
     link("Install Ollama  ↗", "ollama")
 
-    head("Record a meeting", key="meetings")
-    body("Pipevoice can record a whole call — both sides — and turn it into a transcript, "
-         "then into notes and action items. Nothing is uploaded unless you choose a cloud "
-         "engine; the recordings stay on your machine.")
-    item("1 · Press Ctrl + Alt + M",
-         "Tap it once to start recording, tap it again to stop. That's the default on a new "
-         "install; change it (or clear it to turn it off) in Meetings → ⚙ Meeting settings.",
+    head("Meetings", key="meetings")
+    body("Pipevoice records a whole call, both sides. It turns the call into a transcript, "
+         "then into notes. Recordings stay on your PC unless you pick a cloud engine.")
+    item("1 · Press the meeting hotkey",
+         "Tap it once to start and again to stop. The default is Ctrl + Alt + M. Change it, "
+         "or clear it to turn meetings off, in Meetings → ⚙ Meeting settings.",
          badge="START HERE", badge_color=GOOD)
     item("2 · It records both sides",
-         "Your microphone and your computer's own audio are captured separately — so what "
-         "you said and what they said never get mixed up. A REC bar shows the elapsed time "
-         "and a level meter for each side, so you can see at a glance that both are alive.")
-    item("3 · Dictation pauses itself",
-         "Your normal typing hotkey is switched off while a meeting records, so a stray "
-         "press can't interrupt the capture. It comes back the moment you stop.")
-    item("4 · Transcribe it",
-         "In the Meetings tab, pick the session, press Transcribe. Deepgram is fast and "
-         "separates the remote speakers; Local whisper works offline but labels everyone "
-         "the same. The tab tells you which one produced each transcript.")
-    item("5 · Name the people",
+         "Your microphone and your computer's audio are saved separately, so what you said "
+         "and what they said never mix. A REC bar shows the time and a level meter for each side.")
+    item("3 · A warning if your mic is dead",
+         "The REC bar says “PipeVoice can't hear your mic” in two cases. The mic gave pure "
+         "silence at the start. Or it stayed silent while the other side talked. Unmute it or pick another mic.")
+    item("4 · Dictation pauses itself",
+         "Your typing hotkey is off while a meeting records, so a stray press cannot "
+         "interrupt it. It comes back when you stop.")
+    item("5 · Transcribe it",
+         "Pick the meeting in the list and press Transcribe. Deepgram is fast and separates "
+         "the remote speakers. Local Whisper works offline but gives everyone the same label. "
+         "Tick “Transcribe automatically when the meeting ends” to skip this step.")
+    item("6 · Meeting names",
+         "A meeting transcribed with Deepgram is named for you after the transcript. A "
+         "meeting transcribed on this computer is named only if you tick “Also name meetings "
+         "transcribed on this computer”. To rename one, select it and press F2, or right-click it.")
+    item("7 · Name the people",
          "Click a “Them 1” label in the transcript. Pipevoice plays the clearest two "
-         "seconds of that person talking so you can recognise them, then you type their "
-         "name. Names are per-meeting and never overwrite the original transcript.")
-    item("Say \u201cbookmark that\u201d", "The easiest way to mark a moment: just say it out "
-         "loud during the call. Nothing listens live \u2014 the phrase is found when the "
-         "recording is transcribed, so it costs nothing, needs no key, and works completely "
-         "offline. Change the phrases under Hotkeys.", badge="EASIEST", badge_color=GOOD)
-    item("Or press the Bookmark hotkey", "Set one under Hotkeys and tap it during a call. "
-         "Handy when you would rather not say anything out loud.")
-    item("Or clap twice", "Hands-free, microphone only, so nothing on the call can trigger it. "
-         "Off by default \u2014 turn it on under Hotkeys and press Test first.",
-         badge="MAY NOT WORK", badge_color=WARN)
-    body("Why claps often fail: Windows Audio enhancements DELETE claps, snaps and keyboard "
-         "noise on purpose \u2014 that is what they are for \u2014 and they are switched on by "
-         "default on many laptops, especially Copilot+ PCs where the feature is called Windows "
-         "Studio Effects or Voice Focus. While it is on, no amount of clapping will register. "
-         "Turn it off under Windows Sound settings for your microphone, or just use the spoken "
-         "phrase, which is speech and so survives the filtering. The Test button tells you "
-         "which is happening.")
-    body("Whichever you use, a bookmark marks the half-minute BEFORE it, not the instant \u2014 "
-         "you always react after the interesting bit, and you say \u201cbookmark that\u201d "
-         "after it too. Marked moments appear as Highlights above the transcript, and click one "
-         "to jump to it. Summaries are told which moments you flagged, so they get priority "
-         "\u2014 without dropping anything else important.")
-
-    item("Tidy up the wording", "Press Polish on a transcribed meeting to strip \u201cum\u201d, "
-         "\u201cuh\u201d and false starts and fix punctuation. It only tidies \u2014 it never "
-         "rewords anyone or changes what was said \u2014 and the raw transcript stays one click "
-         "away, so nothing is lost.", badge="OPT-IN", badge_color=MUTED)
-
-    item("6 · Summarise",
-         "Choose Bullets, To-dos or Actions and press Summarise. Actions lists tasks with "
-         "an owner — which is why naming people first is worth the ten seconds.")
-    item("7 · Their questions, answered from your docs",
-         "When you stop a meeting, the pill offers Transcribe + answer: one click does both. "
-         "If no docs are set, press Choose docs folder… in the Their questions panel. "
-         "Point Pipevoice at your docs first: a folder (PDF, Markdown or text) or a web page "
-         "under the Meetings tab, or paste this call's brief into Call notes. Then press "
-         "Answer from my docs. You get every question the other side asked, each with a "
-         "short answer and the exact sentence from your docs it came from — or “Not "
-         "in your docs”, which is your list of what to write next. Thumbs up or down on "
-         "each. Uses your polish engine, so a free Gemini key covers it. During the call, "
-         "an answer card pops up when they ask something your docs cover.",
-         badge="NEW", badge_color=GOOD)
-    body("• Playing music? Your computer's audio is captured as one mix, so a podcast or "
-         "Spotify ends up in the transcript alongside the meeting. Pause it first.")
+         "seconds of that person, then you type the name. Names stay in that meeting. "
+         "They never change the original transcript.")
+    item("8 · Screen video",
+         "Tick “Record the screen too (video)” to film the screen your mouse is on when the "
+         "meeting starts. Video smoothness sets frames per second: higher is smoother and bigger. "
+         "Tick “Send the video when the meeting ends” to copy it to your Screen recordings "
+         "destination. The transcript goes too if it was made automatically.")
+    item("The “Before your next call” panel",
+         "It sits at the top of the Meetings tab and holds your docs and call notes. Pipevoice "
+         "answers the other side's questions from them, during and after the call. "
+         "Try a question there to see what it would answer.", badge="NEW", badge_color=GOOD)
+    item("Bookmark a moment",
+         "Say “bookmark that” during the call, or press the Bookmark hotkey. A bookmark marks "
+         "the half-minute before it. The spoken phrase is found when the meeting is "
+         "transcribed, so it needs no key and works offline. Clapping twice is optional, "
+         "off by default, and often blocked by Windows Studio Effects. Change all of these in "
+         "Meetings → ⚙ Meeting settings.", badge="EASIEST: SAY IT", badge_color=GOOD)
+    item("PipeFocus: a nudge when a call drifts",
+         "Off by default. It watches the call live and speaks up when something is going wrong, "
+         "such as an action item nobody owns. It nudges at most once every few minutes. "
+         "It needs Deepgram and costs about 30 cents per hour of meeting.",
+         badge="DEEPGRAM ONLY", badge_color=WARN)
+    body("• Playing music? Your computer's audio is saved as one mix, so a podcast ends up in "
+         "the transcript. Pause it first.")
     body("• Recording other people may need their consent where you live. Ask first.")
 
-    head("After the meeting", key="after")
-    item("See who did the talking", "Above the transcript: each person's share of the "
-         "conversation, how many turns they took, how many questions they asked, and the "
-         "longest stretch nobody interrupted. Worked out from the transcript on your PC — "
-         "no key, no internet, no cost.", badge="FREE", badge_color=GOOD)
-    item("Search every meeting at once", "Tick \u201cAll meetings\u201d beside the search box "
-         "and the list narrows to recordings containing your word, with a snippet of where it "
-         "came up. It searches what you SEE, so a name you have corrected is found by its "
-         "corrected spelling.")
-    item("Send it somewhere", "Export writes the meeting as Markdown, a self-contained web "
-         "page you can print straight to PDF from any browser, or slides. Highlights, notes "
-         "and named speakers all come with it.")
-    item("PipeFocus \u2014 a nudge when a call drifts",
-         "Optional and off by default. It watches the conversation live and speaks up only "
-         "when something concrete is going wrong: an action item nobody has taken, a decision "
-         "deferred again. At most one nudge every few minutes, and silent when nothing is "
-         "wrong. Needs Deepgram, because it is the only engine that transcribes live, and "
-         "costs roughly 30 cents an hour of meeting while it runs.",
-         badge="DEEPGRAM ONLY", badge_color=WARN)
-    body("Nothing here is automatic except the transcript itself \u2014 summaries, polish and "
-         "exports all happen when you press the button, so a meeting you never open costs you "
-         "nothing.")
+    head("After a meeting", key="after")
+    body("Select a meeting. It opens on four tabs: Summary, Transcript, Questions (N) and Stats.")
+    item("Summary",
+         "Pick Bullets, To-dos or Actions, then press Summarise. Actions lists tasks with an "
+         "owner, so name the people first. The Copy button copies the summary.")
+    item("Transcript",
+         "The words, by speaker, with search. Marked moments show as Highlights in the Stats tab. "
+         "Click one to jump to it.")
+    item("Questions (N)",
+         "Every question the other side asked. Each shows a short answer and the sentence "
+         "from your docs it came from. “Not in your docs” tells you what to write next. "
+         "N is the number of questions found.")
+    item("Stats",
+         "Each person's share of the talking, their turns, their questions and the longest "
+         "stretch nobody interrupted. It is worked out on your PC. It needs no key and costs nothing.",
+         badge="FREE", badge_color=GOOD)
+    item("Copy for AI",
+         "The button at the top right copies the whole meeting as Markdown: title, speakers, "
+         "notes and transcript. Paste it into an AI chat.")
+    item("The ⋯ menu and right-click menu",
+         "Both show the same items. Transcribe, Rename…, Name it from the transcript, "
+         "Open folder, Export all…, Copy for AI. Copy transcript, Save as .txt…, Send video. "
+         "Polish transcript, Show raw / Show polished, and Delete….")
+    item("Export",
+         "Export all… writes Markdown, a web page you can print to PDF, or slides. "
+         "Highlights, notes and speaker names come with it.")
+    item("Search every meeting at once",
+         "Tick “All meetings” beside the search box. The list shrinks to the meetings that "
+         "contain your word, with a snippet of where it appears.")
+    body("Summaries, polish and exports happen when you ask. A meeting you never open costs "
+         "nothing. The transcript is automatic only if you ticked “Transcribe automatically”.")
+
+    head("Screen recordings", key="screenrec")
+    body("Show a bug instead of describing it. Press the screen recording hotkey "
+         "(default Ctrl + Alt + R). Drag a box over what you want to show, and talk. "
+         "Press the hotkey again to stop. You get an mp4 and a text file of what you said.")
+    item("Send",
+         "Send is the filled button at the top right. It copies the mp4 and the words to the "
+         "scp destination you set in “Send to”. It uses the SSH keys you already have.")
+    item("Keep a local copy",
+         "“Keep a local copy after sending” is on by default. Switch it off to delete the "
+         "files after they arrive. A failed send never deletes anything.")
+    item("Frames per second",
+         "10 to 15 is enough at 1080p. A higher number uses more CPU on the PC you are recording.")
+    item("The ⋯ menu and right-click menu",
+         "Both show Play, Send, Copy text, Copy path, Open folder and Delete….")
+    body("Settings are in Screen recordings → ⚙ Recording settings.")
+
+    head("Voices", key="voices")
+    body("A Voice is a saved polish style. It sets how your words are cleaned up. "
+         "It can also set the engine, whether Enter is pressed, and where the text goes.")
+    item("App profiles",
+         "Give an app its own Voice. Pipevoice sees the app you are typing in and uses its "
+         "Voice for the next thing you say.")
+    item("Voice keys and the picker key",
+         "Bind a key to a Voice, then hold that key while you talk. The picker key shows a "
+         "numbered list of Voices on screen. A key always wins over the app's Voice. "
+         "Set these in Voices → ⚙ Voice settings.")
+
+    head("Read aloud", key="readaloud")
+    body("Read aloud speaks text a screen reader cannot reach, such as an image, a canvas "
+         "or a scanned PDF. Tap the Read Aloud hotkey to drag a region. "
+         "Add Shift for the whole screen, or add Ctrl for the focused window.")
+    body("Set the hotkey and the voice in ⚙ Settings → Read Aloud. A blank hotkey turns it off.")
 
     head("Make it yours", key="yours")
-    body("• Accent / language (under Audio): pick yours for a real accuracy boost — UK, US, Indian, "
-         "Australian, or Russian-accented English, and more.")
-    body("• Speech notes: describe your accent, stutter or filler habits. The AI polish uses it to "
-         "fix mis-hearings tailored to how you speak.")
-    body("• Vocabulary: add names and jargon so they're always spelled right.")
-    body("• Word fixes: a wrong → right list, applied last so they always win. Fix a "
-         "misheard word straight from History, or import/export a shared list as CSV.")
+    body("These are in History → ⚙ Dictation settings → Words:")
+    body("• Vocabulary: add names and jargon so they are always spelled right.")
+    body("• Word fixes: a wrong → right list, applied last so it always wins. You can also "
+         "import or export it as CSV.")
+    body("• Speech notes: describe your accent, stutter or filler habits. Polish uses them "
+         "to fix mis-hearings.")
+    body("Pick your accent or language in ⚙ Settings → General.")
 
-    head("Need a hand?", key="help")
+    head("Help", key="help")
     link("Pipevoice on GitHub — docs, issues, source  ↗", "github")
     tk.Label(g, text="", bg=BG).pack(pady=px(6))  # bottom breathing room
 

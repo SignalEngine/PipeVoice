@@ -580,8 +580,11 @@ def send(paths, destination: str, *, timeout: float = UPLOAD_TIMEOUT) -> tuple[b
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
     if done.returncode != 0:
-        detail = (done.stderr or done.stdout or "").strip().splitlines()
-        return False, detail[-1] if detail else f"scp exited {done.returncode}"
+        detail = [ln.strip() for ln in (done.stderr or done.stdout or "").splitlines() if ln.strip()]
+        # scp ends with a generic "Connection closed"; the cause (bad host, denied key) is above it.
+        useful = [ln for ln in detail
+                  if not ln.lower().rstrip(".").endswith(("connection closed", "lost connection"))]
+        return False, (useful or detail)[-1] if detail else f"scp exited {done.returncode}"
     return True, f"sent {len(files)} file(s)"
 
 
