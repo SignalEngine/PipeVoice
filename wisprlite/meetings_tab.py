@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import config
 from . import knowledge
+from .promises import load_promises
 from .history import _copy_to_clipboard
 from .meeting import (
     apply_speaker_map,
@@ -536,6 +537,7 @@ def gather_session_export_data(session_dir, *, polished: bool = True) -> dict:
         "transcript": transcript_text,
         "highlights": highlights,
         "summaries": summaries,
+        "promises": load_promises(path),
     }
 
 
@@ -1257,6 +1259,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
 
     summary_empty = tk.Label(tab_frames["summary"], text="", bg=BG, fg=MUTED, anchor="w",
                              justify="left", font=theme.font("body"), pady=px(8))
+    # "Your promises": what the user said they would do, found after transcription.
+    # Hidden when there are none. A row jumps to that moment in the Transcript tab.
+    promises_panel = tk.Frame(tab_frames["summary"], bg=CARD)
+    tk.Label(promises_panel, text="Your promises", bg=CARD, fg=FG, anchor="w",
+             font=theme.font("body_strong"), padx=px(12), pady=px(7)).pack(fill="x")
+    promises_body = tk.Frame(promises_panel, bg=CARD)
+    promises_body.pack(fill="x", pady=px((0, 6)))
     summary_panel = tk.Frame(tab_frames["summary"], bg=CARD)
     summary_head = tk.Frame(summary_panel, bg=CARD)
     summary_head.pack(fill="x")
@@ -1719,14 +1728,34 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         summary_copy_btn.config(state="normal" if value else "disabled")
         layout_summary_tab(bool(value))
 
+    def show_promises() -> bool:
+        """Rebuild the promise rows from state; True when there is at least one."""
+        for child in promises_body.winfo_children():
+            child.destroy()
+        items = state.get("promises") or []
+        for item in items:
+            due = f"  \u00b7  {item['due']}" if item.get("due") else ""
+            row = tk.Label(promises_body, text=f"{export._format_time(item.get('t'))}   {item['text']}{due}",
+                           bg=CARD, fg=FG, cursor="hand2", anchor="w", justify="left",
+                           wraplength=px(644), padx=px(12), pady=px(3))
+            row.pack(fill="x")
+            row.bind("<Button-1>", lambda _event, needle=item["text"]: jump_to_promise(needle))
+        return bool(items)
+
+    def jump_to_promise(needle: str) -> None:
+        select_tab("transcript")
+        _see_transcript(needle)
+
     def layout_summary_tab(has_summary: bool) -> None:
         """Empty note (if any), then the Summarise row, then the summary filling the rest."""
-        for widget in (summary_empty, summarise_controls, summary_panel):
+        for widget in (promises_panel, summary_empty, summarise_controls, summary_panel):
             widget.pack_forget()
         if not state.get("has_transcript"):
             summary_empty.config(text="Transcribe this meeting first.")
             summary_empty.pack(fill="x")
             return
+        if show_promises():
+            promises_panel.pack(fill="x", pady=px((0, 8)))
         if not has_summary:
             summary_empty.config(text="No summary yet. Pick a style and press Summarise.")
             summary_empty.pack(fill="x")
@@ -2208,6 +2237,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         )
         polish_btn.config(state="normal" if body_text and not state["busy"] else "disabled")
         state["summaries"] = read_summaries(session["path"])
+        state["promises"] = load_promises(session["path"])
         # Point the chooser at a mode that actually HAS a saved summary. The pane
         # only renders summaries[selected_mode], so without this a session
         # summarised as Actions looks empty on reopen (the chooser defaults to

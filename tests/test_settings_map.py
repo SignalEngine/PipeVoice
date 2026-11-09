@@ -62,13 +62,15 @@ MAP = {
         "labels": [
             "Meeting settings",
             "Your docs", "Docs folder", "Docs web page", "Show answers during the call (Deepgram only)",
-            "Meetings", "Meeting hotkey", "Also name meetings transcribed on this computer",
+            "Also show what my docs say about the current topic (Deepgram only)",
+            "Meetings", "Meeting hotkey", "Also use AI on meetings transcribed on this computer (names and promises)",
             "Transcribe automatically when the meeting ends", "Record the screen too (video)",
             "Video smoothness",
             "Send the video when the meeting ends, plus the transcript if it was transcribed "
             "automatically (uses the Screen recording destination)",
             "Bookmark hotkey", "Say this to bookmark", "Also bookmark on a double clap or snap",
-            "PipeFocus — quiet nudges during a meeting", "Clap sensitivity",
+            "PipeFocus — quiet nudges during a meeting", "Hint when I've done most of the talking",
+            "Clap sensitivity",
             "Where meetings are kept", "Meeting max minutes", "Meetings to keep", "Save meetings to",
         ],
         "buttons": [],

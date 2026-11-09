@@ -150,7 +150,7 @@ class Config:
     bookmark_phrases: str = DEFAULT_BOOKMARK_PHRASES
     meeting_max_minutes: int = 240  # safety cap for an unattended meeting capture
     meeting_retention_sessions: int = 20  # newest local meeting sessions to keep
-    meeting_auto_name: bool = False  # also auto-name LOCALLY transcribed meetings (Deepgram ones always are)
+    meeting_auto_name: bool = False  # also use AI (name, promises) on LOCALLY transcribed meetings (Deepgram ones always do)
     meeting_auto_transcribe: bool = False  # transcribe a meeting as soon as it ends
     meeting_video: bool = False  # also record the screen during meetings
     meeting_video_fps: int = 10  # 4 looked choppy on a real call
@@ -207,6 +207,8 @@ class Config:
     update_channel: str = "stable"    # stable | beta — beta also sees prereleases
     pipefocus: bool = False           # live focus nudges during a meeting (Deepgram only)
     live_answers: bool = True         # pop up doc answers when the other side asks (Deepgram only)
+    meeting_topic_cards: bool = False  # also a doc card for the current topic (needs live_answers)
+    meeting_talk_hint: bool = False   # hint when you did most of the talking (loudness only)
     # Screen recorder — off until a hotkey is set, like meeting capture.
     screenrec_hotkey: str = "ctrl+alt+r"  # drag a region, record it with narration
     screenrec_destination: str = ""   # scp target, e.g. root@host:/path/inbox-files/

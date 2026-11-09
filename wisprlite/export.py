@@ -33,6 +33,7 @@ REQUIRED_KEYS = (
     "transcript",
     "highlights",
     "summaries",
+    "promises",
 )
 
 SLIDES_SUFFIX = ".slides.md"
@@ -60,6 +61,18 @@ def _speaker_names_line(speaker_names: list[str]) -> str | None:
     cleaned = [name for name in (speaker_names or [])
                if isinstance(name, str) and name.strip()]
     return ", ".join(cleaned) if cleaned else None
+
+
+def _promise_lines(promises) -> list[str]:
+    """``[1:15] text (due)`` per promise; the due part only when there is one."""
+    out = []
+    for item in promises or []:
+        if not isinstance(item, dict) or not str(item.get("text") or "").strip():
+            continue
+        due = str(item.get("due") or "").strip()
+        out.append(f"[{_format_time(item.get('t'))}] {str(item['text']).strip()}"
+                   + (f" ({due})" if due else ""))
+    return out
 
 
 def _summary_lines(summaries: dict[str, str]) -> list[tuple[str, str]]:
@@ -136,6 +149,12 @@ def build_markdown(session: dict) -> str:
         lines.append(f"## Summary · {label}")
         lines.append("")
         lines.append(body)
+        lines.append("")
+
+    promise_lines = _promise_lines(session.get("promises") or [])
+    if promise_lines:
+        lines.append("## Your promises")
+        lines.extend(promise_lines)
         lines.append("")
 
     lines.append("## Transcript")

@@ -553,3 +553,207 @@ def test_a_one_file_docs_folder_still_gets_cards(tmp_path):
     a.on_line("Them", "so does it do single sign-on?")
     _drain(a)
     assert len(cards) == 1
+
+
+# ---- topic cards ------------------------------------------------------------
+
+TOPIC_LINES = ["we are looking at single sign-on for the whole team",
+               "mostly SAML sign-on because security wants that",
+               "and what the Team plan covers for sign-on"]
+
+
+def _topic_answerer(tmp_path, completion, cards, now, **kw):
+    kw.setdefault("log_path", tmp_path / "live.json")
+    a = live_answers.LiveAnswerer(str(_docs(tmp_path)), "", None, completion,
+                                  lambda *c, **k: cards.append((c, k)),
+                                  clock=lambda: now[0], topic_cards=True, **kw)
+    a._build()
+    now[0] = 0.0
+    a.on_line("Them", "anybody see the football last night")   # starts the 45 s topic clock
+    return a
+
+
+def _say(a, now, t, lines):
+    for ln in lines:
+        now[0] = t
+        a.on_line("Them", ln)
+
+
+def _run(a):
+    """Run whatever the worker would take, question first."""
+    q, a._pending = a._pending, None
+    if q:
+        return a._answer(*q)
+    t, a._pending_topic = a._pending_topic, None
+    if t:
+        a._topic(*t)
+
+
+def test_topic_gate_blocks_small_talk_without_a_completion_call(tmp_path):
+    calls, cards, now = [], [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: calls.append(m) or _reply(), cards, now)
+    _say(a, now, 50.0, ["anybody see the football last night",
+                        "it was a great match honestly", "weather has been lovely lately"])
+    _run(a)
+    assert calls == [] and cards == []
+
+
+def test_topic_qualifying_window_calls_completion_once_and_shows_a_topic_card(tmp_path):
+    calls, cards, now = [], [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: calls.append(m) or _reply(), cards, now)
+    _say(a, now, 50.0, TOPIC_LINES)
+    _run(a)
+    assert len(calls) == 1
+    assert cards == [(("SSO is on the Team plan", None, QUOTE, "faq.md"), {"kind": "topic"})]
+    log = json.loads((tmp_path / "live.json").read_text())
+    assert log[0]["kind"] == "topic" and "single sign-on" in log[0]["window"] and log[0]["shown"]
+
+
+def test_topic_non_verbatim_quote_gives_no_card(tmp_path):
+    cards, now = [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: _reply("We support every identity provider."), cards, now)
+    _say(a, now, 50.0, TOPIC_LINES)
+    _run(a)
+    assert cards == []
+
+
+def test_two_qualifying_windows_sixty_seconds_apart_give_one_card(tmp_path):
+    cards, now = [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: _reply(), cards, now)
+    _say(a, now, 50.0, TOPIC_LINES)
+    _run(a)
+    _say(a, now, 110.0, TOPIC_LINES)
+    _run(a)
+    assert len(cards) == 1
+
+
+def test_question_card_then_topic_sixty_seconds_later_gives_no_topic_card(tmp_path):
+    cards, now = [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: _reply(), cards, now)
+    _say(a, now, 10.0, ["do you support single sign-on SAML?"])
+    _run(a)
+    assert len(cards) == 1 and cards[0][1] == {}
+    _say(a, now, 70.0, TOPIC_LINES)
+    _run(a)
+    assert len(cards) == 1
+
+
+def test_a_repeat_topic_quote_is_never_shown_twice(tmp_path):
+    cards, now = [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: _reply(), cards, now)
+    _say(a, now, 50.0, TOPIC_LINES)
+    _run(a)
+    _say(a, now, 400.0, TOPIC_LINES)       # well past the 120 s gap
+    _run(a)
+    assert len(cards) == 1
+
+
+def test_topic_off_queues_no_topic_jobs(tmp_path):
+    cards, now = [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: _reply(), cards, now)
+    a._topic_cards = False
+    _say(a, now, 50.0, TOPIC_LINES)
+    assert a._pending is None and a._pending_topic is None
+
+
+def test_the_first_topic_check_waits_45_seconds_from_the_first_them_line(tmp_path):
+    cards, now = [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: _reply(), cards, now)
+    _say(a, now, 44.0, TOPIC_LINES[:1])
+    assert a._pending_topic is None
+    _say(a, now, 45.0, TOPIC_LINES[1:2])
+    assert a._pending_topic is not None
+
+
+def test_a_late_topic_job_is_logged_not_shown(tmp_path):
+    cards, now = [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: _reply(), cards, now, deadline=8.0)
+    _say(a, now, 50.0, TOPIC_LINES)
+    now[0] = 80.0
+    _run(a)
+    assert cards == []
+    assert json.loads((tmp_path / "live.json").read_text())[0]["shown"] is False
+
+
+def test_a_question_job_wins_over_a_waiting_topic_job(tmp_path):
+    order, now = [], [0.0]
+    a = _topic_answerer(tmp_path, lambda m: _reply(), [], now)
+    a._answer = lambda *j: order.append("q")
+    a._topic = lambda *j: order.append("t")
+    _say(a, now, 50.0, TOPIC_LINES)                 # topic job queued
+    _say(a, now, 51.0, ["do you support single sign-on SAML?"])
+    a.start = None
+    a._stop.clear()
+    t = threading.Thread(target=a._work, daemon=True)
+    t.start()
+    deadline = time.time() + 3
+    while len(order) < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    a.stop()
+    assert order == ["q", "t"]
+
+
+TOPIC_BOX = "Also show what my docs say about the current topic (Deepgram only)"
+TALK_BOX = "Hint when I've done most of the talking"
+
+
+def test_topic_and_talk_checks_round_trip_and_topic_greys_out_with_live_answers_off(
+        tmp_path, monkeypatch):
+    from wisprlite import config
+
+    state = {}
+
+    def until(root):
+        def box(prefix):
+            return next((w for w in _walk(root) if w.winfo_class() == "TCheckbutton"
+                         and str(w.cget("text")).startswith(prefix)), None)
+        live, topic, talk = box("Show answers during the call"), box(TOPIC_BOX), box(TALK_BOX)
+        save = next((b for b in _walk(root) if b.winfo_class() == "TButton"
+                     and str(b.cget("text")) == "Save"), None)
+        if not (live and topic and talk and save):
+            return False
+        if "step" not in state:
+            state["enabled_with_live_on"] = str(topic.cget("state")) != "disabled"
+            topic.invoke()
+            talk.invoke()
+            live.invoke()                                  # live answers off
+            root.update()
+            state["disabled_with_live_off"] = "disabled" in topic.state()
+            state["hint_off"] = str(topic.hint_label.cget("text"))
+            live.invoke()                                  # back on
+            root.update()
+            state["reenabled"] = "disabled" not in topic.state()
+            state["hint_on"] = str(topic.hint_label.cget("text"))
+            save.invoke()
+            state["step"] = 1
+        return True
+
+    _tab(tmp_path, monkeypatch, pump_until=until)
+    assert state["enabled_with_live_on"] and state["disabled_with_live_off"] and state["reenabled"]
+    assert state["hint_off"] == "Turn on Show answers during the call first."
+    assert state["hint_on"] == "At most one card every 2 minutes, only when a doc clearly covers it."
+    cfg = config.Config.load()
+    assert cfg.meeting_topic_cards is True and cfg.meeting_talk_hint is True
+    assert config.Config().meeting_topic_cards is False and config.Config().meeting_talk_hint is False
+
+
+def test_topic_kind_flows_app_to_overlay_and_gets_a_muted_label():
+    import inspect
+    import queue
+
+    from wisprlite import overlay
+    from wisprlite.overlay import Overlay
+
+    ov = Overlay.__new__(Overlay)
+    ov._q = queue.Queue()
+    ov.show_answer_card("Head", None, "The quote", "faq.md", kind="topic")
+    kind, head, rest = ov._q.get_nowait()
+    assert (kind, head) == ("topic_card", "Head")
+    assert rest.split(overlay.CARD_SEP) == ["The quote", "faq.md"]
+    assert 'label="From your docs"' in inspect.getsource(overlay)
+
+    from wisprlite import app as app_mod
+    a = app_mod.App.__new__(app_mod.App)
+    a.overlay = mock.Mock()
+    a._show_answer_card("h", None, "q", "s.md", kind="topic")
+    a.overlay.show_answer_card.assert_called_once_with("h", None, "q", "s.md", kind="topic")
