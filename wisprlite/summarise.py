@@ -136,6 +136,7 @@ def _complete(
     messages: list[dict[str, str]],
     provider: str,
     model: str,
+    timeout: float | None = None,
 ) -> str:
     result = chat_completion(
         messages,
@@ -143,6 +144,7 @@ def _complete(
         model,
         allow_empty=True,
         raise_errors=True,
+        timeout=timeout,
     )
     return result or ""
 
@@ -356,6 +358,7 @@ def suggest_title(segments: list[dict], provider: str, model: str) -> str:
         ],
         provider,
         model,
+        timeout=20,
     )
     reply = (reply or "").strip().splitlines()[0].strip() if (reply or "").strip() else ""
     title = reply.strip(" \t\"'`“”‘’*#").rstrip(".。 ").strip(" \"'“”‘’")

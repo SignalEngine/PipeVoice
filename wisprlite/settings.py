@@ -2011,9 +2011,8 @@ def main(first_run: bool = False) -> None:
         cfg.bookmark_acoustic = bool(bookmark_acoustic_var.get())
         cfg.meeting_video = bool(meeting_video_var.get())
         cfg.meeting_video_send = bool(meeting_video_send_var.get())
-        if meeting_video_fps_var.get() != video_fps_start:   # an untouched odd value (e.g. 7) stays
-            cfg.meeting_video_fps = dict(VIDEO_FPS_OPTIONS).get(
-                meeting_video_fps_var.get(), cfg.meeting_video_fps)
+        cfg.meeting_video_fps = dict(VIDEO_FPS_OPTIONS).get(
+            meeting_video_fps_var.get(), cfg.meeting_video_fps)
         cfg.bookmark_phrases = bookmark_phrases_var.get().strip()
         try:
             cfg.bookmark_sensitivity = max(0.0, min(1.0, float(bookmark_sensitivity_var.get())))

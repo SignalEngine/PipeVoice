@@ -736,6 +736,10 @@ def _auto_title(session_dir: Path, segments: list[dict], cfg) -> None:
         from .cleanup import provider_ready
         from .summarise import suggest_title
 
+        # Transcript text leaves the machine only when the user allowed AI cleanup
+        # (or the provider is local Ollama).
+        if not (getattr(cfg, "ai_cleanup", False) or cfg.cleanup_provider == "ollama"):
+            return
         if not provider_ready(cfg.cleanup_provider):
             return
         title = suggest_title(segments, cfg.cleanup_provider, cfg.cleanup_model)

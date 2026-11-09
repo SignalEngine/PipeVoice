@@ -17,14 +17,14 @@ def cfg():
     return types.SimpleNamespace(
         language="", deepgram_model="nova-3", local_model_size="base.en",
         local_device="cpu", local_compute_type="int8",
-        cleanup_provider="ollama", cleanup_model="m", bookmark_phrases="",
+        cleanup_provider="ollama", cleanup_model="m", bookmark_phrases="", ai_cleanup=True,
     )
 
 
-def _transcribe(session):
+def _transcribe(session, config=None):
     with patch("wisprlite.engines.transcribe.transcribe_file",
                side_effect=lambda *a, **k: result({"start": 0.0, "text": "hello"})):
-        return meeting.transcribe_session(session, cfg(), backend="local")
+        return meeting.transcribe_session(session, config or cfg(), backend="local")
 
 
 def test_title_round_trip_trim_cap_and_delete(tmp_path):
@@ -99,7 +99,7 @@ def test_suggest_title_returns_empty_for_garbage():
 def test_suggest_title_sends_a_bounded_transcript():
     seen = {}
 
-    def fake(messages, provider, model):
+    def fake(messages, provider, model, timeout=None):
         seen["user"] = messages[1]["content"]
         return "Title"
 
@@ -131,3 +131,57 @@ def test_list_export_and_search_use_the_title(tmp_path):
     assert meetings_tab.list_sessions(tmp_path)[0]["title"] == "Chess ICT kickoff"
     assert meetings_tab.gather_session_export_data(path)["title"] == "Chess ICT kickoff"
     assert "Chess ICT kickoff" in meetings_tab.session_search_text(path)
+
+
+def test_cloud_provider_with_ai_cleanup_off_never_sees_the_transcript(tmp_path):
+    write_session(tmp_path)
+    off = cfg()
+    off.ai_cleanup, off.cleanup_provider = False, "gemini"
+    with patch("wisprlite.cleanup.provider_ready", return_value=True), \
+         patch("wisprlite.summarise.suggest_title", return_value="X") as suggest:
+        _transcribe(tmp_path, off)
+    suggest.assert_not_called()
+    assert meeting.load_title(tmp_path) == ""
+
+
+def test_local_ollama_is_named_even_with_ai_cleanup_off(tmp_path):
+    write_session(tmp_path)
+    off = cfg()
+    off.ai_cleanup, off.cleanup_provider = False, "ollama"
+    with patch("wisprlite.cleanup.provider_ready", return_value=True), \
+         patch("wisprlite.summarise.suggest_title", return_value="Local name") as suggest:
+        _transcribe(tmp_path, off)
+    suggest.assert_called_once()
+    assert meeting.load_title(tmp_path) == "Local name"
+
+
+def test_suggest_title_has_a_20_second_timeout():
+    seen = {}
+
+    def fake_chat(messages, provider, model, **kwargs):
+        seen.update(kwargs)
+        return "Title"
+
+    with patch.object(summarise, "chat_completion", side_effect=fake_chat):
+        summarise.suggest_title(SEGS, "ollama", "m")
+    assert seen["timeout"] == 20
+
+
+def test_search_finds_a_named_meeting_with_no_transcript(tmp_path):
+    path = tmp_path / "meeting-20260727-130000"
+    path.mkdir()
+    (path / "meta.json").write_text(json.dumps({"started_at": "2026-07-27T13:00:00+00:00"}))
+    meeting.save_title(path, "Chess ICT kickoff", "user")
+    hits = meetings_tab.search_sessions("chess ict", [{"path": path}])
+    assert str(path) in hits
+    assert meetings_tab.search_sessions("nothing", [{"path": path}]) == {}
+
+
+def test_signature_changes_when_a_meeting_is_renamed(tmp_path):
+    path = _meeting_dir(tmp_path)
+    before = meetings_tab.meetings_signature(tmp_path)
+    meeting.save_title(path, "Chess ICT kickoff", "user")
+    after = meetings_tab.meetings_signature(tmp_path)
+    assert after != before
+    meeting.save_title(path, "Chess ICT kickoff 2", "user")
+    assert meetings_tab.meetings_signature(tmp_path) != after

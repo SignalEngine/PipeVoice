@@ -241,6 +241,14 @@ def cycle_match_index(current: int, count: int, step: int) -> int:
     return (current + (1 if step >= 0 else -1)) % count
 
 
+def _stat_pair(path: Path):
+    try:
+        info = path.stat()
+        return (info.st_mtime_ns, info.st_size)
+    except OSError:
+        return None
+
+
 def meetings_signature(base_dir: str | Path | None = None) -> tuple:
     """Describe changes relevant to the meeting list, ignoring live checkpoints."""
     base = Path(base_dir) if base_dir is not None else meetings_dir()
@@ -266,6 +274,7 @@ def meetings_signature(base_dir: str | Path | None = None) -> tuple:
                 (path / "video.json").stat().st_mtime_ns if (path / "video.json").is_file() else None,
                 (path / f"{path.name}.mp4").is_file(),
                 transcript_mtime,
+                _stat_pair(path / "title.json"),
             )
         except OSError:
             mtime = None
@@ -585,7 +594,7 @@ def search_sessions(query: str, sessions: list[dict], *, cache: dict | None = No
                 stamps.append(round((Path(path) / filename).stat().st_mtime, 3))
             except OSError:
                 stamps.append(None)
-        if stamps[0] is None:
+        if stamps[0] is None and stamps[4] is None:   # no transcript and no name
             continue
         key = (str(path), tuple(stamps))
         if cache is not None and key in cache:
@@ -2295,16 +2304,20 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         # When filtering across meetings, show WHY this one matched — a list of
         # dates with no context makes the user open each in turn.
         hit = state["search_hits"].get(str(session["path"]))
+        hit_labels = ()
         if hit:
             count, snippet = hit
-            tk.Label(
+            hit_count = tk.Label(
                 row, text=f"{count} match{'' if count == 1 else 'es'}", bg=CARD,
                 fg=GOOD, anchor="w", font=("Segoe UI", 8, "bold"),
-            ).pack(fill="x", pady=(3, 0))
-            tk.Label(
+            )
+            hit_count.pack(fill="x", pady=(3, 0))
+            hit_text = tk.Label(
                 row, text=snippet, bg=CARD, fg=FG, anchor="w", justify="left",
                 wraplength=340, font=("Segoe UI", 8),
-            ).pack(fill="x")
+            )
+            hit_text.pack(fill="x")
+            hit_labels = (hit_count, hit_text)
 
         secondary = tk.Label(
             row, text=" · ".join(secondary_bits), bg=CARD, fg=MUTED,
@@ -2312,7 +2325,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         )
         secondary.pack(fill="x", padx=(19, 0), pady=(3, 0))
 
-        widgets = (row, top, dot, title, duration, secondary)
+        widgets = (row, top, dot, title, duration, secondary, *hit_labels)
         row_info = {
             "frame": row,
             "widgets": widgets,
@@ -3077,6 +3090,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         if not isinstance(segments, list) or not segments:
             return
         cfg = config.Config.load()
+        before = load_title(path)
         status_label.config(text="Naming this meeting…", fg=MUTED)
 
         def back_on_ui(callback) -> None:
@@ -3090,6 +3104,10 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                 status_label.config(
                     text=f"Could not name it: {error}" if error
                     else "Could not come up with a name.", fg=ACCENT)
+                return
+            if load_title(path) != before:   # renamed while the model was thinking
+                status_label.config(
+                    text="Kept your name — the meeting was renamed meanwhile.", fg=MUTED)
                 return
             try:
                 save_title(path, title, "auto")

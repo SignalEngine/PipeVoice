@@ -2218,8 +2218,7 @@ def test_video_smoothness_saves_the_chosen_fps_and_keeps_an_untouched_odd_value(
 
     try:
         assert run(8, None)["shown"] == "Smooth (10 fps)"
-        r = run(8, None)
-        assert r.get("fps") == 8            # saved, and an untouched value is not rewritten to 10
+        assert run(8, None).get("fps") == 10    # always the selected label's int
         assert run(4, "Very smooth (15 fps)").get("fps") == 15
     finally:
         config.Config.save = real_save
@@ -2228,3 +2227,99 @@ def test_video_smoothness_saves_the_chosen_fps_and_keeps_an_untouched_odd_value(
             os.environ.pop("PV_TAB", None)
         else:
             os.environ["PV_TAB"] = real_pv_tab
+
+
+def test_a_slow_auto_name_does_not_overwrite_a_name_typed_meanwhile():
+    _skip_if_headless()
+    import os
+    import tempfile
+    import tkinter as tk
+
+    from wisprlite import meeting, meetings_tab, settings
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        session = base / "meeting-20260729-120000"
+        session.mkdir()
+        (session / "meta.json").write_text(
+            '{"started_at": "2026-07-29T12:00:00+00:00", "stopped_at":'
+            ' "2026-07-29T12:01:30+00:00", "duration_seconds": 90, "status": "transcribed"}',
+            encoding="utf-8")
+        (session / "transcript.json").write_text(
+            '{"segments": [{"t": 0.0, "speaker": "Them", "text": "Hello"}]}', encoding="utf-8")
+        meeting.save_title(session, "First name", "auto")
+
+        saved = (meeting.meetings_dir, meetings_tab.meetings_dir, meeting.default_meetings_dir,
+                 meetings_tab.default_meetings_dir, meetings_tab.suggest_title,
+                 meetings_tab.provider_ready)
+        for mod in (meeting, meetings_tab):
+            mod.meetings_dir = lambda: base
+            mod.default_meetings_dir = lambda: base
+
+        def slow_suggest(*_a, **_k):
+            meeting.save_title(session, "Typed by the user", "user")   # renamed mid-flight
+            return "Robot name"
+
+        meetings_tab.suggest_title = slow_suggest
+        meetings_tab.provider_ready = lambda _p: True
+
+        class InlineThread:     # mainloop is stubbed, so Tk cannot be called from another thread
+            def __init__(self, target=None, **_k):
+                self._target = target
+
+            def start(self):
+                self._target()
+
+        real_thread = meetings_tab.threading.Thread
+        meetings_tab.threading.Thread = InlineThread
+        real_pv_tab = os.environ.get("PV_TAB")
+        os.environ["PV_TAB"] = "Meetings"
+        out = {}
+        real_mainloop = tk.Misc.mainloop
+
+        def walk(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from walk(child)
+
+        def drive(self, _n=0):
+            import time
+
+            self.update_idletasks()
+            self.update()
+            row = [w for w in walk(self) if w.winfo_class() == "Label"
+                   and str(w.cget("cursor")) == "hand2" and w.cget("text") == "First name"][0]
+            row.event_generate("<Button-3>", x=2, y=2)
+            self.update()
+            for menu in (w for w in walk(self) if w.winfo_class() == "Menu"):
+                end = menu.index("end")
+                for i in range(end + 1 if end is not None else 0):
+                    if menu.type(i) == "command" and \
+                            menu.entrycget(i, "label") == "Name it from the transcript":
+                        menu.invoke(i)
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                self.update()
+                texts = [str(w.cget("text")) for w in walk(self) if w.winfo_class() == "Label"]
+                if any("Kept your name" in t for t in texts):
+                    break
+                time.sleep(0.05)
+            out["texts"] = texts
+            self.destroy()
+
+        tk.Misc.mainloop = drive
+        tk._default_root = None
+        try:
+            settings.main()
+        finally:
+            tk.Misc.mainloop = real_mainloop
+            meetings_tab.threading.Thread = real_thread
+            (meeting.meetings_dir, meetings_tab.meetings_dir, meeting.default_meetings_dir,
+             meetings_tab.default_meetings_dir, meetings_tab.suggest_title,
+             meetings_tab.provider_ready) = saved
+            if real_pv_tab is None:
+                os.environ.pop("PV_TAB", None)
+            else:
+                os.environ["PV_TAB"] = real_pv_tab
+        assert any("Kept your name" in t for t in out["texts"]), out["texts"]
+        assert meeting.load_title(session) == "Typed by the user"
