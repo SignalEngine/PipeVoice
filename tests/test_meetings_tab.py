@@ -260,3 +260,21 @@ if __name__ == "__main__":
             fn()
             print(f"  ok  {name}")
     print("all passed")
+
+
+def test_background_transcribing_marker_blocks_transcribe_and_is_flagged():
+    from wisprlite import meeting
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = pathlib.Path(tmp)
+        folder = _session(base, "meeting-bg", started_at="2026-07-27T12:00:00+00:00",
+                          stopped_at="2026-07-27T12:05:00+00:00", duration=300)
+        (folder / "desktop.wav").write_bytes(b"R" * 45)
+        [before] = meetings_tab.list_sessions(base)
+        assert before["can_transcribe"] is True and before["transcribing"] is False
+        marker = meeting.hold_session(folder, "transcribe")
+        [during] = meetings_tab.list_sessions(base)
+        assert during["can_transcribe"] is False and during["transcribing"] is True
+        meeting.release_session(marker)
+        [after] = meetings_tab.list_sessions(base)
+        assert after["can_transcribe"] is True and after["transcribing"] is False
