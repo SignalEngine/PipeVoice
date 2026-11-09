@@ -1646,12 +1646,19 @@ class App:
             session_dir = Path(session_dir)
             if not _has_audio(session_dir):
                 return
+            # Stop and the max-length timer can both land here for one meeting:
+            # only the first call transcribes (and only it holds the send plan).
+            with self._video_msg_lock:
+                done = self.__dict__.setdefault("_auto_transcribe_started", set())
+                if str(session_dir) in done:
+                    return
+                done.add(str(session_dir))
             from . import meeting as meeting_mod
 
             hold = meeting_mod.hold_session(session_dir, "transcribe")
-            plan = self._meeting_plans.pop(str(session_dir), None) or (
-                bool(self.cfg.meeting_video and self.cfg.meeting_video_send),
-                (self.cfg.screenrec_destination or "").strip())
+            # No plan saved at meeting start = never send: a later settings change
+            # must not upload a meeting recorded under the old choice.
+            plan = self._meeting_plans.pop(str(session_dir), None) or (False, "")
             thread = threading.Thread(
                 target=self._auto_transcribe_work, args=(session_dir, hold, plan),
                 name="meeting-auto-transcribe", daemon=False)

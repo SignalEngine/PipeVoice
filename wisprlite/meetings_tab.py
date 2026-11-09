@@ -2536,7 +2536,9 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             if (waiting / "transcript.json").is_file():
                 state.pop("answer_when_ready")
                 refresh(preferred=waiting)
-                do_answers()
+                # The list may be filtered so another meeting got selected instead.
+                if selected_path() == waiting:
+                    do_answers()
             elif not session_transcribing(waiting):
                 state.pop("answer_when_ready")
                 status_label.config(

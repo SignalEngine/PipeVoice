@@ -149,7 +149,8 @@ def test_send_plan_off_sends_nothing(tmp_path):
     assert said == ["\u2713 Meeting transcribed: meeting-20261109-101500"]
 
 
-def test_no_stored_plan_falls_back_to_current_config(tmp_path):
+def test_no_stored_plan_never_sends(tmp_path):
+    # A plan is only taken at meeting start; current settings must not decide an old meeting.
     d = _session(tmp_path)
     app, said = _app(meeting_auto_transcribe=True, meeting_video=True, meeting_video_send=True,
                      screenrec_destination="u@h:/in/")
@@ -157,7 +158,17 @@ def test_no_stored_plan_falls_back_to_current_config(tmp_path):
     with patch.object(meeting, "transcribe_session", _fake_transcribe([])), _load_cfg(app), \
             patch.object(screenrec, "send", lambda p, dest, **k: (sent.append(dest), (True, "ok"))[1]):
         _run(app, d)
-    assert sent == ["u@h:/in/"]
+    assert sent == []
+
+
+def test_second_call_for_the_same_meeting_does_nothing(tmp_path):
+    d = _session(tmp_path)
+    app, said = _app(meeting_auto_transcribe=True)
+    calls = []
+    with patch.object(meeting, "transcribe_session", lambda *a, **k: calls.append(1)), _load_cfg(app):
+        _run(app, d)
+        _run(app, d)
+    assert calls == [1]
 
 
 def test_setting_round_trips(tmp_path, monkeypatch):
