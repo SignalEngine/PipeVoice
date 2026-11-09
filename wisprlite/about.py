@@ -39,9 +39,9 @@ FEATURES = (
                  "Guide \u2192 Meetings shows how."),
     ("Show a bug", "The recording hotkey (Ctrl + Alt + R by default): drag a box and talk "
                    "it through. You get an .mp4 plus a transcript of what you said. "
-                   "Recordings tab."),
+                   "Screen recordings tab."),
     ("Read aloud", "Box anything on screen and hear it. Set its hotkey under "
-                   "Settings \u2192 Hotkeys."),
+                   "\u2699 Settings \u2192 Read Aloud."),
     ("Voices", "Different styles per app or hotkey. Voices tab."),
 )
 

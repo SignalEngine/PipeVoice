@@ -279,7 +279,7 @@ def collapsible_settings(container, link, hides, palette_bg, wheel=None):
         holder.pack_forget()
         for widget, kwargs in hides:
             widget.pack(**kwargs)
-        link.config(text=shut_text, font=theme.font("body", underline=True))
+        _style_link(shut_text, theme.font("body", underline=True))
         return True
 
     def toggle(_event=None):
@@ -288,11 +288,29 @@ def collapsible_settings(container, link, hides, palette_bg, wheel=None):
         for widget, _kwargs in hides:
             widget.pack_forget()
         holder.pack(fill="both", expand=True, padx=px(18), pady=px((0, 12)))
-        link.config(text=open_text, font=theme.font("body_strong"))
+        _style_link(open_text, theme.font("body_strong"))
 
-    link.bind("<Button-1>", toggle)
+    def open_panel():
+        if not holder.winfo_ismapped():
+            toggle()
+
+    # A ttk.Button has no font option and activates on keyboard too, so it gets
+    # a command; the old text-link Label keeps its click binding and underline.
+    is_button = link.winfo_class() == "TButton"
+
+    def _style_link(text, font):
+        if is_button:
+            link.config(text=text)
+        else:
+            link.config(text=text, font=font)
+
+    if is_button:
+        link.config(command=toggle)
+    else:
+        link.bind("<Button-1>", toggle)
     # Clicking the tab you are already on is "take me back to the list" — the
     # settings are a detour inside the tab, not a place of their own, so the
     # tab header has to be a way out of them.
     container.pv_close_settings = close
+    container.pv_open_settings = open_panel
     return panel

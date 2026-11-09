@@ -121,12 +121,14 @@ def _wheel_global(canvas):
     canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
 
-def build(container, root, wheel=None, on_fix_word=None) -> None:
+def build(container, root, wheel=None, on_fix_word=None, with_settings=False):
     """Populate `container` with the dictation-history list + Clear control. Used
     both as the standalone --history window and as the History tab in Settings.
     `root` is the toplevel (for thread-safe .after); `wheel` scopes the mousewheel.
     `on_fix_word(text)`, when given, adds a "Fix this" button per row that hands
     the misheard text to the caller (Settings wires it to the Word fixes editor).
+    With `with_settings`, a "⚙  Dictation settings" button swaps in an (empty,
+    hidden) panel, which is returned for the caller to fill; otherwise returns None.
     """
     import tkinter as tk
     from tkinter import ttk
@@ -142,6 +144,9 @@ def build(container, root, wheel=None, on_fix_word=None) -> None:
              font=theme.font("subtitle")).pack(side="left")
     count = tk.Label(head, text=f"  last {len(entries)}", bg=BG, fg=MUTED, font=theme.font("body"))
     count.pack(side="left")
+    settings_link = ttk.Button(head, text="⚙  Dictation settings") if with_settings else None
+    if settings_link is not None:
+        settings_link.pack(side="right")
 
     # Clear sits at the bottom; pack it before the list so the list fills above it.
     foot = tk.Frame(container, bg=BG, padx=px(18), pady=px(12))
@@ -199,6 +204,14 @@ def build(container, root, wheel=None, on_fix_word=None) -> None:
     tk.Button(foot, text="Clear history", command=do_clear, bg=CARD, fg=MUTED,
               activebackground="#262a3a", activeforeground=FG, relief="flat",
               padx=px(12), pady=px(6), font=theme.font("body")).pack(side="left")
+
+    if settings_link is None:
+        return None
+    return winui.collapsible_settings(
+        container, settings_link,
+        [(foot, {"side": "bottom", "fill": "x"}),
+         (body, {"fill": "both", "expand": True})],
+        BG, wheel)
 
 
 def main() -> None:
