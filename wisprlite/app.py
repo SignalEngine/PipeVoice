@@ -1641,6 +1641,9 @@ class App:
         """
         try:
             if not session_dir or not getattr(self.cfg, "meeting_auto_transcribe", False):
+                # Drop the plan saved at start, or one entry per meeting piles up forever.
+                if session_dir:
+                    self._meeting_plans.pop(str(session_dir), None)
                 return
             from .meetings_tab import _has_audio
             session_dir = Path(session_dir)

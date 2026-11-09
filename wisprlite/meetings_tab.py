@@ -2606,6 +2606,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             or selected is None
             or not selected["can_transcribe"]
             or state["busy"]
+            or session_transcribing(path)   # cached row may predate the app's marker
         ):
             return
         set_busy(True)
