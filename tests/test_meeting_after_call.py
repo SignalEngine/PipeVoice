@@ -151,7 +151,7 @@ def test_send_plan_off_sends_nothing(tmp_path):
 
 def test_no_stored_plan_falls_back_to_current_config(tmp_path):
     d = _session(tmp_path)
-    app, said = _app(meeting_auto_transcribe=True, meeting_video_send=True,
+    app, said = _app(meeting_auto_transcribe=True, meeting_video=True, meeting_video_send=True,
                      screenrec_destination="u@h:/in/")
     sent = []
     with patch.object(meeting, "transcribe_session", _fake_transcribe([])), _load_cfg(app), \
@@ -167,3 +167,15 @@ def test_setting_round_trips(tmp_path, monkeypatch):
     cfg.meeting_auto_transcribe = True
     cfg.save()
     assert config.Config.load().meeting_auto_transcribe is True
+
+
+def test_transcript_is_not_sent_when_video_was_off(tmp_path):
+    # The send setting is consent for the meeting video; no video, no lone transcript upload.
+    d = _session(tmp_path)
+    app, said = _app(meeting_auto_transcribe=True, meeting_video=False, meeting_video_send=True,
+                     screenrec_destination="u@h:/in/")
+    sent = []
+    with patch.object(meeting, "transcribe_session", _fake_transcribe([])), _load_cfg(app), \
+            patch.object(screenrec, "send", lambda p, dest, **k: (sent.append(dest), (True, "ok"))[1]):
+        _run(app, d)
+    assert sent == []

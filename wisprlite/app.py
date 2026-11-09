@@ -1434,7 +1434,10 @@ class App:
             cfg = getattr(self, "cfg", None)
             plan = None
             if cfg is not None:
-                plan = (bool(cfg.meeting_video_send), (cfg.screenrec_destination or "").strip())
+                # Sending (video, and transcript with it) needs the video ON: the send
+                # setting is consent for the meeting video, not for a lone transcript.
+                plan = (bool(cfg.meeting_video and cfg.meeting_video_send),
+                        (cfg.screenrec_destination or "").strip())
                 self._meeting.video_send_plan = plan
             self._meeting.start()
             session = getattr(self._meeting, "session_dir", None)
@@ -1647,7 +1650,8 @@ class App:
 
             hold = meeting_mod.hold_session(session_dir, "transcribe")
             plan = self._meeting_plans.pop(str(session_dir), None) or (
-                bool(self.cfg.meeting_video_send), (self.cfg.screenrec_destination or "").strip())
+                bool(self.cfg.meeting_video and self.cfg.meeting_video_send),
+                (self.cfg.screenrec_destination or "").strip())
             thread = threading.Thread(
                 target=self._auto_transcribe_work, args=(session_dir, hold, plan),
                 name="meeting-auto-transcribe", daemon=False)

@@ -1018,7 +1018,7 @@ def main(first_run: bool = False) -> None:
               "Higher is smoother but makes bigger files and uses more CPU. "
               "About 3x the size at 15 fps. Applies from the next meeting."),
           meeting_video_fps_var, [label for label, _ in VIDEO_FPS_OPTIONS])
-    check(c, "Send the video when the meeting ends (uses the Screen recording destination)",
+    check(c, "Send the video when the meeting ends, plus the transcript if it was transcribed automatically (uses the Screen recording destination)",
           meeting_video_send_var)
     _video_dest_hint = tk.Label(c, text="", bg=CARD, fg=MUTED, font=("Segoe UI", 8),
                                 wraplength=470, justify="left")
