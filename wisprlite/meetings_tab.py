@@ -811,24 +811,38 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     prep.pack(fill="x", padx=18, pady=(0, 10))
     tk.Label(prep, text="Before your next call", bg=CARD, fg=ACCENT, anchor="w",
              font=("Segoe UI", 10, "bold")).pack(fill="x")
-    prep_docs_row = tk.Frame(prep, bg=CARD)
+    # Collapsed by default: open it takes ~170px the meeting below needs.
+    prep_body = tk.Frame(prep, bg=CARD)
+    prep_toggle = ttk.Button(prep, text="Show ▾", width=8)
+    prep_toggle.place(relx=1.0, y=-2, anchor="ne")
+
+    def toggle_prep() -> None:
+        if prep_body.winfo_manager():
+            prep_body.pack_forget()
+            prep_toggle.config(text="Show ▾")
+        else:
+            prep_body.pack(fill="x")
+            prep_toggle.config(text="Hide ▴")
+
+    prep_toggle.config(command=toggle_prep)
+    prep_docs_row = tk.Frame(prep_body, bg=CARD)
     prep_docs_row.pack(fill="x", pady=(4, 0))
     prep_docs_label = tk.Label(prep_docs_row, text="", bg=CARD, fg=FG, anchor="w",
                                font=("Segoe UI", 9))
     prep_docs_label.pack(side="left")
     prep_docs_btn = ttk.Button(prep_docs_row, text="Choose docs folder\u2026")
     prep_docs_btn.pack(side="left", padx=(10, 0))
-    prep_hint = tk.Label(prep, text="", bg=CARD, fg=MUTED, anchor="w", justify="left",
+    prep_hint = tk.Label(prep_body, text="", bg=CARD, fg=MUTED, anchor="w", justify="left",
                          wraplength=860, font=("Segoe UI", 8))
     prep_hint.pack(fill="x")
-    tk.Label(prep, text="Who is it with, what will they ask? Used for your next call. "
+    tk.Label(prep_body, text="Who is it with, what will they ask? Used for your next call. "
                         "Standing context belongs in the docs folder.",
              bg=CARD, fg=MUTED, anchor="w", justify="left", wraplength=860,
              font=("Segoe UI", 8)).pack(fill="x", pady=(6, 2))
-    prep_notes = tk.Text(prep, height=3, wrap="word", bg=BG, fg=FG, relief="flat",
+    prep_notes = tk.Text(prep_body, height=3, wrap="word", bg=BG, fg=FG, relief="flat",
                          insertbackground=FG, font=("Segoe UI", 9))
     prep_notes.pack(fill="x")
-    prep_ask_row = tk.Frame(prep, bg=CARD)
+    prep_ask_row = tk.Frame(prep_body, bg=CARD)
     prep_ask_row.pack(fill="x", pady=(6, 0))
     tk.Label(prep_ask_row, text="Try a question:", bg=CARD, fg=MUTED,
              font=("Segoe UI", 9)).pack(side="left", padx=(0, 8))
@@ -837,7 +851,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     prep_entry.pack(side="left", fill="x", expand=True)
     prep_ask_btn = ttk.Button(prep_ask_row, text="Ask")
     prep_ask_btn.pack(side="left", padx=(8, 0))
-    prep_result = tk.Label(prep, text="", bg=CARD, fg=FG, anchor="w", justify="left",
+    prep_result = tk.Label(prep_body, text="", bg=CARD, fg=FG, anchor="w", justify="left",
                            wraplength=860, font=("Segoe UI", 9))
     prep_result.pack(fill="x", pady=(4, 0))
 
@@ -1139,24 +1153,44 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     # After-call answers: the other side's questions, answered from the user's
     # docs. Built on demand (one button), never during the live call.
     answers_panel = tk.Frame(right, bg=CARD)
-    tk.Label(answers_panel, text="Their questions", bg=CARD, fg=FG, anchor="w",
-             font=("Segoe UI", 9, "bold"), padx=10, pady=7).pack(fill="x")
-    answers_notes = tk.Text(answers_panel, bg=CARD, fg=FG, height=3, wrap="word",
+    answers_body = tk.Frame(answers_panel, bg=CARD)
+
+    def expand_answers() -> None:
+        """Open the section when it has something the user must see or do."""
+        answers_body.pack(fill="x")
+        answers_toggle.config(text="\u25be Their questions")
+
+    def toggle_answers() -> None:
+        if answers_body.winfo_manager():
+            answers_body.pack_forget()
+            answers_toggle.config(text="▸ Their questions")
+        else:
+            answers_body.pack(fill="x")
+            answers_toggle.config(text="▾ Their questions")
+
+    answers_toggle = tk.Button(
+        answers_panel, text="▸ Their questions", command=toggle_answers,
+        bg=CARD, fg=FG, activebackground=ROW_HOVER, activeforeground=FG,
+        relief="flat", borderwidth=0, cursor="hand2", anchor="w",
+        font=("Segoe UI", 9, "bold"), padx=10, pady=7,
+    )
+    answers_toggle.pack(fill="x")
+    answers_notes = tk.Text(answers_body, bg=CARD, fg=FG, height=3, wrap="word",
                             relief="flat", highlightthickness=1,
                             highlightbackground=MUTED, font=("Segoe UI", 9))
     answers_notes.pack(fill="x", padx=10)
-    tk.Label(answers_panel, text="Call notes (optional): paste this meeting's brief.",
+    tk.Label(answers_body, text="Call notes (optional): paste this meeting's brief.",
              bg=CARD, fg=MUTED, anchor="w", font=("Segoe UI", 8),
              padx=10).pack(fill="x")
-    answers_bar = tk.Frame(answers_panel, bg=CARD)
+    answers_bar = tk.Frame(answers_body, bg=CARD)
     answers_bar.pack(fill="x", padx=10, pady=(4, 4))
     answers_btn = ttk.Button(answers_bar, text="Answer from my docs")
     answers_btn.pack(side="left")
     answers_status = tk.Label(answers_bar, text="", bg=CARD, fg=MUTED, anchor="w",
                               justify="left", wraplength=480, font=("Segoe UI", 8))
     answers_status.pack(side="left", padx=(8, 0))
-    pick_docs_btn = ttk.Button(answers_panel, text="Choose docs folder\u2026")
-    answers_list = tk.Frame(answers_panel, bg=CARD)
+    pick_docs_btn = ttk.Button(answers_body, text="Choose docs folder\u2026")
+    answers_list = tk.Frame(answers_body, bg=CARD)
     answers_list.pack(fill="x", padx=10, pady=(0, 8))
 
     transcript_wrap = tk.Frame(right, bg=CARD)
@@ -1221,7 +1255,9 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     summary_text.tag_configure("italic", foreground=FG, font=("Segoe UI", 9, "italic"))
 
     actions = tk.Frame(right, bg=BG)
-    actions.pack(fill="x", pady=(10, 0))
+    # side=bottom + before the first child: packed first, so a short window
+    # squeezes the transcript, never the buttons (they used to vanish).
+    actions.pack(side="bottom", fill="x", pady=(10, 0), before=session_title)
     transcribe_btn = ttk.Button(actions, text="Transcribe", state="disabled",
                                 style="Go.TButton")
     transcribe_btn.pack(side="left")
@@ -1250,7 +1286,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         wraplength=600,
         font=("Segoe UI", 9),
     )
-    status_label.pack(fill="x", pady=(8, 0))
+    status_label.pack(side="bottom", fill="x", pady=(8, 0), before=actions)
 
     def selected_path() -> Path | None:
         selected = state["selected"]
@@ -2539,6 +2575,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     def need_docs() -> None:
         """No docs, page or notes yet: say so and offer the folder picker."""
         answers_status.config(text="Pick a docs folder (PDF, Markdown, text), or type call notes above.", fg=MUTED)
+        expand_answers()
         if not pick_docs_btn.winfo_ismapped():
             # Its own row: beside the status text the pair overflows a narrow
             # pane and the status gets clipped away entirely.
@@ -2585,6 +2622,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         path = selected_path()
         if path is None or state["busy"]:
             return
+        expand_answers()
         cfg = config.Config.load()
         notes = answers_notes.get("1.0", "end").strip()
         notes_file = Path(path) / "call_notes.md"

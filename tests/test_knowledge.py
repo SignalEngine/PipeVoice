@@ -183,8 +183,9 @@ def test_answers_panel_is_mounted_for_a_transcribed_meeting_and_hidden_otherwise
         frame.pack(fill="both", expand=True)
         meetings_tab.build(frame, root)
         root.update()
-        panels = [w for w in _walk(frame) if isinstance(w, tk.Label)
-                  and w.cget("text") == "Their questions"]
+        # A collapsible header now (collapsed by default so the transcript has room).
+        panels = [w for w in _walk(frame) if isinstance(w, tk.Button)
+                  and str(w.cget("text")).endswith("Their questions")]
         assert panels, "answers panel was never built"
         assert any("Yes" == w.cget("text") for w in _walk(frame) if isinstance(w, tk.Label)), \
             "saved answers.json was not rendered when the meeting was selected"
