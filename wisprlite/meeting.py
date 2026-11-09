@@ -336,6 +336,8 @@ BLEED_LENGTH_TOLERANCE = 1.3
 BLEED_LIVE_LEVEL = 0.02        # RMS that counts as "someone is talking"
 BLEED_LIVE_MIN_SAMPLES = 120   # ~6s of remote speech before judging
 MIC_SILENT_LEVEL = 0.002       # mic RMS below this is a dead/muted mic (a real voice is ~0.01-0.03)
+MIC_ALIVE_PEAK = 0.004         # any mic sample this loud (breath, keys, room) proves the mic is live;
+                               # James's muted mic peaked at 0.0015 across a whole 31 min call
 MIC_SILENT_SECONDS = 20.0      # of remote speech with that dead mic before warning
 BLEED_LIVE_RATIO = 0.75        # mic loud this often DURING remote speech = speakers
 
@@ -1298,14 +1300,15 @@ class MeetingRecorder:
                     self._bleed_desktop_loud += 1
                     if self._levels.get("mic", 0.0) >= BLEED_LIVE_LEVEL:
                         self._bleed_both_loud += 1
-                # Dead-mic detection: remote speech with a flat mic. Any mic
-                # block above the floor means the mic is alive: start over.
-                if label == "mic" and rms >= MIC_SILENT_LEVEL:
+                # Dead-mic detection: remote speech with a flat mic. Judged on
+                # PEAK, not RMS: a live mic while you only listen still has a
+                # quiet RMS, but room noise spikes it; a muted one never does.
+                peak = float(np.max(np.abs(data))) if data.size else 0.0
+                if label == "mic" and peak >= MIC_ALIVE_PEAK:
                     self._mic_silent_s = 0.0
-                elif (label == "desktop" and rms >= BLEED_LIVE_LEVEL
-                      and self._levels.get("mic", 0.0) < MIC_SILENT_LEVEL):
+                elif label == "desktop" and rms >= BLEED_LIVE_LEVEL:
                     self._mic_silent_s += data.size / SAMPLE_RATE
-                self._peaks[label] = max(self._peaks[label], float(np.max(np.abs(data))))
+                self._peaks[label] = max(self._peaks[label], peak)
             pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
             # PipeFocus, if running. feed() only ENQUEUES and swallows its own
             # errors, so nothing here can stall or break the capture callback —

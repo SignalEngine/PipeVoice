@@ -292,7 +292,11 @@ class Config:
         if self.meeting_hotkey_migrated:
             return False
         self.meeting_hotkey_migrated = True
-        if self.meeting_hotkey.lower().replace(" ", "") == "ctrl+shift+m":
+        norm = lambda k: str(k or "").lower().replace(" ", "")
+        others = [getattr(self, f) for f in vars(self) if f.endswith("hotkey") and f != "meeting_hotkey"]
+        others += [v.get("hotkey") for v in (self.voice_hotkeys or []) if isinstance(v, dict)]
+        # Never move onto a combo another feature already uses.
+        if norm(self.meeting_hotkey) == "ctrl+shift+m" and "ctrl+alt+m" not in map(norm, others):
             self.meeting_hotkey = "ctrl+alt+m"
         return True
 
