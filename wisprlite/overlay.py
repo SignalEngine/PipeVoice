@@ -14,6 +14,7 @@ import threading
 import time
 from typing import Callable, Optional
 
+from .meeting import MIC_SILENT_LEVEL
 from .winui import PALETTE
 
 CARD_SEP = "\x1f"     # joins quote and source in the one text slot of a queue tuple
@@ -462,6 +463,7 @@ class Overlay:
             # precisely the symptom auto-gain was added to fix.
             st["meeting_peak"] = {"mic": 0.0, "desktop": 0.0}
             st["bleed_warned"] = False
+            st["mic_silent_warned"] = False
             st["meeting_hist"] = {
                 "mic": [0.0] * MEETING_METER_N,
                 "desktop": [0.0] * MEETING_METER_N,
@@ -604,6 +606,7 @@ class Overlay:
         # between meetings, so detect a fresh recording by its clock restarting.
         if elapsed < st.get("bleed_last_elapsed", 0.0):
             st["bleed_warned"] = False
+            st["mic_silent_warned"] = False
         st["bleed_last_elapsed"] = elapsed
 
         bleed = data.get("bleed")
@@ -614,8 +617,18 @@ class Overlay:
         if suspected and not st.get("bleed_warned"):
             st["bleed_warned"] = True
             self._show_bleed_warning(c)
+        mic_silent_raw = data.get("mic_silent")
+        try:
+            mic_silent = bool(mic_silent_raw() if callable(mic_silent_raw) else mic_silent_raw)
+        except Exception:
+            mic_silent = False
+        if mic_silent and not st.get("mic_silent_warned"):
+            st["mic_silent_warned"] = True
+            self._show_bleed_warning(
+                c, "PipeVoice can't hear your mic.",
+                "Unmute in Teams or check Settings \u2192 Mic.")
         for label, x1, x2 in (("mic", 174, 221), ("desktop", 292, 350)):
-            dead = bool(errors.get(label))
+            dead = bool(errors.get(label)) or (label == "mic" and mic_silent)
             try:
                 raw_level = float(levels.get(label, 0.0))
             except (TypeError, ValueError, OverflowError):
@@ -630,6 +643,8 @@ class Overlay:
             peaks = st["meeting_peak"]
             peaks[label] = update_peak(peaks[label], raw_level)
             normalized = auto_gain(raw_level, peaks[label])
+            if label == "mic" and raw_level < MIC_SILENT_LEVEL:
+                normalized = 0.0   # auto-gain must not make a dead mic look alive
             history = st["meeting_hist"][label]
             history.pop(0)
             history.append(normalized)
@@ -1241,7 +1256,9 @@ class Overlay:
         except Exception:
             pass
 
-    def _show_bleed_warning(self, canvas) -> None:
+    def _show_bleed_warning(self, canvas, title="Your microphone is picking up the call",
+                            body="Everything they say will appear twice in the transcript.\n"
+                                 "Put headphones on now and the rest of this recording is clean.") -> None:
         """A small, self-dismissing note that the mic is hearing the speakers."""
         try:
             import tkinter as tk
@@ -1257,12 +1274,11 @@ class Overlay:
             top.configure(bg=PALETTE["amber"])
             frame = tk.Frame(top, bg=PALETTE["card"], padx=16, pady=12)
             frame.pack(fill="both", expand=True, padx=2, pady=2)
-            tk.Label(frame, text="Your microphone is picking up the call",
+            tk.Label(frame, text=title,
                      bg=PALETTE["card"], fg=PALETTE["fg"],
                      font=("Segoe UI", 10, "bold")).pack(anchor="w")
             tk.Label(frame,
-                     text="Everything they say will appear twice in the transcript.\n"
-                          "Put headphones on now and the rest of this recording is clean.",
+                     text=body,
                      bg=PALETTE["card"], fg=PALETTE["muted"], justify="left",
                      font=("Segoe UI", 9)).pack(anchor="w", pady=(4, 0))
             top.update_idletasks()

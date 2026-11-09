@@ -1225,6 +1225,9 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     transcribe_btn = ttk.Button(actions, text="Transcribe", state="disabled",
                                 style="Go.TButton")
     transcribe_btn.pack(side="left")
+    # Right after Transcribe so a narrow window never clips it.
+    export_btn = ttk.Button(actions, text="Export all", state="disabled")
+    export_btn.pack(side="left", padx=(7, 0))
     polish_btn = ttk.Button(actions, text="Polish", state="disabled")
     polish_btn.pack(side="left", padx=(7, 0))
     toggle_polish_btn = ttk.Button(actions, text="Show raw", state="disabled")
@@ -1233,8 +1236,6 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     copy_btn.pack(side="left", padx=(7, 0))
     save_btn = ttk.Button(actions, text="Save as .txt", state="disabled")
     save_btn.pack(side="left", padx=(7, 0))
-    export_btn = ttk.Button(actions, text="Export", state="disabled")
-    export_btn.pack(side="left", padx=(7, 0))
     folder_btn = ttk.Button(actions, text="Open folder", state="disabled")
     folder_btn.pack(side="left", padx=(7, 0))
     delete_btn = ttk.Button(actions, text="Delete session", state="disabled")
@@ -2911,7 +2912,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         (summarise_btn, "Bullet points, to-dos, or actions with an owner and a deadline. "
                         "Moments you bookmarked get priority."),
         (export_btn, "Write this meeting out as Markdown, a web page you can print to PDF, "
-                     "or slides \u2014 with highlights, notes and named speakers."),
+                     "or slides \u2014 with highlights, notes and named speakers. "
+                     "Press Transcribe first, then Export all."),
         (copy_btn, "Copy the transcript you are currently viewing to the clipboard."),
         (save_btn, "Save the transcript you are currently viewing as a .txt file."),
         (folder_btn, "Open the folder holding this recording's audio and transcript."),
