@@ -2183,6 +2183,9 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             status_label.config(
                 text="Set a destination under Screen recording first.", fg=ACCENT)
             return
+        from .meeting import hold_session, release_session
+
+        hold_session(path)   # retention / Delete must not remove it mid-upload
         video_btn.config(text="Sending\u2026", state="disabled")
         status_label.config(text="Sending the meeting video\u2026", fg=MUTED)
 
@@ -2203,6 +2206,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                     timeout=max(screenrec.UPLOAD_TIMEOUT, size_mb * 1.0 + 60))
             except Exception as exc:
                 ok, message = False, f"{type(exc).__name__}: {exc}"
+            finally:
+                release_session(path)
             try:
                 root.after(0, lambda: finished(ok, message))
             except Exception:
@@ -2956,6 +2961,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             or selected["status"] == "recording"
             or state["busy"]
         ):
+            return
+        from .meeting import session_busy
+
+        if session_busy(path):
+            status_label.config(
+                text="This meeting's video is still being built or sent. Try again when it finishes.",
+                fg=ACCENT)
             return
         if not messagebox.askyesno(
             "Delete meeting?",

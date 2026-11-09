@@ -696,6 +696,32 @@ def transcribe_session(
     return transcript
 
 
+# Meeting folders a background job still reads (video mux, scp upload). Retention
+# and the Delete button skip these, or an upload could lose its source mid-flight.
+_busy_lock = threading.Lock()
+_busy: dict = {}
+
+
+def hold_session(session_dir) -> None:
+    key = Path(session_dir).resolve()
+    with _busy_lock:
+        _busy[key] = _busy.get(key, 0) + 1
+
+
+def release_session(session_dir) -> None:
+    key = Path(session_dir).resolve()
+    with _busy_lock:
+        if _busy.get(key, 0) <= 1:
+            _busy.pop(key, None)
+        else:
+            _busy[key] -= 1
+
+
+def session_busy(session_dir) -> bool:
+    with _busy_lock:
+        return Path(session_dir).resolve() in _busy
+
+
 def meeting_video_name(session_dir) -> str:
     """Unique per meeting (meeting-YYYYMMDD-HHMMSS.mp4): every upload lands in the
     same remote inbox, so a fixed name would overwrite the previous meeting."""
@@ -1157,6 +1183,7 @@ class MeetingRecorder:
         offsets["partial"] = ("; ".join(video.errors) or "video stopped early") \
             if video.video_failed.is_set() else None
         self._muxing.add(Path(session_dir))
+        hold_session(session_dir)
         threading.Thread(
             target=self._mux_worker, args=(session_dir, clip, offsets, self._session_plan),
             name="meeting-video-mux", daemon=False,
@@ -1183,7 +1210,12 @@ class MeetingRecorder:
              **({"partial": partial} if partial and not error else {}),
              **({"video_only": clip.name} if error else {})}, session_dir)
         self._muxing.discard(Path(session_dir))
-        self._report_video(None if error else out, error, plan)
+        try:
+            # The app's sender takes its own hold inside the callback, before
+            # this one is released, so the folder is never unprotected.
+            self._report_video(None if error else out, error, plan)
+        finally:
+            release_session(session_dir)
 
     def _report_video(self, path, error, plan=None) -> None:
         callback = self._on_video_ready
@@ -1344,8 +1376,8 @@ class MeetingRecorder:
             sessions.sort(key=recording_time, reverse=True)
             keep = max(0, self.retention_sessions - reserve)
             for path in sessions[keep:]:
-                if path in self._muxing:
-                    continue        # its video is still being built from these files
+                if path in self._muxing or session_busy(path):
+                    continue        # a video mux or upload is still reading these files
                 try:
                     shutil.rmtree(path)
                 except Exception:

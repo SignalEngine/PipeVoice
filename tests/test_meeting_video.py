@@ -391,3 +391,23 @@ def test_retention_never_deletes_a_meeting_whose_video_is_muxing(tmp_path):
     rec._muxing.clear()
     rec._prune_sessions(reserve=1)
     assert not old.exists()
+
+
+def test_retention_never_deletes_a_meeting_whose_video_is_uploading(tmp_path):
+    rec = MeetingRecorder(tmp_path, retention_sessions=1)
+    old = tmp_path / "meeting-20260101-000000"
+    old.mkdir()
+    seen = {}
+
+    def slow_send(paths, destination, **_):
+        rec._prune_sessions(reserve=1)          # a new meeting starts mid-upload
+        seen["exists"] = pathlib.Path(paths[0]).exists()
+        return True, "ok"
+
+    clip = old / meeting.meeting_video_name(old)
+    clip.write_bytes(b"x")
+    with patch.object(screenrec, "send", slow_send):
+        app, _ = _app()
+        _ready(app, clip, plan=(True, "u@h:/in/"))
+    assert seen["exists"] is True
+    assert not meeting.session_busy(old)        # released once the upload ends

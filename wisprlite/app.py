@@ -1671,6 +1671,10 @@ class App:
                     "Video saved locally. Set a Screen recording destination to send it.")
             return
 
+        from .meeting import hold_session, release_session
+
+        hold_session(path.parent)   # retention must not delete it mid-upload
+
         def work() -> None:
             from . import screenrec
 
@@ -1682,6 +1686,8 @@ class App:
                     timeout=max(screenrec.UPLOAD_TIMEOUT, size_mb * 1.0 + 60))
             except Exception as exc:
                 ok, message = False, f"{type(exc).__name__}: {exc}"
+            finally:
+                release_session(path.parent)
             log.info("meeting video: %.1f MB, sent=%s", size_mb, ok)
             with self._video_msg_lock:
                 self._video_say(
