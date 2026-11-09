@@ -1451,6 +1451,7 @@ class App:
             self._fail(f"meeting: {exc}")
             self.tray.update()
             return
+        self._talk_checked_at = self._talk_hint_at = float("-inf")
         self._start_live_answers()
         if getattr(self, "_answers_on", False):
             self._open_prep(getattr(self._meeting, "session_dir", None))
@@ -1594,6 +1595,30 @@ class App:
         overlay = getattr(self, "overlay", None)
         if overlay is not None and hasattr(overlay, "show_focus_tip"):
             overlay.show_focus_tip(tip, because)
+
+    TALK_CHECK_EVERY = 15.0      # seconds between looks at the talk share
+    TALK_HINT_EVERY = 600.0      # at most one hint per ten minutes
+    TALK_HINT_SHARE = 0.70
+
+    def _check_talk_hint(self, now: float | None = None) -> None:
+        """Tell the user they have done most of the talking. Loudness only, any engine."""
+        try:
+            if not getattr(self.cfg, "meeting_talk_hint", False):
+                return
+            now = time.monotonic() if now is None else now
+            if now - getattr(self, "_talk_checked_at", float("-inf")) < self.TALK_CHECK_EVERY:
+                return
+            self._talk_checked_at = now
+            share = getattr(self._meeting, "talk_share_recent", None)
+            if share is None or share < self.TALK_HINT_SHARE:
+                return
+            if now - getattr(self, "_talk_hint_at", float("-inf")) < self.TALK_HINT_EVERY:
+                return
+            self._talk_hint_at = now
+            self._show_focus_tip("You've done most of the talking for a few minutes.",
+                                 f"talk share {round(share * 100)}%")
+        except Exception as exc:
+            log.info("talk hint failed: %s", exc)
 
     def _check_meeting_errors(self) -> None:
         if not self._meeting_active:
@@ -2145,6 +2170,7 @@ class App:
             time.sleep(1.0)
             if self._meeting_active:
                 self._check_meeting_errors()
+                self._check_talk_hint()
             try:
                 mtime = config.CONFIG_PATH.stat().st_mtime
             except Exception:

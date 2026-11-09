@@ -21,6 +21,7 @@ import wave
 import re
 import logging
 from array import array
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -381,6 +382,9 @@ BLEED_MIN_WORDS = 6
 BLEED_LENGTH_TOLERANCE = 1.3
 # Live detection while recording.
 BLEED_LIVE_LEVEL = 0.02        # RMS that counts as "someone is talking"
+TALK_WINDOW_S = 300.0          # talk share looks at the last five minutes
+TALK_MIN_S = 120.0             # ... and says nothing until it heard this much talking
+DESKTOP_FRESH_S = 1.0          # a call-audio block older than this counts as silence
 BLEED_LIVE_MIN_SAMPLES = 120   # ~6s of remote speech before judging
 MIC_SILENT_LEVEL = 0.002       # mic RMS below this is a dead/muted mic (a real voice is ~0.01-0.03)
 MIC_ALIVE_PEAK = 0.004         # any mic sample this loud (breath, keys, room) proves the mic is live;
@@ -990,6 +994,7 @@ class MeetingRecorder:
             "desktop": None,
         }
         self._levels = {"mic": 0.0, "desktop": 0.0}
+        self._reset_talk()
         self._bleed_desktop_loud = 0
         self._bleed_both_loud = 0
         self._mic_silent_s = 0.0
@@ -1078,6 +1083,40 @@ class MeetingRecorder:
                         self.device if self.device is not None else "default")
         return dead
 
+    def _reset_talk(self) -> None:
+        self._talk: deque = deque()          # (t, "me" | "them", seconds), newest right
+        self._talk_s = {"me": 0.0, "them": 0.0}
+        self._desktop_rms = (0.0, float("-inf"))   # (RMS, arrival time) of the call audio
+
+    def _talk_block(self, mic_rms: float, desktop_rms: float, seconds: float, now: float) -> None:
+        """Label one block of time: me (mic loud, call quiet), them (the reverse), or neither."""
+        if mic_rms >= BLEED_LIVE_LEVEL > desktop_rms:
+            label = "me"
+        elif desktop_rms >= BLEED_LIVE_LEVEL > mic_rms:
+            label = "them"
+        else:
+            return
+        self._talk.append((now, label, seconds))
+        self._talk_s[label] += seconds
+        self._trim_talk(now)
+
+    def _trim_talk(self, now: float) -> None:
+        while self._talk and now - self._talk[0][0] > TALK_WINDOW_S:
+            _t, label, seconds = self._talk.popleft()
+            self._talk_s[label] -= seconds
+
+    def talk_share(self, now: float | None = None) -> float | None:
+        """My share of the talking in the last five minutes, from loudness alone.
+        None until at least two minutes of talking has been heard."""
+        with self._state_lock:
+            self._trim_talk(time.monotonic() if now is None else now)
+            me, them = self._talk_s["me"], self._talk_s["them"]
+        return me / (me + them) if me + them >= TALK_MIN_S else None
+
+    @property
+    def talk_share_recent(self) -> float | None:
+        return self.talk_share()
+
     @property
     def levels(self) -> dict[str, float]:
         with self._state_lock:
@@ -1136,6 +1175,7 @@ class MeetingRecorder:
             self._errors = {"mic": None, "desktop": None}
             self._fatal_errors = {"mic": None, "desktop": None}
             self._levels = {"mic": 0.0, "desktop": 0.0}
+            self._reset_talk()
             # Per RECORDING, not per process: leftover counts from a session
             # on speakers would otherwise condemn the next one on headphones.
             self._bleed_desktop_loud = 0
@@ -1700,6 +1740,14 @@ class MeetingRecorder:
             rms = float(np.sqrt(np.mean(data ** 2)))
             with self._state_lock:
                 self._levels[label] = smooth_level(self._levels[label], rms)
+                # Talk share: the mic stream is the clock (one count per block of
+                # real time); the call audio is whatever it last said, if recent.
+                if label == "desktop":
+                    self._desktop_rms = (rms, arrived_at)
+                elif label == "mic":
+                    d_rms, d_at = self._desktop_rms
+                    self._talk_block(rms, d_rms if arrived_at - d_at <= DESKTOP_FRESH_S else 0.0,
+                                     data.size / SAMPLE_RATE, arrived_at)
                 # Live speaker-bleed detection. On headphones the two streams go
                 # loud at DIFFERENT times, because people take turns. Through
                 # speakers the mic is loud WHENEVER the desktop is, since it is
