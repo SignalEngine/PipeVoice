@@ -57,7 +57,7 @@ from .summarise import (
 )
 from . import export
 from .polish import PolishFailed, ProviderNotReady, polish_segments
-from .winui import PALETTE, collapsible_settings, tooltip
+from .winui import PALETTE, collapsible_settings, empty_state, tooltip
 
 BG = PALETTE["bg"]
 CARD = PALETTE["card"]
@@ -2530,17 +2530,23 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             # None, not []: there is no FILTER here, there are simply no
             # meetings. [] would read as "filtered to nothing".
             state["visible_sessions"] = None
-            tk.Label(
-                session_rows, text="No meetings recorded yet.", bg=CARD, fg=MUTED,
-                font=theme.font("body"), padx=px(14), pady=px(20),
-            ).pack(anchor="w")
-            session_title.config(text="No meetings yet")
+            _mkey = str(getattr(config.Config.load(), "meeting_hotkey", "") or "").strip()
+            if _mkey:
+                _empty = empty_state(
+                    session_rows, "feat_meetings", "No meetings yet",
+                    f"Press {_mkey} to start recording a call, and again to stop.",
+                    bg=CARD)
+            else:
+                _empty = empty_state(
+                    session_rows, "feat_meetings", "No meetings yet",
+                    "Set a meeting hotkey in \u2699 Meeting settings to start.",
+                    "\u2699  Meeting settings",
+                    (lambda: settings_link.invoke()) if settings_link is not None else None,
+                    bg=CARD)
+            _empty.pack(fill="x")
+            session_title.config(text="No meeting selected")
             session_meta.config(text="")
-            set_transcript(
-                "Set a meeting hotkey in ⚙ Meeting settings, then press it once to start "
-                "recording and again to stop.",
-                placeholder=True,
-            )
+            set_transcript("", placeholder=True)
             for button in (
                 transcribe_btn,
                 transcribe_cta,
@@ -2774,8 +2780,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                 overlay = polish_segments(raw, cfg.cleanup_provider, cfg.cleanup_model)
             except ProviderNotReady as exc:
                 overlay = None
-                error = (f"no API key set for {exc}. Settings \u2192 Transcription \u2192 "
-                         "AI polish provider, then add its key.")
+                error = (f"no API key set for {exc}. Add its key in "
+                         "\u2699 Settings \u2192 API keys.")
             except PolishFailed as exc:
                 # Say exactly what went wrong. "replied with something unusable"
                 # covered an API error, an empty response, unparseable text and a

@@ -171,8 +171,11 @@ def build(container, root, wheel=None, on_fix_word=None, with_settings=False):
         root.after(1100, lambda: btn.config(text="Copy"))
 
     if not entries:
-        tk.Label(inner, text="Nothing dictated yet.", bg=BG, fg=MUTED,
-                 font=theme.font("body"), padx=px(20), pady=px(24)).pack(anchor="w")
+        key = (getattr(cfg, "hotkey", "") or "").strip() or "your push-to-talk key"
+        winui.empty_state(
+            inner, "feat_history", "Your dictations will show up here",
+            f"Hold {key} and talk. Let go and your words are typed where your cursor is.",
+        ).pack(fill="x")
     for e in entries:
         card = tk.Frame(inner, bg=CARD, padx=px(14), pady=px(11))
         card.pack(fill="x", padx=px(16), pady=px(5))

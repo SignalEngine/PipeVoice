@@ -24,7 +24,7 @@ from pathlib import Path
 from . import config
 from .history import _copy_to_clipboard
 from .meetings_tab import _open_folder, format_duration
-from .winui import PALETTE, collapsible_settings, tooltip
+from .winui import PALETTE, collapsible_settings, empty_state, tooltip
 
 log = logging.getLogger("wisprlite")
 
@@ -35,8 +35,11 @@ MUTED = PALETTE["muted"]
 ACCENT = PALETTE["accent"]
 DIV = PALETTE["div"]
 SCROLL = PALETTE["border"]
+POPOVER = PALETTE["popover"]
+ROW_HOVER = PALETTE["row_hover"]
 
 VIDEO_SUFFIX = ".mp4"
+NO_WORDS = "No narration in this recording."
 
 
 def recordings_dir(cfg=None) -> Path:
@@ -129,6 +132,44 @@ def _play(path: Path) -> None:
         log.exception("recordings: could not open %s", path)
 
 
+def _mss(seconds) -> str:
+    """m:ss, the way the Meetings header and rows show a length."""
+    total = max(0, int(seconds or 0))
+    return f"{total // 60}:{total % 60:02d}"
+
+
+def _when(timestamp: float) -> str:
+    return time.strftime("%d %b %Y %H:%M", time.localtime(timestamp))
+
+
+_DURATIONS: dict = {}
+
+
+def _cached_duration(item: dict):
+    """Length of a clip, read once per (file, size, mtime): the list redraws every poll."""
+    key = (str(item["path"]), item["size"], item["modified"])
+    if key not in _DURATIONS:
+        _DURATIONS[key] = _duration_seconds(item["path"])
+    return _DURATIONS[key]
+
+
+def fill_recording_menu(menu, cmds: dict) -> None:
+    """Items shared by the row right-click menu and the header \u22ef button.
+
+    ``cmds`` maps play/send/copy_text/copy_path/folder/delete to callables, so
+    both menus list the same labels in the same order from one place.
+    """
+    menu.delete(0, "end")
+    menu.add_command(label="Play", command=cmds["play"])
+    menu.add_command(label="Send", command=cmds["send"])
+    menu.add_separator()
+    menu.add_command(label="Copy text", command=cmds["copy_text"])
+    menu.add_command(label="Copy path", command=cmds["copy_path"])
+    menu.add_command(label="Open folder", command=cmds["folder"])
+    menu.add_separator()
+    menu.add_command(label="Delete\u2026", command=cmds["delete"])
+
+
 def build(container, root, wheel=None, with_settings=False):
     """Populate ``container`` with the recordings browser.
 
@@ -184,17 +225,18 @@ def build(container, root, wheel=None, with_settings=False):
              (body, {"fill": "both", "expand": True, "padx": 18, "pady": (0, 14)})],
             BG, wheel)
 
-    left = tk.Frame(body, bg=BG, width=px(250))
+    empty_box = tk.Frame(body, bg=BG)
+    left = tk.Frame(body, bg=CARD, width=px(250))
     left.pack(side="left", fill="y")
     left.pack_propagate(False)
 
-    canvas = tk.Canvas(left, bg=BG, highlightthickness=0)
+    canvas = tk.Canvas(left, bg=CARD, highlightthickness=0)
     bar = ttk.Scrollbar(left, orient="vertical", command=canvas.yview,
                         style="Vertical.TScrollbar")
     canvas.configure(yscrollcommand=bar.set)
     bar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
-    listing = tk.Frame(canvas, bg=BG)
+    listing = tk.Frame(canvas, bg=CARD)
     canvas.create_window((0, 0), window=listing, anchor="nw", width=px(232))
     listing.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     if callable(wheel):
@@ -203,14 +245,24 @@ def build(container, root, wheel=None, with_settings=False):
     right = tk.Frame(body, bg=BG)
     right.pack(side="left", fill="both", expand=True, padx=px((16, 0)))
 
-    title = tk.Label(right, text="No recording selected", bg=BG, fg=FG,
-                     font=theme.font("body_large_strong"), anchor="w")
+    # Same header as Meetings: title + one grey meta line left, the one filled
+    # button (Send), Play and the \u22ef menu right. Right side is packed first so
+    # a narrow pane clips the title, never the buttons.
+    detail_head = tk.Frame(right, bg=BG)
+    detail_head.pack(fill="x", pady=px((0, 10)))
+    head_right = tk.Frame(detail_head, bg=BG)
+    head_right.pack(side="right", padx=px((8, 0)))
+    head_left = tk.Frame(detail_head, bg=BG)
+    head_left.pack(side="left", fill="x", expand=True)
+    title = tk.Label(head_left, text="No recording selected", bg=BG, fg=FG,
+                     font=theme.font("body_large_strong"), anchor="w", justify="left")
     title.pack(fill="x")
-    detail = tk.Label(right, text="", bg=BG, fg=MUTED, font=theme.font("body"), anchor="w")
-    detail.pack(fill="x", pady=px((2, 10)))
-
-    buttons = tk.Frame(right, bg=BG)
-    buttons.pack(fill="x", pady=px((0, 10)))
+    detail = tk.Label(head_left, text="", bg=BG, fg=MUTED, font=theme.font("body"),
+                      anchor="w", justify="left")
+    detail.pack(fill="x", pady=px((2, 0)))
+    head_left.bind("<Configure>", lambda e: (
+        title.config(wraplength=max(px(120), e.width - px(4))),
+        detail.config(wraplength=max(px(120), e.width - px(4)))), add="+")
 
     tk.Label(right, text="What you said", bg=BG, fg=MUTED,
              font=theme.font("body_strong"), anchor="w").pack(fill="x")
@@ -219,34 +271,71 @@ def build(container, root, wheel=None, with_settings=False):
     text.pack(fill="both", expand=True, pady=px((4, 0)))
     text.configure(state="disabled")
 
-    def _set_transcript(body_text: str) -> None:
+    text.tag_configure("none", foreground=MUTED)
+
+    def _set_transcript(body_text: str, dim: bool = False) -> None:
         text.configure(state="normal")
         text.delete("1.0", "end")
-        text.insert("1.0", body_text)
+        text.insert("1.0", body_text, "none" if dim else "")
         text.configure(state="disabled")
+
+    def _paint(row, colour) -> None:
+        row.configure(bg=colour)
+        for child in row.winfo_children():
+            child.configure(bg=colour)
 
     def _select(item) -> None:
         state["selected"] = item
         for row, row_item in state["rows"]:
-            on = row_item is item
-            row.configure(bg=CARD if on else BG)
-            for child in row.winfo_children():
-                child.configure(bg=CARD if on else BG)
+            if row_item is not None:
+                _paint(row, POPOVER if row_item is item else CARD)
+        for name in ("Send", "Play", "\u22ef"):
+            action_buttons[name].configure(state="normal" if item else "disabled")
         if item is None:
             title.config(text="No recording selected")
             detail.config(text="")
             _set_transcript("")
             return
         title.config(text=item["stem"])
-        seconds = _duration_seconds(item["path"])
-        bits = [_size_label(item["size"])]
+        seconds = _cached_duration(item)
+        bits = [_when(item["modified"])]
         if seconds:
-            bits.insert(0, format_duration(seconds))
-        bits.append(str(item["path"].parent))
-        detail.config(text="  ·  ".join(bits))
+            bits.append(_mss(seconds))
+        bits.append(_size_label(item["size"]))
+        detail.config(text="  \u00b7  ".join(bits))
         words = read_transcript(item)
-        _set_transcript(words or "No transcript for this one — check the microphone "
-                                 "was on when you recorded it.")
+        if words:
+            _set_transcript(words)
+        else:
+            _set_transcript(NO_WORDS, dim=True)
+
+    def _show_empty(on: bool) -> None:
+        if on:
+            left.pack_forget()
+            right.pack_forget()
+            empty_box.pack(fill="both", expand=True)
+        else:
+            empty_box.pack_forget()
+            left.pack(side="left", fill="y")
+            right.pack(side="left", fill="both", expand=True, padx=px((16, 0)))
+
+    def _build_empty() -> None:
+        for child in empty_box.winfo_children():
+            child.destroy()
+        cfg = config.Config.load()
+        key = str(getattr(cfg, "screenrec_hotkey", "") or "").strip() or "your screen recording hotkey"
+        line = f"Press {key}, drag a box over what you want to show, talk, and press it again to stop."
+        button = ""
+        if not str(getattr(cfg, "screenrec_destination", "") or "").strip():
+            line += " Set where recordings are sent first."
+            button = "\u2699  Recording settings"
+        block = empty_state(
+            empty_box, "feat_screenrec", "No screen recordings yet", line, button,
+            (lambda: settings_link.invoke()) if with_settings else None)
+        if button and not with_settings and block.button is not None:
+            block.button.destroy()
+            block.button = None
+        block.pack(fill="both", expand=True)
 
     def refresh(select_stem: str | None = None) -> None:
         for row, _ in state["rows"]:
@@ -256,26 +345,48 @@ def build(container, root, wheel=None, with_settings=False):
         state["items"] = items
         count_label.config(text=f"{len(items)} recording{'' if len(items) == 1 else 's'}")
         if not items:
-            empty = tk.Frame(listing, bg=BG)
-            empty.pack(fill="x", pady=px(6))
-            tk.Label(empty, text="Nothing recorded yet.", bg=BG, fg=MUTED,
-                     font=theme.font("body"), wraplength=px(299), justify="left").pack(anchor="w")
-            state["rows"] = [(empty, None)]
+            _build_empty()
+            _show_empty(True)
             _select(None)
             return
+        _show_empty(False)
         for item in items:
-            row = tk.Frame(listing, bg=BG, cursor="hand2", padx=px(10), pady=px(8))
-            row.pack(fill="x", pady=px(1))
-            tk.Label(row, text=item["stem"], bg=BG, fg=FG, font=theme.font("body"),
-                     anchor="w", wraplength=px(288), justify="left").pack(fill="x")
-            marks = [_size_label(item["size"])]
-            if item["transcript_path"] is None:
-                marks.append("no transcript")
-            tk.Label(row, text="  ·  ".join(marks), bg=BG, fg=MUTED,
-                     font=theme.font("caption"), anchor="w").pack(fill="x")
+            row = tk.Frame(listing, bg=CARD, cursor="hand2", padx=px(12), pady=px(10))
+            row.pack(fill="x")
+            tk.Label(row, text=item["stem"], bg=CARD, fg=FG, font=theme.font("body_strong"),
+                     anchor="w", wraplength=px(200), justify="left",
+                     cursor="hand2").pack(fill="x")
+            sub = [_when(item["modified"])]
+            seconds = _cached_duration(item)
+            if seconds:
+                sub.append(_mss(seconds))
+            tk.Label(row, text="  \u00b7  ".join(sub), bg=CARD, fg=MUTED,
+                     font=theme.font("caption"), anchor="w",
+                     cursor="hand2").pack(fill="x", pady=px((3, 0)))
+
+            def choose(event, it=item):
+                _select(it)
+
+            def context_menu(event, it=item):
+                _select(it)
+                fill_recording_menu(menu, cmds)
+                menu.tk_popup(event.x_root, event.y_root)
+                return "break"
+
+            def enter(event, r=row, it=item):
+                if state["selected"] is not it:
+                    _paint(r, ROW_HOVER)
+
+            def leave(event, r=row, it=item):
+                _paint(r, POPOVER if state["selected"] is it else CARD)
+
             for widget in (row, *row.winfo_children()):
-                widget.bind("<Button-1>", lambda e, it=item: _select(it))
+                widget.bind("<Button-1>", choose, add="+")
+                widget.bind("<Button-3>", context_menu, add="+")
+                widget.bind("<Enter>", enter, add="+")
+                widget.bind("<Leave>", leave, add="+")
             state["rows"].append((row, item))
+            tk.Frame(listing, bg=DIV, height=px(1)).pack(fill="x", padx=px(12))
         wanted = next((i for i in items if i["stem"] == select_stem), None)
         _select(wanted or items[0])
 
@@ -287,7 +398,11 @@ def build(container, root, wheel=None, with_settings=False):
 
     def _play_selected():
         item = _need_selection()
-        if item:
+        if item and not Path(item["path"]).exists():
+            # Deleted or moved outside PipeVoice: say so instead of opening nothing.
+            messagebox.showinfo("Recordings", "That recording is gone. It was moved or deleted.")
+            refresh()
+        elif item:
             threading.Thread(target=_play, args=(item["path"],), daemon=True).start()
 
     def _folder_selected():
@@ -315,7 +430,7 @@ def build(container, root, wheel=None, with_settings=False):
         if not destination:
             messagebox.showinfo(
                 "Send",
-                "No destination is set. Open Settings above and put an scp target in "
+                "No destination is set. Open ⚙ Recording settings and put an scp target in "
                 "“Send recordings to”, for example root@host:/srv/project/inbox/")
             return
         files = [item["path"]]
@@ -371,36 +486,46 @@ def build(container, root, wheel=None, with_settings=False):
                 pass
         refresh()
 
-    # Two rows of three. One row of six overflowed the pane and silently cut the
-    # last two buttons off the right edge — an action you cannot see is an
-    # action you do not have.
-    actions = (
-        ("Play", _play_selected, "Open the clip in your video player."),
-        ("Send", _send_selected, "scp this recording to your configured destination."),
-        ("Folder", _folder_selected, "Open the containing folder."),
-        ("Copy path", _copy_path, "Copy the file path, to paste to an agent."),
-        ("Copy text", _copy_words, "Copy the transcript."),
-        ("Delete", _delete_selected, "Remove the video, transcript and audio from this PC."),
-    )
-    action_buttons = {}
-    for index, (label, command, tip) in enumerate(actions):
-        btn = ttk.Button(buttons, text=label, command=command, width=11)
-        btn.grid(row=index // 3, column=index % 3, padx=px((0, 5)), pady=px((0, 5)), sticky="w")
-        tooltip(btn, tip)
-        action_buttons[label] = btn
+    action_buttons = {
+        "Send": ttk.Button(head_right, text="Send", style="Accent.TButton",
+                           command=_send_selected),
+        "Play": ttk.Button(head_right, text="Play", command=_play_selected),
+        "\u22ef": ttk.Button(head_right, text="\u22ef", width=3),
+    }
+    action_buttons["Send"].pack(side="left")
+    action_buttons["Play"].pack(side="left", padx=px((7, 0)))
+    action_buttons["\u22ef"].pack(side="left", padx=px((7, 0)))
+    tooltip(action_buttons["Send"], "scp this recording to your configured destination.")
+    tooltip(action_buttons["Play"], "Open the clip in your video player.")
+    tooltip(action_buttons["\u22ef"], "Copy, open the folder, or delete.")
+
+    menu = tk.Menu(root, tearoff=False)
+    cmds = {"play": _play_selected, "send": _send_selected, "copy_text": _copy_words,
+            "copy_path": _copy_path, "folder": _folder_selected, "delete": _delete_selected}
+
+    def show_more_menu() -> None:
+        if state["selected"] is None:
+            return
+        fill_recording_menu(menu, cmds)
+        more = action_buttons["\u22ef"]
+        menu.tk_popup(more.winfo_rootx(), more.winfo_rooty() + more.winfo_height())
+
+    action_buttons["\u22ef"].config(command=show_more_menu)
+    # Test seam, like pv_open_settings on the History tab.
+    container.pv_recordings = {"menu": menu, "cmds": cmds, "buttons": action_buttons,
+                               "fill_menu": lambda m: fill_recording_menu(m, cmds),
+                               "state": state}
 
     refresh_btn = ttk.Button(head, text="Refresh", command=lambda: refresh(
         state["selected"]["stem"] if state["selected"] else None))
     refresh_btn.pack(side="right", padx=px((0, 12)))
 
-    # Opened straight after a recording: land on that clip with Play accented,
-    # so the obvious next move is the one under the cursor rather than something
-    # to go hunting for. Any other way of opening the tab is unaffected.
+    # Opened straight after a recording: land on that clip (Send is the one
+    # filled button, so the obvious next move is already under the cursor).
     just_recorded = os.environ.get("PV_SELECT", "").strip()
     refresh(just_recorded or None)
     if just_recorded and state["selected"] and state["selected"]["stem"] == just_recorded:
-        action_buttons["Play"].configure(style="Accent.TButton")
-        action_buttons["Play"].focus_set()
+        action_buttons["Send"].focus_set()
 
     # Poll, the way the Meetings tab does. Without this the tab is a snapshot
     # from whenever it was opened: record with it on screen and it still says

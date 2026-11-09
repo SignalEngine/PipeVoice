@@ -55,7 +55,8 @@ def apply_theme(root):
     style.map("TButton", background=[("active", "#262a3a")])
     style.configure("Accent.TButton", background=p["accent"], foreground="#1a0c0d",
                     font=theme.font("body_strong"), padding=px(7), borderwidth=0)
-    style.map("Accent.TButton", background=[("active", p["accent_hi"])])
+    style.map("Accent.TButton", background=[("disabled", p["card"]), ("active", p["accent_hi"])],
+              foreground=[("disabled", p["muted"])])
     # Green, for the one action a recording is waiting on. Distinct from the
     # coral accent so "Transcribe" does not compete with Save for the eye.
     style.configure("Go.TButton", background=p["good"], foreground="#10131a",
@@ -314,3 +315,30 @@ def collapsible_settings(container, link, hides, palette_bg, wheel=None):
     container.pv_close_settings = close
     container.pv_open_settings = open_panel
     return panel
+
+
+def empty_state(parent, feat: str, title: str, line: str, button_text: str = "",
+                command=None, bg=None):
+    """A centred "nothing here yet" block: tile in the tab's colour, title, hint, optional button.
+
+    ``feat`` is a PALETTE key such as ``feat_history``. Returns the frame
+    (``frame.button`` is the button, or None) so callers and tests can reach it.
+    """
+    import tkinter as tk
+    from tkinter import ttk
+
+    bg = bg or PALETTE["bg"]
+    frame = tk.Frame(parent, bg=bg)
+    inner = tk.Frame(frame, bg=bg)
+    inner.pack(expand=True, padx=px(16), pady=px(24))
+    tk.Frame(inner, bg=PALETTE[feat], width=px(28), height=px(28)).pack(pady=px((0, 12)))
+    tk.Label(inner, text=title, bg=bg, fg=PALETTE["fg"],
+             font=theme.font("body_large_strong"), wraplength=px(300),
+             justify="center").pack()
+    tk.Label(inner, text=line, bg=bg, fg=PALETTE["muted"], font=theme.font("body"),
+             wraplength=px(300), justify="center").pack(pady=px((4, 0)))
+    frame.button = None
+    if button_text:
+        frame.button = ttk.Button(inner, text=button_text, command=command)
+        frame.button.pack(pady=px((12, 0)))
+    return frame

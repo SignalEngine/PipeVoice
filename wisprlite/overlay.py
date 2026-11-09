@@ -638,7 +638,7 @@ class Overlay:
             st["mic_silent_warned"] = True
             self._show_bleed_warning(
                 c, "PipeVoice can't hear your mic.",
-                "Unmute in Teams or check Settings \u2192 Mic.")
+                "Unmute in Teams or check \u2699 Settings \u2192 Microphone.")
         for label, x1, x2 in (("mic", 174, 221), ("desktop", 292, 350)):
             dead = bool(errors.get(label)) or (label == "mic" and mic_silent)
             try:
