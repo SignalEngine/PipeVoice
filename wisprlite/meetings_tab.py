@@ -2164,9 +2164,14 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         sync_video_btn(session)
         display_summary()
 
+    sending_videos: set = set()     # meeting folders with an upload running from this window
+
     def sync_video_btn(session: dict) -> None:
         clip, reason = meeting_video_file(session["path"])
-        video_btn.config(state="normal" if clip else "disabled")
+        if Path(session["path"]) in sending_videos:
+            video_btn.config(text="Sending\u2026", state="disabled")
+            return
+        video_btn.config(text="Send video", state="normal" if clip else "disabled")
         # Say why it is greyed out, but never over a message that is already there.
         if clip is None and not status_label.cget("text"):
             status_label.config(text=reason, fg=MUTED)
@@ -2186,10 +2191,14 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         from .meeting import hold_session, release_session
 
         hold = hold_session(path)   # retention / Delete must not remove it mid-upload
+        sending_videos.add(Path(path))
         video_btn.config(text="Sending\u2026", state="disabled")
         status_label.config(text="Sending the meeting video\u2026", fg=MUTED)
 
         def finished(ok, message):
+            sending_videos.discard(Path(path))
+            if selected_path() != path:
+                return      # another meeting is on screen now; don't label it with this result
             video_btn.config(text="Send video", state="normal")
             if ok:
                 status_label.config(text=f"Meeting video sent to {destination}", fg=GOOD)
@@ -2974,6 +2983,11 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             f"Delete {path.name} and all of its audio and transcript files?",
             parent=root,
         ):
+            return
+        if session_busy(path):      # an upload may have started while the dialog was open
+            status_label.config(
+                text="This meeting's video is still being built or sent. Try again when it finishes.",
+                fg=ACCENT)
             return
         set_busy(True)
         status_label.config(text="Deleting session…", fg=MUTED)
