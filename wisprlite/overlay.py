@@ -561,6 +561,10 @@ class Overlay:
                 50, cy, anchor="w", fill=PALETTE["fg"],
                 font=("Consolas", 11, "bold"),
             )
+            items["screen"] = c.create_text(
+                50, cy + 14, anchor="w", text="", font=("Segoe UI", 7, "bold"),
+                fill=PALETTE["meeting"],
+            )
             for label, label_x, x1, x2 in (
                 ("mic", 145, 174, 221),
                 ("desktop", 235, 292, 350),
@@ -607,8 +611,16 @@ class Overlay:
         if elapsed < st.get("bleed_last_elapsed", 0.0):
             st["bleed_warned"] = False
             st["mic_silent_warned"] = False
+            st["video_warned"] = False
         st["bleed_last_elapsed"] = elapsed
 
+        video = data.get("video")
+        c.itemconfigure(items["screen"],
+                        text="\u25cf screen" if video == "recording" else "")
+        if video == "failed" and not st.get("video_warned"):
+            st["video_warned"] = True
+            self._show_bleed_warning(
+                c, "Video failed: audio is still recording", "")
         bleed = data.get("bleed")
         try:
             suspected = bool(bleed() if callable(bleed) else bleed)

@@ -140,6 +140,26 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
+def meeting_video_file(session_dir: str | Path) -> tuple[Path | None, str]:
+    """(file to send, why-not). meeting.mp4, else the video-only clip a failed mux
+    left behind; with neither, the reason the Send video button is disabled."""
+    folder = Path(session_dir)
+    video = _read_json(folder / "video.json") or None
+    from .meeting import meeting_video_name, video_only_name
+
+    if (folder / meeting_video_name(folder)).is_file():
+        return folder / meeting_video_name(folder), ""
+    # The video-only clip only once a mux has FAILED on it: during the meeting
+    # or the mux it is still being written, and an upload would be truncated.
+    leftover = video.get("video_only") if isinstance(video, dict) else None
+    # Only the one name the recorder writes: meta.json must never pick an
+    # arbitrary file (e.g. "../something") for upload.
+    if leftover == video_only_name(folder) and (folder / leftover).is_file():
+        return folder / leftover, ""
+    error = video.get("error") if isinstance(video, dict) else None
+    return None, f"Video failed: {error}" if error else "No video for this meeting"
+
+
 def derive_status(session_dir: str | Path, meta: dict | None = None) -> str:
     """Return the user-facing state: recording, recorded, transcribed, or error."""
     path = Path(session_dir)
@@ -239,6 +259,9 @@ def meetings_signature(base_dir: str | Path | None = None) -> tuple:
                     (meta.get(stream) or {}).get("error")
                     for stream in ("mic", "desktop")
                 ),
+                # The video finishes after the meeting stops: refresh Send video then.
+                (path / "video.json").stat().st_mtime_ns if (path / "video.json").is_file() else None,
+                (path / f"{path.name}.mp4").is_file(),
                 transcript_mtime,
             )
         except OSError:
@@ -1264,6 +1287,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     # Right after Transcribe so a narrow window never clips it.
     export_btn = ttk.Button(actions, text="Export all", state="disabled")
     export_btn.pack(side="left", padx=(7, 0))
+    video_btn = ttk.Button(actions, text="Send video", state="disabled")
+    video_btn.pack(side="left", padx=(7, 0))
     polish_btn = ttk.Button(actions, text="Polish", state="disabled")
     polish_btn.pack(side="left", padx=(7, 0))
     toggle_polish_btn = ttk.Button(actions, text="Show raw", state="disabled")
@@ -2136,7 +2161,68 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                 text=session["error"] or "",
                 fg=ACCENT if session["error"] else MUTED,
             )
+        sync_video_btn(session)
         display_summary()
+
+    sending_videos: set = set()     # meeting folders with an upload running from this window
+
+    def sync_video_btn(session: dict) -> None:
+        clip, reason = meeting_video_file(session["path"])
+        if Path(session["path"]) in sending_videos:
+            video_btn.config(text="Sending\u2026", state="disabled")
+            return
+        video_btn.config(text="Send video", state="normal" if clip else "disabled")
+        # Say why it is greyed out, but never over a message that is already there.
+        if clip is None and not status_label.cget("text"):
+            status_label.config(text=reason, fg=MUTED)
+
+    def do_send_video() -> None:
+        path = selected_path()
+        clip = meeting_video_file(path)[0] if path else None
+        if clip is None:
+            return
+        from . import screenrec
+
+        destination = (config.Config.load().screenrec_destination or "").strip()
+        if not destination:
+            status_label.config(
+                text="Set a destination under Screen recording first.", fg=ACCENT)
+            return
+        from .meeting import hold_session, release_session
+
+        hold = hold_session(path)   # retention / Delete must not remove it mid-upload
+        sending_videos.add(Path(path))
+        video_btn.config(text="Sending\u2026", state="disabled")
+        status_label.config(text="Sending the meeting video\u2026", fg=MUTED)
+
+        def finished(ok, message):
+            sending_videos.discard(Path(path))
+            if selected_path() != path:
+                return      # another meeting is on screen now; don't label it with this result
+            video_btn.config(text="Send video", state="normal")
+            if ok:
+                status_label.config(text=f"Meeting video sent to {destination}", fg=GOOD)
+            else:
+                status_label.config(text=f"Send failed: {message}", fg=ACCENT)
+
+        def work():
+            # Off the Tk thread; non-daemon so closing the window never kills an upload.
+            try:
+                # A meeting video is far bigger than a bug clip: scale the timeout.
+                size_mb = clip.stat().st_size / 1e6
+                ok, message = screenrec.send(
+                    [clip], destination,
+                    timeout=max(screenrec.UPLOAD_TIMEOUT, size_mb * 1.0 + 60))
+            except Exception as exc:
+                ok, message = False, f"{type(exc).__name__}: {exc}"
+            finally:
+                release_session(hold)
+            try:
+                root.after(0, lambda: finished(ok, message))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, name="meeting-video-send", daemon=False).start()
 
     def add_session_row(session: dict, index: int) -> None:
         row = tk.Frame(session_rows, bg=CARD, padx=12, pady=10, cursor="hand2")
@@ -2885,11 +2971,23 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             or state["busy"]
         ):
             return
+        from .meeting import session_busy
+
+        if session_busy(path):
+            status_label.config(
+                text="This meeting's video is still being built or sent. Try again when it finishes.",
+                fg=ACCENT)
+            return
         if not messagebox.askyesno(
             "Delete meeting?",
             f"Delete {path.name} and all of its audio and transcript files?",
             parent=root,
         ):
+            return
+        if session_busy(path):      # an upload may have started while the dialog was open
+            status_label.config(
+                text="This meeting's video is still being built or sent. Try again when it finishes.",
+                fg=ACCENT)
             return
         set_busy(True)
         status_label.config(text="Deleting session…", fg=MUTED)
@@ -2952,6 +3050,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         (export_btn, "Write this meeting out as Markdown, a web page you can print to PDF, "
                      "or slides \u2014 with highlights, notes and named speakers. "
                      "Press Transcribe first, then Export all."),
+        (video_btn, "Send this meeting's screen video to your Screen recording destination."),
         (copy_btn, "Copy the transcript you are currently viewing to the clipboard."),
         (save_btn, "Save the transcript you are currently viewing as a .txt file."),
         (folder_btn, "Open the folder holding this recording's audio and transcript."),
@@ -2975,6 +3074,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     copy_btn.config(command=do_copy)
     save_btn.config(command=do_save)
     export_btn.config(command=do_export)
+    video_btn.config(command=do_send_video)
     folder_btn.config(command=do_open_folder)
     delete_btn.config(command=do_delete)
     pick_docs_btn.config(command=pick_docs)

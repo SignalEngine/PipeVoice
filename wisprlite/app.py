@@ -94,7 +94,13 @@ class App:
             bookmark_acoustic=self.cfg.bookmark_acoustic,
             bookmark_sensitivity=self.cfg.bookmark_sensitivity,
             on_auto_stop=self._on_meeting_auto_stop,
+            video_fps=self.cfg.meeting_video_fps if self.cfg.meeting_video else 0,
+            on_video_ready=self._meeting_video_ready,
         )
+        # Serialises the "Preparing…" notice against the mux thread's final one,
+        # so the final message can never be overwritten by a late "Preparing…".
+        self._video_msg_lock = threading.Lock()
+        self._meeting_video_sender = None   # the thread scp-ing the finished video
         self._meeting_active = False
         self._meeting_degraded = False
         self._meeting_errors_reported = set()
@@ -856,6 +862,7 @@ class App:
             "errors": self._meeting.fatal_errors,
             "bleed": self._meeting.bleed_suspected,
             "mic_silent": self._meeting.mic_silent_suspected,
+            "video": self._meeting.video_state,
         }
 
     # ---- screen recording ------------------------------------------------
@@ -1409,6 +1416,7 @@ class App:
                         overlay.hide()
                 self._set_icon("idle")
                 self.tray.update()
+                self._video_preparing_notice()
             return
         if self.paused:
             return
@@ -1418,6 +1426,12 @@ class App:
         self._meeting_errors_reported.clear()
         self._start_pipefocus()
         try:
+            # Decided when the meeting STARTS: a settings change while the video
+            # is still muxing must never send it somewhere the user did not pick.
+            cfg = getattr(self, "cfg", None)
+            if cfg is not None:
+                self._meeting.video_send_plan = (
+                    bool(cfg.meeting_video_send), (cfg.screenrec_destination or "").strip())
             self._meeting.start()
         except Exception as exc:
             # Focus was started first, so it must be released here or it keeps a
@@ -1602,6 +1616,96 @@ class App:
             self.overlay.hide()
         self._fail(f"meeting stopped: {reason}")
         self.tray.update()
+        self._video_preparing_notice()
+
+    # ---- meeting screen video ----------------------------------------------
+
+    def _sync_meeting_video(self, cfg) -> None:
+        """Same pattern as the other meeting settings: pushed on every config reload."""
+        self._meeting.video_fps = cfg.meeting_video_fps if cfg.meeting_video else 0
+
+    def _video_say(self, state: str, text: str) -> None:
+        # A Windows notification, NOT the overlay: the overlay is showing the
+        # after-call card (transcribe / answer their questions) at this moment,
+        # and a set_state() here would replace it before the user can click.
+        self._notify(text)
+
+    def _video_preparing_notice(self) -> None:
+        """After a meeting stops: tell the user the video is being made.
+
+        Only while the mux is still pending; under the lock so the mux thread's
+        final message (which takes the same lock) always lands after this one.
+        """
+        if not getattr(self._meeting, "video_mux_pending", False):
+            return
+        with self._video_msg_lock:
+            if self._meeting.video_mux_pending:
+                self._video_say("transcribing", "Preparing meeting video\u2026")
+
+    def _meeting_video_ready(self, path, error, plan=None) -> None:
+        """Called once per meeting video from the mux thread (or stop() if nothing
+        was captured). The local file is never deleted."""
+        if error or path is None:
+            log.warning("meeting video: failed: %s", error)
+            with self._video_msg_lock:
+                self._video_say(
+                    "error", f"Meeting video failed (audio is fine): {error}"[:80])
+            return
+        path = Path(path)
+        try:
+            size_mb = path.stat().st_size / 1e6
+        except OSError:
+            size_mb = 0.0
+        # The picture died part-way: say so in every message, never "ready" alone.
+        import json
+
+        try:
+            partial = json.loads((path.parent / "video.json").read_text(encoding="utf-8")).get("partial")
+        except (OSError, ValueError, AttributeError):
+            partial = None
+        note = " (picture stopped early; audio is complete)" if partial else ""
+        send_on, destination = plan or (
+            bool(self.cfg.meeting_video_send), (self.cfg.screenrec_destination or "").strip())
+        if not send_on:
+            log.info("meeting video: %.1f MB, sent=False", size_mb)
+            with self._video_msg_lock:
+                self._video_say("done", "\u2713 Meeting video ready" + note)
+            return
+        if not destination:
+            log.info("meeting video: %.1f MB, sent=False (no destination)", size_mb)
+            with self._video_msg_lock:
+                self._video_say(
+                    "done",
+                    "Video saved locally. Set a Screen recording destination to send it.")
+            return
+
+        from .meeting import hold_session, release_session
+
+        hold = hold_session(path.parent)   # retention must not delete it mid-upload
+
+        def work() -> None:
+            from . import screenrec
+
+            try:
+                # An hour of meeting is far bigger than a bug clip: allow ~1 MB/s
+                # minimum upload instead of the clip default of 300 s total.
+                ok, message = screenrec.send(
+                    [path], destination,
+                    timeout=max(screenrec.UPLOAD_TIMEOUT, size_mb * 1.0 + 60))
+            except Exception as exc:
+                ok, message = False, f"{type(exc).__name__}: {exc}"
+            finally:
+                release_session(hold)
+            log.info("meeting video: %.1f MB, sent=%s", size_mb, ok)
+            with self._video_msg_lock:
+                self._video_say(
+                    "done" if ok else "error",
+                    "\u2713 Meeting video sent" + note if ok else
+                    f"Meeting video kept locally \u2014 send failed: {message}"[:80])
+
+        thread = threading.Thread(target=work, name="meeting-video-send", daemon=False)
+        self._meeting_video_sender = thread
+        thread.start()
 
     # ---- agent MCP -------------------------------------------------------
     def _polish(self, text: str) -> str:
@@ -1981,6 +2085,7 @@ class App:
         # recording silently landed in the old folder.
         self._meeting.base_dir = meetings_dir()
         self._meeting.max_minutes = new.meeting_max_minutes
+        self._sync_meeting_video(new)
         self._meeting.retention_sessions = max(
             1, new.meeting_retention_sessions
         )
