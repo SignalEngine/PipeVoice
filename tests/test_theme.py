@@ -200,3 +200,50 @@ def test_entry_enables_dpi_awareness_only_off_the_app_branch(monkeypatch, argv, 
     monkeypatch.delitem(sys.modules, "wisprlite.__main__", raising=False)
     importlib.import_module("wisprlite.__main__")
     assert bool(calls) is expected
+
+
+def test_dpi_awareness_is_system_aware_not_per_monitor(monkeypatch):
+    # Tk 8.6 ignores WM_DPICHANGED; per-monitor (2) would keep the first monitor's
+    # scale after dragging to another one.
+    seen = []
+    ct = types.SimpleNamespace(windll=types.SimpleNamespace(
+        shcore=types.SimpleNamespace(SetProcessDpiAwareness=seen.append)))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "ctypes", ct)
+    theme.enable_dpi_awareness()
+    assert seen == [1]
+
+
+def test_meetings_intro_keeps_its_width_when_the_container_is_the_root(tmp_path, monkeypatch):
+    # --meetings builds the tab straight into the Tk root, whose <Configure> fires for
+    # every child; a small button's resize must not squash the intro to 200 px.
+    import os
+    import tkinter as tk
+    import pytest
+    if not os.environ.get("DISPLAY"):
+        pytest.skip("no X display; run under xvfb-run")
+    from wisprlite import meeting, meetings_tab
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    (tmp_path / "m").mkdir()
+    monkeypatch.setattr(meeting, "meetings_dir", lambda: tmp_path / "m")
+    monkeypatch.setattr(meetings_tab, "meetings_dir", lambda: tmp_path / "m")
+    root = tk.Tk()
+    try:
+        monkeypatch.setattr(theme, "_inited", False)
+        theme.init(root)
+        meetings_tab.build(root, root)
+        root.geometry("1100x700")
+        for _ in range(20):
+            root.update_idletasks()
+            root.update()
+        intro = next(w for w in _all(root) if w.winfo_class() == "Label"
+                     and str(w.cget("text")).startswith("Press your meeting hotkey"))
+        assert int(str(intro.cget("wraplength"))) > 600
+    finally:
+        root.destroy()
+
+
+def _all(w):
+    yield w
+    for c in w.winfo_children():
+        yield from _all(c)

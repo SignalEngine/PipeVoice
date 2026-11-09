@@ -865,7 +865,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         font=theme.font("body"), padx=px(18),
     )
     intro.pack(fill="x", pady=px((0, 10)))
-    container.bind("<Configure>", lambda e: intro.config(
+    # container can be the Tk root (--meetings), whose <Configure> fires for every child.
+    container.bind("<Configure>", lambda e: e.widget is container and intro.config(
         wraplength=max(px(200), e.width - px(36) - px(4))), add="+")
 
     # "Before your next call": docs, notes and a way to try a question. Outside

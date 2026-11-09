@@ -37,7 +37,9 @@ def enable_dpi_awareness() -> None:
     try:
         import ctypes
 
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        # 1 = system-aware: Tk 8.6 ignores WM_DPICHANGED, so per-monitor (2) would keep the
+        # first monitor's scale on another monitor; system-aware lets Windows scale there instead.
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
         return
     except Exception as e:
         log.debug("SetProcessDpiAwareness failed: %s", e)
