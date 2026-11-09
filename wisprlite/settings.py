@@ -540,6 +540,21 @@ def _build_voices_tab(parent, show_tab=None, wheel=None) -> None:
              bg=BG, fg=MUTED, font=("Segoe UI", 9), justify="left", wraplength=640).pack(anchor="w", pady=(4, 0))
 
 
+VIDEO_FPS_OPTIONS = [
+    ("Small file (4 fps)", 4),
+    ("Smooth (10 fps)", 10),
+    ("Very smooth (15 fps)", 15),
+]
+
+
+def nearest_video_fps_label(fps) -> str:
+    try:
+        fps = int(fps)
+    except (TypeError, ValueError):
+        fps = 10
+    return min(VIDEO_FPS_OPTIONS, key=lambda option: abs(option[1] - fps))[0]
+
+
 def main(first_run: bool = False) -> None:
     import tkinter as tk
     from tkinter import ttk
@@ -767,8 +782,11 @@ def main(first_run: bool = False) -> None:
     screenrec_dir_var = tk.StringVar(value=cfg.screenrec_dir)
     screenrec_keep_var = tk.BooleanVar(value=cfg.screenrec_keep_local)
     screenrec_fps_var = tk.StringVar(value=str(cfg.screenrec_fps))
+    meeting_auto_name_var = tk.BooleanVar(value=cfg.meeting_auto_name)
     meeting_video_var = tk.BooleanVar(value=cfg.meeting_video)
     meeting_video_send_var = tk.BooleanVar(value=cfg.meeting_video_send)
+    video_fps_start = nearest_video_fps_label(cfg.meeting_video_fps)
+    meeting_video_fps_var = tk.StringVar(value=video_fps_start)
     bookmark_hotkey_var = tk.StringVar(value=cfg.bookmark_hotkey)
     bookmark_acoustic_var = tk.BooleanVar(value=cfg.bookmark_acoustic)
     bookmark_sensitivity_var = tk.DoubleVar(value=cfg.bookmark_sensitivity)
@@ -987,9 +1005,16 @@ def main(first_run: bool = False) -> None:
         command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
     )
 
+    check(c, "Also name meetings transcribed on this computer", meeting_auto_name_var,
+          "Meetings transcribed with Deepgram are named automatically. Tick this to also "
+          "send the start of local transcripts to your AI provider for a name.")
     check(c, "Record the screen too (video)", meeting_video_var,
           "Records the screen your mouse is on when the meeting starts. "
           "Applies from the next meeting.")
+    combo(row(c, "Video smoothness",
+              "Higher is smoother but makes bigger files and uses more CPU. "
+              "About 3x the size at 15 fps. Applies from the next meeting."),
+          meeting_video_fps_var, [label for label, _ in VIDEO_FPS_OPTIONS])
     check(c, "Send the video when the meeting ends (uses the Screen recording destination)",
           meeting_video_send_var)
     _video_dest_hint = tk.Label(c, text="", bg=CARD, fg=MUTED, font=("Segoe UI", 8),
@@ -1988,8 +2013,11 @@ def main(first_run: bool = False) -> None:
         cfg.read_aloud_quiet_with_screenreader = bool(read_aloud_quiet_var.get())
         cfg.bookmark_hotkey = bookmark_hotkey_var.get().strip()
         cfg.bookmark_acoustic = bool(bookmark_acoustic_var.get())
+        cfg.meeting_auto_name = bool(meeting_auto_name_var.get())
         cfg.meeting_video = bool(meeting_video_var.get())
         cfg.meeting_video_send = bool(meeting_video_send_var.get())
+        cfg.meeting_video_fps = dict(VIDEO_FPS_OPTIONS).get(
+            meeting_video_fps_var.get(), cfg.meeting_video_fps)
         cfg.bookmark_phrases = bookmark_phrases_var.get().strip()
         try:
             cfg.bookmark_sensitivity = max(0.0, min(1.0, float(bookmark_sensitivity_var.get())))

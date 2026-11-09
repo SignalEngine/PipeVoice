@@ -31,10 +31,13 @@ from .meeting import (
     load_bookmarks,
     load_polished,
     load_speaker_map,
+    load_title,
     load_corrections,
     meetings_dir,
     render_transcript,
     save_speaker_map,
+    save_title,
+    save_title_if_empty,
     save_corrections,
     save_polished,
     transcribe_session,
@@ -46,6 +49,7 @@ from .summarise import (
     read_summaries,
     render_markdown_lines,
     summarise,
+    suggest_title,
 )
 from . import export
 from .polish import PolishFailed, ProviderNotReady, polish_segments
@@ -238,6 +242,14 @@ def cycle_match_index(current: int, count: int, step: int) -> int:
     return (current + (1 if step >= 0 else -1)) % count
 
 
+def _stat_pair(path: Path):
+    try:
+        info = path.stat()
+        return (info.st_mtime_ns, info.st_size)
+    except OSError:
+        return None
+
+
 def meetings_signature(base_dir: str | Path | None = None) -> tuple:
     """Describe changes relevant to the meeting list, ignoring live checkpoints."""
     base = Path(base_dir) if base_dir is not None else meetings_dir()
@@ -263,6 +275,7 @@ def meetings_signature(base_dir: str | Path | None = None) -> tuple:
                 (path / "video.json").stat().st_mtime_ns if (path / "video.json").is_file() else None,
                 (path / f"{path.name}.mp4").is_file(),
                 transcript_mtime,
+                _stat_pair(path / "title.json"),
             )
         except OSError:
             mtime = None
@@ -327,6 +340,15 @@ def _backend_label(value: object) -> str:
     if backend == "local":
         return "Local whisper"
     return str(value or "").strip()
+
+
+def ask_meeting_title(parent, current: str):
+    """Ask for a meeting name. None = cancelled, "" = clear the name."""
+    from tkinter import simpledialog
+
+    return simpledialog.askstring(
+        "Rename meeting", "Meeting name (leave empty to clear):",
+        initialvalue=current, parent=parent)
 
 
 def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
@@ -408,6 +430,7 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
                 "started_at": meta.get("started_at") or "",
                 "started_timestamp": timestamp,
                 "display_started": _display_started(meta, timestamp, path),
+                "title": load_title(path),
                 "duration_seconds": duration_seconds,
                 "duration": format_duration(duration_seconds),
                 "status": status,
@@ -497,7 +520,7 @@ def gather_session_export_data(session_dir, *, polished: bool = True) -> dict:
         meta, _started_timestamp(meta, path), path
     )
     return {
-        "title": display_started,
+        "title": load_title(path) or display_started,
         "duration_seconds": duration_seconds,
         "duration_label": format_duration(duration_seconds),
         "backend": _backend_label(meta.get("transcription_backend")),
@@ -521,6 +544,13 @@ def session_search_text(session_dir) -> str:
     transcript = _read_json(path / "transcript.json")
     segments = transcript.get("segments")
     corrections = load_corrections(path)
+    title = load_title(path)
+    if title:
+        return title + " " + _session_body_text(path, transcript, segments, corrections)
+    return _session_body_text(path, transcript, segments, corrections)
+
+
+def _session_body_text(path, transcript, segments, corrections) -> str:
     if isinstance(segments, list) and segments:
         visible = apply_polished(segments, load_polished(path))
         visible = apply_corrections(visible, corrections)
@@ -560,12 +590,12 @@ def search_sessions(query: str, sessions: list[dict], *, cache: dict | None = No
         # Dev, search "Dev", and the meeting was missing.
         stamps = []
         for filename in ("transcript.json", "corrections.json", "polished.json",
-                         "speaker_map.json"):
+                         "speaker_map.json", "title.json"):
             try:
                 stamps.append(round((Path(path) / filename).stat().st_mtime, 3))
             except OSError:
                 stamps.append(None)
-        if stamps[0] is None:
+        if stamps[0] is None and stamps[4] is None:   # no transcript and no name
             continue
         key = (str(path), tuple(stamps))
         if cache is not None and key in cache:
@@ -2036,7 +2066,9 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             meta_bits.append(speaker_text)
         if session["transcription_backend"]:
             meta_bits.append(session["transcription_backend"])
-        session_title.config(text=session["display_started"])
+        if session.get("title"):
+            meta_bits.append(session["display_started"])
+        session_title.config(text=session.get("title") or session["display_started"])
         session_meta.config(text=" · ".join(meta_bits))
 
         state["speaker_map"] = load_speaker_map(session["path"])
@@ -2241,11 +2273,15 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         )
         dot.pack(side="left", padx=(0, 7))
         tooltip(dot, session["status"].capitalize())
+        name = session.get("title") or ""
+        shown_title = (name[:36].rstrip() + "…") if len(name) > 36 else name
         title = tk.Label(
-            top, text=session["display_started"], bg=CARD, fg=FG,
+            top, text=shown_title or session["display_started"], bg=CARD, fg=FG,
             font=("Segoe UI", 10, "bold"), anchor="w", cursor="hand2",
         )
         title.pack(side="left", fill="x", expand=True)
+        if len(name) > 36:
+            tooltip(title, name)
         duration = tk.Label(
             top, text=session["duration"], bg=CARD, fg=FG,
             font=("Segoe UI", 9, "bold"), anchor="e", cursor="hand2",
@@ -2264,19 +2300,25 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                 if session["status"] == "recording"
                 else "No transcript yet"
             )
+        if name:
+            secondary_bits.insert(0, session["display_started"])
         # When filtering across meetings, show WHY this one matched — a list of
         # dates with no context makes the user open each in turn.
         hit = state["search_hits"].get(str(session["path"]))
+        hit_labels = ()
         if hit:
             count, snippet = hit
-            tk.Label(
+            hit_count = tk.Label(
                 row, text=f"{count} match{'' if count == 1 else 'es'}", bg=CARD,
                 fg=GOOD, anchor="w", font=("Segoe UI", 8, "bold"),
-            ).pack(fill="x", pady=(3, 0))
-            tk.Label(
+            )
+            hit_count.pack(fill="x", pady=(3, 0))
+            hit_text = tk.Label(
                 row, text=snippet, bg=CARD, fg=FG, anchor="w", justify="left",
                 wraplength=340, font=("Segoe UI", 8),
-            ).pack(fill="x")
+            )
+            hit_text.pack(fill="x")
+            hit_labels = (hit_count, hit_text)
 
         secondary = tk.Label(
             row, text=" · ".join(secondary_bits), bg=CARD, fg=MUTED,
@@ -2284,7 +2326,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         )
         secondary.pack(fill="x", padx=(19, 0), pady=(3, 0))
 
-        widgets = (row, top, dot, title, duration, secondary)
+        widgets = (row, top, dot, title, duration, secondary, *hit_labels)
         row_info = {
             "frame": row,
             "widgets": widgets,
@@ -2305,8 +2347,16 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             session_canvas.focus_set()
             select_session(index)
 
+        def context_menu(event) -> str:
+            if state["busy"]:
+                return "break"
+            choose(event)
+            show_session_menu(event)
+            return "break"
+
         for widget in widgets:
             widget.bind("<Button-1>", choose, add="+")
+            widget.bind("<Button-3>", context_menu, add="+")
             widget.bind("<Enter>", enter, add="+")
             widget.bind("<Leave>", leave, add="+")
 
@@ -2462,6 +2512,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         if selected_changed:
             selected = state["selected"]
             meta_bits = [selected["duration"], selected["status"]]
+            if selected.get("title"):
+                meta_bits.append(selected["display_started"])
             session_meta.config(text=" · ".join(meta_bits))
 
     def poll_sessions() -> None:
@@ -3015,6 +3067,107 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
                 pass
 
         threading.Thread(target=work, daemon=True).start()
+
+    def rename_selected() -> None:
+        path = selected_path()
+        if path is None or state["busy"]:
+            return
+        current = (state["selected"] or {}).get("title") or ""
+        answer = ask_meeting_title(root, current)
+        if answer is None:      # cancelled
+            return
+        try:
+            save_title(path, answer, "user")
+        except OSError as exc:
+            status_label.config(text=f"Could not save the name: {exc}", fg=ACCENT)
+            return
+        refresh(preferred=path)
+
+    def name_from_transcript() -> None:
+        path = selected_path()
+        if path is None or state["busy"]:
+            return
+        segments = _read_json(path / "transcript.json").get("segments")
+        if not isinstance(segments, list) or not segments:
+            return
+        cfg = config.Config.load()
+        before = load_title(path)
+        status_label.config(text="Naming this meeting…", fg=MUTED)
+
+        def back_on_ui(callback) -> None:
+            try:
+                root.after(0, callback)
+            except Exception:
+                pass
+
+        def finished(title, error) -> None:
+            shown = selected_path()     # the user may have clicked another meeting meanwhile
+
+            def say(text, fg) -> None:
+                if shown == path:
+                    status_label.config(text=text, fg=fg)
+
+            if error or not title:
+                say(f"Could not name it: {error}" if error
+                    else "Could not come up with a name.", ACCENT)
+                return
+            kept = "Kept your name — the meeting was renamed meanwhile."
+            try:
+                if before == "":
+                    if not save_title_if_empty(path, title, "auto"):
+                        say(kept, MUTED)
+                        return
+                else:
+                    # shortcut: compare-then-save, a rename in another window in the same instant can be overwritten
+                    if load_title(path) != before:
+                        say(kept, MUTED)
+                        return
+                    save_title(path, title, "auto")
+            except OSError as exc:
+                say(f"Could not save the name: {exc}", ACCENT)
+                return
+            say(f"Named: {title}", GOOD)
+            refresh(preferred=shown)
+
+        def work() -> None:
+            title, error = "", None
+            try:
+                title = suggest_title(segments, cfg.cleanup_provider, cfg.cleanup_model)
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+            back_on_ui(lambda: finished(title, error))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    # One reusable menu (see transcript_menu: never destroy a menu inside its own command).
+    session_menu = tk.Menu(root, tearoff=False)
+
+    def show_session_menu(event) -> None:
+        selected = state["selected"]
+        if selected is None or state["busy"]:
+            return
+        menu = session_menu
+        menu.delete(0, "end")
+        can_name = (
+            (selected["path"] / "transcript.json").is_file()
+            and provider_ready(config.Config.load().cleanup_provider)
+        )
+        menu.add_command(label="Rename…", command=rename_selected)
+        menu.add_command(
+            label="Name it from the transcript", command=name_from_transcript,
+            state="normal" if can_name else "disabled")
+        menu.add_separator()
+        menu.add_command(label="Open folder", command=do_open_folder)
+        menu.add_command(label="Export all…", command=do_export)
+        menu.add_command(
+            label="Send video", command=do_send_video,
+            state=str(video_btn.cget("state")) if str(video_btn.cget("state")) in
+            ("normal", "disabled") else "disabled")
+        menu.add_separator()
+        menu.add_command(label="Delete…", command=do_delete)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    session_canvas.bind("<F2>", lambda _event: rename_selected())
 
     def _on_search_changed(*_args) -> None:
         update_search()

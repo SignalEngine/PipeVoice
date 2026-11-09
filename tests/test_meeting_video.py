@@ -306,7 +306,7 @@ def test_a_config_reload_pushes_the_video_setting_to_the_recorder():
 def test_the_three_video_settings_round_trip_through_config(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.json")
     cfg = config.Config.load()
-    assert (cfg.meeting_video, cfg.meeting_video_fps, cfg.meeting_video_send) == (False, 4, False)
+    assert (cfg.meeting_video, cfg.meeting_video_fps, cfg.meeting_video_send) == (False, 10, False)
     cfg.meeting_video, cfg.meeting_video_fps, cfg.meeting_video_send = True, 7, True
     cfg.save()
     again = config.Config.load()
@@ -448,3 +448,25 @@ def test_a_partial_picture_is_never_announced_as_simply_ready(tmp_path):
     app, said = _app()
     _ready(app, clip, plan=(False, ""))
     assert "stopped early" in said[-1]
+
+
+def test_video_smoothness_options_and_nearest_label():
+    from wisprlite import settings
+
+    assert dict(settings.VIDEO_FPS_OPTIONS) == {
+        "Small file (4 fps)": 4, "Smooth (10 fps)": 10, "Very smooth (15 fps)": 15}
+    for fps, label in ((4, "Small file (4 fps)"), (10, "Smooth (10 fps)"),
+                       (15, "Very smooth (15 fps)"), (8, "Smooth (10 fps)"), (6, "Small file (4 fps)"),
+                       (5, "Small file (4 fps)"), (30, "Very smooth (15 fps)")):
+        assert settings.nearest_video_fps_label(fps) == label
+    assert settings.nearest_video_fps_label("junk") == "Smooth (10 fps)"
+
+
+def test_the_recorder_clamps_video_fps_to_15(tmp_path):
+    rec = MeetingRecorder(tmp_path, video_fps=30)
+    assert rec.video_fps == 15
+    rec.video_fps = 60
+    assert rec.video_fps == 15
+    rec.video_fps = 0
+    assert rec.video_fps == 0
+    assert MeetingRecorder(tmp_path, video_fps=4).video_fps == 4

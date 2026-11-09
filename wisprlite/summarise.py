@@ -136,6 +136,7 @@ def _complete(
     messages: list[dict[str, str]],
     provider: str,
     model: str,
+    timeout: float | None = None,
 ) -> str:
     result = chat_completion(
         messages,
@@ -143,6 +144,7 @@ def _complete(
         model,
         allow_empty=True,
         raise_errors=True,
+        timeout=timeout,
     )
     return result or ""
 
@@ -333,3 +335,33 @@ def summarise(
     if result and session_dir is not None:
         _persist(session_dir, mode, provider, resolved_model, result)
     return result
+
+
+TITLE_PROMPT = (
+    "Name this meeting in 3 to 6 words, like a calendar entry. Use the topic and "
+    "the other company's name if it is said. No quotes, no date, no full stop."
+)
+
+
+def suggest_title(segments: list[dict], provider: str, model: str) -> str:
+    """A short meeting name from the opening of the transcript; "" if unusable."""
+    lines = []
+    for segment in _normalise_segments(segments):
+        lines.append(f"{segment.get('speaker') or 'Speaker'}: {str(segment['text']).strip()}")
+    text = "\n".join(lines)[:3000]
+    if not text:
+        return ""
+    reply = _complete(
+        [
+            {"role": "system", "content": TITLE_PROMPT},
+            {"role": "user", "content": "MEETING TRANSCRIPT:\n" + text},
+        ],
+        provider,
+        model,
+        timeout=20,
+    )
+    reply = (reply or "").strip().splitlines()[0].strip() if (reply or "").strip() else ""
+    title = reply.strip(" \t\"'`“”‘’*#").rstrip(".。 ").strip(" \"'“”‘’")
+    if not title or len(title.split()) > 12:
+        return ""
+    return title
