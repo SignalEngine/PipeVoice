@@ -7,6 +7,9 @@ wraps it in its own short-lived Tk process.
 
 from __future__ import annotations
 
+from . import theme
+from .theme import px
+
 import os
 import re
 import threading
@@ -103,33 +106,33 @@ def build(container, root, wheel=None) -> None:
         wheel = _wheel_global
     state = {"info": None}
 
-    head = tk.Frame(container, bg=BG, padx=28, pady=24)
+    head = tk.Frame(container, bg=BG, padx=px(28), pady=px(24))
     head.pack(fill="x")
     from . import branding
     branding.lockup_label(head, BG).pack(anchor="w")
     tk.Label(head, text=f"Version {__version__}", bg=BG, fg=MUTED,
-             font=("Consolas", 10)).pack(anchor="w", pady=(3, 16))
+             font=("Consolas", 10)).pack(anchor="w", pady=px((3, 16)))
 
-    status = tk.Label(head, text="Checking for updates…", bg=BG, fg=MUTED, font=("Segoe UI", 10))
+    status = tk.Label(head, text="Checking for updates…", bg=BG, fg=MUTED, font=theme.font("body"))
     status.pack(anchor="w")
     actions = tk.Frame(head, bg=BG)
-    actions.pack(anchor="w", fill="x", pady=(14, 0))
+    actions.pack(anchor="w", fill="x", pady=px((14, 0)))
     btn = ttk.Button(actions, text="Checking…", state="disabled", style="Accent.TButton")
     btn.pack(side="left")
     ttk.Button(actions, text="⭐ Star on GitHub",
-               command=lambda: webbrowser.open(GITHUB_URL)).pack(side="left", padx=(10, 0))
+               command=lambda: webbrowser.open(GITHUB_URL)).pack(side="left", padx=px((10, 0)))
     link = tk.Label(actions, text="All releases ↗", bg=BG, fg=ACCENT, cursor="hand2",
-                    font=("Segoe UI", 9, "underline"))
-    link.pack(side="left", padx=(16, 0))
+                    font=theme.font("body", underline=True))
+    link.pack(side="left", padx=px((16, 0)))
     link.bind("<Button-1>", lambda e: webbrowser.open(RELEASES_URL))
     fb = tk.Label(actions, text="Send feedback ↗", bg=BG, fg=ACCENT, cursor="hand2",
-                  font=("Segoe UI", 9, "underline"))
-    fb.pack(side="left", padx=(16, 0))
+                  font=theme.font("body", underline=True))
+    fb.pack(side="left", padx=px((16, 0)))
     fb.bind("<Button-1>", lambda e: _open_feedback())
 
     bodyf = tk.Frame(container, bg=BG)
     bodyf.pack(fill="both", expand=True)
-    canvas = tk.Canvas(bodyf, bg=BG, highlightthickness=0, width=480, height=280)
+    canvas = tk.Canvas(bodyf, bg=BG, highlightthickness=0, width=px(480), height=px(280))
     vbar = ttk.Scrollbar(bodyf, orient="vertical", command=canvas.yview)
     canvas.configure(yscrollcommand=vbar.set)
     vbar.pack(side="right", fill="y")
@@ -147,25 +150,25 @@ def build(container, root, wheel=None) -> None:
 
     # What the app does and where each part lives. Release notes below say what
     # CHANGED; this says what is THERE, which the notes never do.
-    does = tk.Frame(inner, bg=BG, padx=28)
-    does.pack(fill="x", pady=(6, 0))
+    does = tk.Frame(inner, bg=BG, padx=px(28))
+    does.pack(fill="x", pady=px((6, 0)))
     tk.Label(does, text="WHAT IT DOES", bg=BG, fg=ACCENT,
-             font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 6))
+             font=theme.font("body_strong")).pack(anchor="w", pady=px((0, 6)))
     for name, what in FEATURES:
         row = tk.Frame(does, bg=BG)
-        row.pack(fill="x", pady=1)
+        row.pack(fill="x", pady=px(1))
         tk.Label(row, text=name, bg=BG, fg=FG, width=16, anchor="w",
-                 font=("Segoe UI", 10, "bold")).pack(side="left", anchor="n")
+                 font=theme.font("body_strong")).pack(side="left", anchor="n")
         what_label = tk.Label(row, text=what, bg=BG, fg=MUTED, anchor="w", justify="left",
-                              wraplength=320, font=("Segoe UI", 10))
+                              wraplength=px(368), font=theme.font("body"))
         what_label.pack(side="left", fill="x")
         # Wrap to the window, not a fixed width: a fixed 760px stopped the
         # whole tab from narrowing.
         row.bind("<Configure>", lambda e, lab=what_label: lab.config(
-            wraplength=max(200, min(760, e.width - 150))), add="+")
+            wraplength=max(px(200), min(px(760), e.width - px(150)))), add="+")
 
     tk.Label(inner, text="WHAT'S NEW", bg=BG, fg=ACCENT,
-             font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=28, pady=(20, 8))
+             font=theme.font("body_strong")).pack(anchor="w", padx=px(28), pady=px((20, 8)))
 
     # Release notes load later and replace only this frame, not the block above.
     notes = tk.Frame(inner, bg=BG)
@@ -253,27 +256,27 @@ def build(container, root, wheel=None) -> None:
             w.destroy()
         if not rels:
             tk.Label(notes, text="Could not load release notes.", bg=BG, fg=MUTED,
-                     font=("Segoe UI", 10), padx=28, pady=10).pack(anchor="w")
+                     font=theme.font("body"), padx=px(28), pady=px(10)).pack(anchor="w")
             return
         for rel in rels:
-            card = tk.Frame(notes, bg=CARD, padx=15, pady=12)
-            card.pack(fill="x", padx=24, pady=6)
+            card = tk.Frame(notes, bg=CARD, padx=px(15), pady=px(12))
+            card.pack(fill="x", padx=px(24), pady=px(6))
             top = tk.Frame(card, bg=CARD)
             top.pack(fill="x")
             tag = rel.get("tag", "")
-            tk.Label(top, text=tag, bg=CARD, fg=FG, font=("Segoe UI", 11, "bold")).pack(side="left")
+            tk.Label(top, text=tag, bg=CARD, fg=FG, font=theme.font("body_large_strong")).pack(side="left")
             if tag.lstrip("vV") == __version__:
                 tk.Label(top, text=" current ", bg=ACCENT, fg="#1a0c0d",
-                         font=("Segoe UI", 7, "bold")).pack(side="left", padx=(8, 0))
+                         font=theme.font("body_strong")).pack(side="left", padx=px((8, 0)))
             dt = _date(rel.get("published_at", ""))
             if dt:
                 tk.Label(top, text=dt, bg=CARD, fg=MUTED, font=("Consolas", 8)).pack(side="right")
             note_text = _clean_notes(rel.get("body", "")) or "No notes for this release."
-            tk.Label(card, text=note_text, bg=CARD, fg=MUTED, font=("Segoe UI", 9),
-                     anchor="w", justify="left", wraplength=430).pack(fill="x", pady=(7, 0))
+            tk.Label(card, text=note_text, bg=CARD, fg=MUTED, font=theme.font("body"),
+                     anchor="w", justify="left", wraplength=px(494)).pack(fill="x", pady=px((7, 0)))
 
     tk.Label(notes, text="Loading release notes…", bg=BG, fg=MUTED,
-             font=("Segoe UI", 10), padx=28, pady=10).pack(anchor="w")
+             font=theme.font("body"), padx=px(28), pady=px(10)).pack(anchor="w")
     load()
 
 
@@ -286,6 +289,8 @@ def main() -> None:
     from . import winui
 
     root = tk.Tk()
+
+    theme.init(root)
     root.title("About Pipevoice")
     root.configure(bg=BG)
     root.resizable(False, True)
@@ -302,24 +307,24 @@ def main() -> None:
     except Exception:
         pass
     style.configure("Accent.TButton", background=ACCENT, foreground="#1a0c0d",
-                    font=("Segoe UI", 9, "bold"), padding=8, borderwidth=0)
+                    font=theme.font("body_strong"), padding=px(8), borderwidth=0)
     style.map("Accent.TButton", background=[("active", "#e8838b")])
-    style.configure("TButton", background=CARD, foreground=FG, padding=7, borderwidth=0)
+    style.configure("TButton", background=CARD, foreground=FG, padding=px(7), borderwidth=0)
     style.map("TButton", background=[("active", "#262a3a")], foreground=[("disabled", MUTED)])
     style.configure("Vertical.TScrollbar", background=CARD, troughcolor=BG, borderwidth=0, arrowcolor=MUTED)
 
     # Reserve the bottom for Close first, then build fills the cavity above it.
-    foot = tk.Frame(root, bg=BG, padx=28, pady=14)
+    foot = tk.Frame(root, bg=BG, padx=px(28), pady=px(14))
     foot.pack(side="bottom", fill="x")
     tk.Button(foot, text="Close", command=root.destroy, bg=CARD, fg=FG, relief="flat",
-              activebackground="#262a3a", activeforeground=FG, padx=18, pady=6,
-              font=("Segoe UI", 9)).pack(side="right")
+              activebackground="#262a3a", activeforeground=FG, padx=px(18), pady=px(6),
+              font=theme.font("body")).pack(side="right")
 
     build(root, root)
 
     root.update_idletasks()
-    w = max(560, root.winfo_reqwidth())
-    h = min(660, max(440, root.winfo_reqheight()))
+    w = max(px(644), root.winfo_reqwidth())
+    h = min(px(660), max(px(440), root.winfo_reqheight()))
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 3}")
     winui.dark_titlebar(root)

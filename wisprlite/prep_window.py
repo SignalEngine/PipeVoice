@@ -7,6 +7,9 @@ leaves ``prep.json`` in the session dir for `live_answers.LiveAnswerer`.
 
 from __future__ import annotations
 
+from . import theme
+from .theme import px
+
 import json
 from pathlib import Path
 
@@ -39,22 +42,24 @@ def main(session_dir, pump_until=None) -> None:
     done = {"yes": False}
 
     root = tk.Tk()
+
+    theme.init(root)
     root.title("Prepare for this call")
     root.configure(bg=BG)
     root.attributes("-topmost", True)
     winui.apply_theme(root)
 
-    body = tk.Frame(root, bg=BG, padx=22, pady=18)
+    body = tk.Frame(root, bg=BG, padx=px(22), pady=px(18))
     body.pack(fill="both", expand=True)
 
     def label(text: str, top: int = 10) -> None:
-        tk.Label(body, text=text, bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold"),
-                 anchor="w").pack(fill="x", pady=(top, 3))
+        tk.Label(body, text=text, bg=BG, fg=MUTED, font=theme.font("body_strong"),
+                 anchor="w").pack(fill="x", pady=px((top, 3)))
 
     tk.Label(body, text="Prepare for this call", bg=BG, fg=ACCENT,
-             font=("Segoe UI", 15, "bold"), anchor="w").pack(fill="x")
+             font=theme.font("subtitle"), anchor="w").pack(fill="x")
     tk.Label(body, text="Recording has started. Live answers wait for you here.",
-             bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w").pack(fill="x", pady=(2, 0))
+             bg=BG, fg=MUTED, font=theme.font("body"), anchor="w").pack(fill="x", pady=px((2, 0)))
 
     label("What's this call?")
     title_var = tk.StringVar(master=root)
@@ -63,7 +68,7 @@ def main(session_dir, pump_until=None) -> None:
 
     label("Anything it should know?")
     notes = tk.Text(body, height=4, width=56, bg=CARD, fg=FG, insertbackground=FG,
-                    relief="flat", font=("Segoe UI", 10), wrap="word", padx=8, pady=6)
+                    relief="flat", font=theme.font("body"), wrap="word", padx=px(8), pady=px(6))
     notes.pack(fill="x")
     try:
         if pending_notes.is_file():
@@ -82,11 +87,11 @@ def main(session_dir, pump_until=None) -> None:
             child.destroy()
         for path in list(files):
             row = tk.Frame(file_rows, bg=CARD)
-            row.pack(fill="x", pady=1)
-            tk.Label(row, text=Path(path).name, bg=CARD, fg=FG, font=("Segoe UI", 9),
-                     anchor="w", padx=8).pack(side="left", fill="x", expand=True)
+            row.pack(fill="x", pady=px(1))
+            tk.Label(row, text=Path(path).name, bg=CARD, fg=FG, font=theme.font("body"),
+                     anchor="w", padx=px(8)).pack(side="left", fill="x", expand=True)
             tk.Button(row, text="✕", bg=CARD, fg=MUTED, relief="flat", bd=0,
-                      command=lambda p=path: remove(p)).pack(side="right", padx=4)
+                      command=lambda p=path: remove(p)).pack(side="right", padx=px(4))
 
     def remove(path: str) -> None:
         if path in files:
@@ -105,11 +110,11 @@ def main(session_dir, pump_until=None) -> None:
             use_folder.set(False)        # a chosen file replaces the folder, once
         redraw()
 
-    ttk.Button(body, text="Add file…", command=add_files).pack(anchor="w", pady=(6, 0))
+    ttk.Button(body, text="Add file…", command=add_files).pack(anchor="w", pady=px((6, 0)))
     if folder:
         n_docs = count_docs(folder)
         ttk.Checkbutton(body, text=f"Also use my docs folder ({n_docs} file{'' if n_docs == 1 else 's'})",
-                        variable=use_folder).pack(anchor="w", pady=(8, 0))
+                        variable=use_folder).pack(anchor="w", pady=px((8, 0)))
 
     def finish(prep: dict) -> None:
         if done["yes"]:
@@ -139,15 +144,15 @@ def main(session_dir, pump_until=None) -> None:
         finish({"skip": True})
 
     buttons = tk.Frame(body, bg=BG)
-    buttons.pack(fill="x", pady=(16, 0))
+    buttons.pack(fill="x", pady=px((16, 0)))
     ttk.Button(buttons, text="Start answering", style="Accent.TButton", command=start).pack(side="right")
-    ttk.Button(buttons, text="Skip", command=skip).pack(side="right", padx=(0, 8))
+    ttk.Button(buttons, text="Skip", command=skip).pack(side="right", padx=px((0, 8)))
     root.bind("<Return>", lambda e: start() if e.widget is not notes else None)
     root.bind("<Escape>", skip)
     root.protocol("WM_DELETE_WINDOW", skip)
 
     root.update_idletasks()
-    width, height = max(root.winfo_reqwidth(), 520), root.winfo_reqheight()
+    width, height = max(root.winfo_reqwidth(), px(598)), root.winfo_reqheight()
     # Position only, never a fixed size: each added file grows the window, and a
     # fixed height pushed Start/Skip off the bottom.
     root.minsize(width, 0)

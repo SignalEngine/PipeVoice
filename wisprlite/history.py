@@ -8,6 +8,9 @@ entry. JSONL is the source of truth because the viewer runs in its own process.
 
 from __future__ import annotations
 
+from . import theme
+from .theme import px
+
 import json
 import time
 
@@ -133,20 +136,20 @@ def build(container, root, wheel=None, on_fix_word=None) -> None:
     cfg = config.Config.load()
     entries = load(getattr(cfg, "history_size", 50) or 50)
 
-    head = tk.Frame(container, bg=BG, padx=18, pady=14)
+    head = tk.Frame(container, bg=BG, padx=px(18), pady=px(14))
     head.pack(fill="x")
     tk.Label(head, text="Dictation history", bg=BG, fg=ACCENT,
-             font=("Segoe UI", 14, "bold")).pack(side="left")
-    count = tk.Label(head, text=f"  last {len(entries)}", bg=BG, fg=MUTED, font=("Segoe UI", 9))
+             font=theme.font("subtitle")).pack(side="left")
+    count = tk.Label(head, text=f"  last {len(entries)}", bg=BG, fg=MUTED, font=theme.font("body"))
     count.pack(side="left")
 
     # Clear sits at the bottom; pack it before the list so the list fills above it.
-    foot = tk.Frame(container, bg=BG, padx=18, pady=12)
+    foot = tk.Frame(container, bg=BG, padx=px(18), pady=px(12))
     foot.pack(side="bottom", fill="x")
 
     body = tk.Frame(container, bg=BG)
     body.pack(fill="both", expand=True)
-    canvas = tk.Canvas(body, bg=BG, highlightthickness=0, width=520, height=420)
+    canvas = tk.Canvas(body, bg=BG, highlightthickness=0, width=px(520), height=px(420))
     vbar = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
     canvas.configure(yscrollcommand=vbar.set)
     vbar.pack(side="right", fill="y")
@@ -164,10 +167,10 @@ def build(container, root, wheel=None, on_fix_word=None) -> None:
 
     if not entries:
         tk.Label(inner, text="Nothing dictated yet.", bg=BG, fg=MUTED,
-                 font=("Segoe UI", 10), padx=20, pady=24).pack(anchor="w")
+                 font=theme.font("body"), padx=px(20), pady=px(24)).pack(anchor="w")
     for e in entries:
-        card = tk.Frame(inner, bg=CARD, padx=14, pady=11)
-        card.pack(fill="x", padx=16, pady=5)
+        card = tk.Frame(inner, bg=CARD, padx=px(14), pady=px(11))
+        card.pack(fill="x", padx=px(16), pady=px(5))
         top = tk.Frame(card, bg=CARD)
         top.pack(fill="x")
         kind = e.get("kind", "typed")
@@ -175,15 +178,15 @@ def build(container, root, wheel=None, on_fix_word=None) -> None:
                  bg=CARD, fg=(GOOD if kind == "clipboard" else MUTED),
                  font=("Consolas", 8)).pack(side="left")
         tk.Label(top, text=_ago(e.get("ts", 0)), bg=CARD, fg=MUTED,
-                 font=("Consolas", 8)).pack(side="left", padx=(10, 0))
+                 font=("Consolas", 8)).pack(side="left", padx=px((10, 0)))
         btn = ttk.Button(top, text="Copy")
         btn.pack(side="right")
         btn.config(command=lambda t=e.get("text", ""), b=btn: copy_row(t, b))
         if on_fix_word is not None:
             ttk.Button(top, text="Fix this",
-                       command=lambda t=e.get("text", ""): on_fix_word(t)).pack(side="right", padx=(0, 6))
-        tk.Label(card, text=e.get("text", ""), bg=CARD, fg=FG, font=("Segoe UI", 10),
-                 anchor="w", justify="left", wraplength=460).pack(fill="x", pady=(6, 0))
+                       command=lambda t=e.get("text", ""): on_fix_word(t)).pack(side="right", padx=px((0, 6)))
+        tk.Label(card, text=e.get("text", ""), bg=CARD, fg=FG, font=theme.font("body"),
+                 anchor="w", justify="left", wraplength=px(529)).pack(fill="x", pady=px((6, 0)))
 
     def do_clear():
         clear()
@@ -191,11 +194,11 @@ def build(container, root, wheel=None, on_fix_word=None) -> None:
             w.destroy()
         count.config(text="  cleared")
         tk.Label(inner, text="History cleared.", bg=BG, fg=MUTED,
-                 font=("Segoe UI", 10), padx=20, pady=24).pack(anchor="w")
+                 font=theme.font("body"), padx=px(20), pady=px(24)).pack(anchor="w")
 
     tk.Button(foot, text="Clear history", command=do_clear, bg=CARD, fg=MUTED,
               activebackground="#262a3a", activeforeground=FG, relief="flat",
-              padx=12, pady=6, font=("Segoe UI", 9)).pack(side="left")
+              padx=px(12), pady=px(6), font=theme.font("body")).pack(side="left")
 
 
 def main() -> None:
@@ -207,6 +210,8 @@ def main() -> None:
         return
 
     root = tk.Tk()
+
+    theme.init(root)
     root.title("Pipevoice history")
     root.configure(bg=BG)
     ico = config.asset_path("wisprlite.ico")
@@ -221,22 +226,22 @@ def main() -> None:
         style.theme_use("clam")
     except Exception:
         pass
-    style.configure("TButton", background=CARD, foreground=FG, padding=5, borderwidth=0)
+    style.configure("TButton", background=CARD, foreground=FG, padding=px(5), borderwidth=0)
     style.map("TButton", background=[("active", "#262a3a")])
     style.configure("Vertical.TScrollbar", background=CARD, troughcolor=BG, borderwidth=0, arrowcolor=MUTED)
 
     # Reserve the bottom for Close, then build fills the cavity above it.
-    closebar = tk.Frame(root, bg=BG, padx=18, pady=12)
+    closebar = tk.Frame(root, bg=BG, padx=px(18), pady=px(12))
     closebar.pack(side="bottom", fill="x")
     tk.Button(closebar, text="Close", command=root.destroy, bg=ACCENT, fg="#1a0c0d",
-              activebackground="#e8838b", relief="flat", padx=18, pady=6,
-              font=("Segoe UI", 9, "bold")).pack(side="right")
+              activebackground="#e8838b", relief="flat", padx=px(18), pady=px(6),
+              font=theme.font("body_strong")).pack(side="right")
 
     build(root, root)
 
     root.update_idletasks()
-    w = max(560, root.winfo_reqwidth())
-    h = min(620, max(360, root.winfo_reqheight()))
+    w = max(px(644), root.winfo_reqwidth())
+    h = min(px(620), max(px(360), root.winfo_reqheight()))
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 3}")
     from . import winui

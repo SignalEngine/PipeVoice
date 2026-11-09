@@ -10,6 +10,9 @@ are my recordings" across two tabs is the jumping-around this exists to stop.
 
 from __future__ import annotations
 
+from . import theme
+from .theme import px
+
 import logging
 import os
 import subprocess
@@ -140,15 +143,15 @@ def build(container, root, wheel=None, with_settings=False):
     state = {"items": [], "selected": None, "rows": [], "signature": (),
              "poll_after": None, "destroyed": False}
 
-    head = tk.Frame(container, bg=BG, padx=18, pady=14)
+    head = tk.Frame(container, bg=BG, padx=px(18), pady=px(14))
     head.pack(fill="x")
     tk.Label(head, text="Recordings", bg=BG, fg=ACCENT,
-             font=("Segoe UI", 14, "bold")).pack(side="left")
-    count_label = tk.Label(head, text="", bg=BG, fg=MUTED, font=("Segoe UI", 9))
-    count_label.pack(side="left", padx=(10, 0))
+             font=theme.font("subtitle")).pack(side="left")
+    count_label = tk.Label(head, text="", bg=BG, fg=MUTED, font=theme.font("body"))
+    count_label.pack(side="left", padx=px((10, 0)))
 
     settings_link = tk.Label(head, text="Settings  ⚙", bg=BG, fg=ACCENT,
-                             cursor="hand2", font=("Segoe UI", 9, "underline"))
+                             cursor="hand2", font=theme.font("body", underline=True))
     settings_panel = None
 
     # anchor="w" is load-bearing: a Label centres its wrapped block, so without
@@ -158,20 +161,20 @@ def build(container, root, wheel=None, with_settings=False):
         text="Press your screen recording hotkey, drag a box around what you want to "
              "show, and talk through it. Press the hotkey again to stop — you get an "
              "mp4 and a transcript of what you said.",
-        bg=BG, fg=MUTED, font=("Segoe UI", 9), justify="left", anchor="w",
-        wraplength=640,
+        bg=BG, fg=MUTED, font=theme.font("body"), justify="left", anchor="w",
+        wraplength=px(736),
     )
-    intro.pack(fill="x", padx=18, pady=(0, 10))
+    intro.pack(fill="x", padx=px(18), pady=px((0, 10)))
     # Re-wrap to the real window width instead of a guess that is wrong on every
     # monitor but the one it was written on.
     container.bind(
         "<Configure>",
-        lambda e: intro.config(wraplength=max(320, e.width - 48)),
+        lambda e: intro.config(wraplength=max(px(320), e.width - px(48))),
         add="+",
     )
 
     body = tk.Frame(container, bg=BG)
-    body.pack(fill="both", expand=True, padx=18, pady=(0, 14))
+    body.pack(fill="both", expand=True, padx=px(18), pady=px((0, 14)))
 
     if with_settings:
         settings_link.pack(side="right")
@@ -182,7 +185,7 @@ def build(container, root, wheel=None, with_settings=False):
              (body, {"fill": "both", "expand": True, "padx": 18, "pady": (0, 14)})],
             BG, wheel)
 
-    left = tk.Frame(body, bg=BG, width=250)
+    left = tk.Frame(body, bg=BG, width=px(250))
     left.pack(side="left", fill="y")
     left.pack_propagate(False)
 
@@ -193,28 +196,28 @@ def build(container, root, wheel=None, with_settings=False):
     bar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
     listing = tk.Frame(canvas, bg=BG)
-    canvas.create_window((0, 0), window=listing, anchor="nw", width=232)
+    canvas.create_window((0, 0), window=listing, anchor="nw", width=px(232))
     listing.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
     if callable(wheel):
         wheel(canvas)
 
     right = tk.Frame(body, bg=BG)
-    right.pack(side="left", fill="both", expand=True, padx=(16, 0))
+    right.pack(side="left", fill="both", expand=True, padx=px((16, 0)))
 
     title = tk.Label(right, text="No recording selected", bg=BG, fg=FG,
-                     font=("Segoe UI", 12, "bold"), anchor="w")
+                     font=theme.font("body_large_strong"), anchor="w")
     title.pack(fill="x")
-    detail = tk.Label(right, text="", bg=BG, fg=MUTED, font=("Segoe UI", 9), anchor="w")
-    detail.pack(fill="x", pady=(2, 10))
+    detail = tk.Label(right, text="", bg=BG, fg=MUTED, font=theme.font("body"), anchor="w")
+    detail.pack(fill="x", pady=px((2, 10)))
 
     buttons = tk.Frame(right, bg=BG)
-    buttons.pack(fill="x", pady=(0, 10))
+    buttons.pack(fill="x", pady=px((0, 10)))
 
     tk.Label(right, text="What you said", bg=BG, fg=MUTED,
-             font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x")
+             font=theme.font("body_strong"), anchor="w").pack(fill="x")
     text = tk.Text(right, bg=CARD, fg=FG, relief="flat", wrap="word", height=12,
-                   insertbackground=FG, padx=12, pady=10, font=("Segoe UI", 10))
-    text.pack(fill="both", expand=True, pady=(4, 0))
+                   insertbackground=FG, padx=px(12), pady=px(10), font=theme.font("body"))
+    text.pack(fill="both", expand=True, pady=px((4, 0)))
     text.configure(state="disabled")
 
     def _set_transcript(body_text: str) -> None:
@@ -255,22 +258,22 @@ def build(container, root, wheel=None, with_settings=False):
         count_label.config(text=f"{len(items)} recording{'' if len(items) == 1 else 's'}")
         if not items:
             empty = tk.Frame(listing, bg=BG)
-            empty.pack(fill="x", pady=6)
+            empty.pack(fill="x", pady=px(6))
             tk.Label(empty, text="Nothing recorded yet.", bg=BG, fg=MUTED,
-                     font=("Segoe UI", 9), wraplength=260, justify="left").pack(anchor="w")
+                     font=theme.font("body"), wraplength=px(299), justify="left").pack(anchor="w")
             state["rows"] = [(empty, None)]
             _select(None)
             return
         for item in items:
-            row = tk.Frame(listing, bg=BG, cursor="hand2", padx=10, pady=8)
-            row.pack(fill="x", pady=1)
-            tk.Label(row, text=item["stem"], bg=BG, fg=FG, font=("Segoe UI", 10),
-                     anchor="w", wraplength=250, justify="left").pack(fill="x")
+            row = tk.Frame(listing, bg=BG, cursor="hand2", padx=px(10), pady=px(8))
+            row.pack(fill="x", pady=px(1))
+            tk.Label(row, text=item["stem"], bg=BG, fg=FG, font=theme.font("body"),
+                     anchor="w", wraplength=px(288), justify="left").pack(fill="x")
             marks = [_size_label(item["size"])]
             if item["transcript_path"] is None:
                 marks.append("no transcript")
             tk.Label(row, text="  ·  ".join(marks), bg=BG, fg=MUTED,
-                     font=("Segoe UI", 8), anchor="w").pack(fill="x")
+                     font=theme.font("caption"), anchor="w").pack(fill="x")
             for widget in (row, *row.winfo_children()):
                 widget.bind("<Button-1>", lambda e, it=item: _select(it))
             state["rows"].append((row, item))
@@ -383,13 +386,13 @@ def build(container, root, wheel=None, with_settings=False):
     action_buttons = {}
     for index, (label, command, tip) in enumerate(actions):
         btn = ttk.Button(buttons, text=label, command=command, width=11)
-        btn.grid(row=index // 3, column=index % 3, padx=(0, 5), pady=(0, 5), sticky="w")
+        btn.grid(row=index // 3, column=index % 3, padx=px((0, 5)), pady=px((0, 5)), sticky="w")
         tooltip(btn, tip)
         action_buttons[label] = btn
 
     refresh_btn = ttk.Button(head, text="Refresh", command=lambda: refresh(
         state["selected"]["stem"] if state["selected"] else None))
-    refresh_btn.pack(side="right", padx=(0, 12))
+    refresh_btn.pack(side="right", padx=px((0, 12)))
 
     # Opened straight after a recording: land on that clip with Play accented,
     # so the obvious next move is the one under the cursor rather than something

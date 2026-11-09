@@ -14,6 +14,9 @@ The work runs on a daemon thread; results are marshalled back to Tk with
 
 from __future__ import annotations
 
+from . import theme
+from .theme import px
+
 import contextlib
 import os
 import threading
@@ -126,6 +129,8 @@ def main() -> None:
     has_key = bool(config.deepgram_key())
 
     root = tk.Tk()
+
+    theme.init(root)
     root.title("Pipevoice — transcribe a file")
     root.configure(bg=BG)
     ico = config.asset_path("wisprlite.ico")
@@ -147,27 +152,27 @@ def main() -> None:
     state = {"path": "", "busy": False}  # transcript lives in the Text widget
 
     # ---- header -------------------------------------------------------
-    head = tk.Frame(root, bg=BG, padx=18, pady=14)
+    head = tk.Frame(root, bg=BG, padx=px(18), pady=px(14))
     head.pack(fill="x")
     tk.Label(head, text="Transcribe a file", bg=BG, fg=ACCENT,
-             font=("Segoe UI", 14, "bold")).pack(side="left")
+             font=theme.font("subtitle")).pack(side="left")
 
     # ---- controls -----------------------------------------------------
-    card = tk.Frame(root, bg=CARD, padx=14, pady=12)
-    card.pack(fill="x", padx=18)
+    card = tk.Frame(root, bg=CARD, padx=px(14), pady=px(12))
+    card.pack(fill="x", padx=px(18))
 
     filerow = tk.Frame(card, bg=CARD)
     filerow.pack(fill="x")
     pick_btn = ttk.Button(filerow, text="Choose file…")
     pick_btn.pack(side="left")
     file_lbl = tk.Label(filerow, text="No file selected", bg=CARD, fg=MUTED,
-                        font=("Segoe UI", 9), anchor="w")
-    file_lbl.pack(side="left", padx=(12, 0), fill="x", expand=True)
+                        font=theme.font("body"), anchor="w")
+    file_lbl.pack(side="left", padx=px((12, 0)), fill="x", expand=True)
 
     engrow = tk.Frame(card, bg=CARD)
-    engrow.pack(fill="x", pady=(12, 0))
+    engrow.pack(fill="x", pady=px((12, 0)))
     tk.Label(engrow, text="Backend", bg=CARD, fg=FG,
-             font=("Segoe UI", 9)).pack(side="left")
+             font=theme.font("body")).pack(side="left")
 
     cloud_label = ("Deepgram — fast, speaker labels" if has_key
                    else "Deepgram — needs API key")
@@ -177,39 +182,39 @@ def main() -> None:
     engine_var = tk.StringVar(value=labels[1] if has_key else labels[0])
     combo = ttk.Combobox(engrow, textvariable=engine_var, values=labels,
                          state="readonly", width=34)
-    combo.pack(side="left", padx=(10, 0))
+    combo.pack(side="left", padx=px((10, 0)))
 
     go_btn = ttk.Button(engrow, text="Transcribe", state="disabled")
     go_btn.pack(side="right")
 
     status = tk.Label(card, text="Pick an audio or video file to begin.", bg=CARD,
-                      fg=MUTED, font=("Segoe UI", 9), anchor="w", justify="left",
-                      wraplength=560)
-    status.pack(fill="x", pady=(10, 0))
+                      fg=MUTED, font=theme.font("body"), anchor="w", justify="left",
+                      wraplength=px(644))
+    status.pack(fill="x", pady=px((10, 0)))
 
     # ---- transcript ---------------------------------------------------
-    body = tk.Frame(root, bg=BG, padx=18, pady=12)
+    body = tk.Frame(root, bg=BG, padx=px(18), pady=px(12))
     body.pack(fill="both", expand=True)
     # borderwidth/highlightthickness 0: tk.Text is not a ttk widget, so the
     # shared theme can't suppress clam's light bevel for us.
     text = tk.Text(body, bg=CARD, fg=FG, insertbackground=FG, relief="flat",
                    borderwidth=0, highlightthickness=0,
-                   wrap="word", font=("Segoe UI", 10), padx=12, pady=10,
+                   wrap="word", font=theme.font("body"), padx=px(12), pady=px(10),
                    height=14, width=64)
     vbar = ttk.Scrollbar(body, orient="vertical", command=text.yview)
     text.configure(yscrollcommand=vbar.set)
     vbar.pack(side="right", fill="y")
     text.pack(side="left", fill="both", expand=True)
 
-    foot = tk.Frame(root, bg=BG, padx=18, pady=12)
+    foot = tk.Frame(root, bg=BG, padx=px(18), pady=px(12))
     foot.pack(fill="x")
     copy_btn = ttk.Button(foot, text="Copy", state="disabled")
     copy_btn.pack(side="left")
     save_btn = ttk.Button(foot, text="Save as .txt", state="disabled")
-    save_btn.pack(side="left", padx=(8, 0))
+    save_btn.pack(side="left", padx=px((8, 0)))
     tk.Button(foot, text="Close", command=root.destroy, bg=ACCENT, fg=ON_ACCENT,
-              activebackground=ACCENT_HI, relief="flat", padx=18, pady=6,
-              font=("Segoe UI", 9, "bold")).pack(side="right")
+              activebackground=ACCENT_HI, relief="flat", padx=px(18), pady=px(6),
+              font=theme.font("body_strong")).pack(side="right")
 
     # ---- behaviour ----------------------------------------------------
     def backend() -> str:
@@ -318,8 +323,8 @@ def main() -> None:
     save_btn.config(command=save)
 
     root.update_idletasks()
-    w = max(640, root.winfo_reqwidth())
-    h = min(660, max(460, root.winfo_reqheight()))
+    w = max(px(736), root.winfo_reqwidth())
+    h = min(px(660), max(px(460), root.winfo_reqheight()))
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 3}")
     winui.dark_titlebar(root)

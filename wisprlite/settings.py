@@ -9,6 +9,9 @@ trouble.
 
 from __future__ import annotations
 
+from . import theme
+from .theme import px
+
 import os
 import re
 import json
@@ -220,7 +223,7 @@ def _build_guide(parent, wheel) -> None:
     _g_window = gc.create_window((0, 0), window=g, anchor="nw")
     # A reading column, not the full window: prose at 1080px is unpleasant to
     # read and left the cards mostly empty beside text wrapped at 640.
-    winui.fit_scroll_body(gc, _g_window, max_width=740)
+    winui.fit_scroll_body(gc, _g_window, max_width=px(851))
     g.bind("<Configure>", lambda e: gc.configure(scrollregion=gc.bbox("all")))
     wheel(gc)
 
@@ -233,48 +236,48 @@ def _build_guide(parent, wheel) -> None:
     def head(t, top=26, key=None):
         """A section heading: large, spaced, and with a rule under it."""
         holder = tk.Frame(g, bg=BG)
-        holder.pack(fill="x", padx=26, pady=(top, 0))
-        tk.Label(holder, text=t, bg=BG, fg=FG, font=("Segoe UI", 13, "bold"),
+        holder.pack(fill="x", padx=px(26), pady=px((top, 0)))
+        tk.Label(holder, text=t, bg=BG, fg=FG, font=theme.font("body_large_strong"),
                  anchor="w", justify="left").pack(fill="x")
-        tk.Frame(holder, bg=ACCENT, height=2, width=44).pack(anchor="w", pady=(5, 0))
-        tk.Frame(g, bg=BG, height=9).pack(fill="x")
+        tk.Frame(holder, bg=ACCENT, height=px(2), width=px(44)).pack(anchor="w", pady=px((5, 0)))
+        tk.Frame(g, bg=BG, height=px(9)).pack(fill="x")
         if key:
             _anchors[key] = holder
 
     def body(t, gap=(0, 8)):
-        tk.Label(g, text=t, bg=BG, fg=MUTED, font=("Segoe UI", 10), anchor="w",
-                 justify="left", wraplength=WRAP).pack(fill="x", padx=26, pady=gap)
+        tk.Label(g, text=t, bg=BG, fg=MUTED, font=theme.font("body"), anchor="w",
+                 justify="left", wraplength=px(round(WRAP * 1.15))).pack(fill="x", padx=px(26), pady=px(gap))
 
     def item(name, t, badge=None, badge_color=GOOD):
         card = tk.Frame(g, bg=CARD)
-        card.pack(fill="x", padx=26, pady=(0, 7))
-        inner = tk.Frame(card, bg=CARD, padx=14, pady=11)
+        card.pack(fill="x", padx=px(26), pady=px((0, 7)))
+        inner = tk.Frame(card, bg=CARD, padx=px(14), pady=px(11))
         inner.pack(fill="x")
         row = tk.Frame(inner, bg=CARD)
         row.pack(fill="x")
         tk.Label(row, text=name, bg=CARD, fg=FG,
-                 font=("Segoe UI", 10, "bold")).pack(side="left")
+                 font=theme.font("body_strong")).pack(side="left")
         if badge:
             tk.Label(row, text=f" {badge} ", bg=badge_color, fg="#10131a",
-                     font=("Segoe UI", 7, "bold")).pack(side="left", padx=(9, 0))
-        tk.Label(inner, text=t, bg=CARD, fg=MUTED, font=("Segoe UI", 10), anchor="w",
-                 justify="left", wraplength=WRAP - 30).pack(fill="x", pady=(5, 0))
+                     font=theme.font("body_strong")).pack(side="left", padx=px((9, 0)))
+        tk.Label(inner, text=t, bg=CARD, fg=MUTED, font=theme.font("body"), anchor="w",
+                 justify="left", wraplength=px(round((WRAP - 30) * 1.15))).pack(fill="x", pady=px((5, 0)))
 
     def link(text, key):
         lk = tk.Label(g, text=text, bg=BG, fg=ACCENT, cursor="hand2",
-                      font=("Segoe UI", 10, "underline"), anchor="w")
-        lk.pack(anchor="w", padx=26, pady=(3, 0))
+                      font=theme.font("body", underline=True), anchor="w")
+        lk.pack(anchor="w", padx=px(26), pady=px((3, 0)))
         lk.bind("<Button-1>", lambda e: webbrowser.open(_URLS[key]))
 
     def contents(entries):
         """Jump links. The guide is long; scrolling blind through it is the
         reason it read as a wall."""
         wrap = tk.Frame(g, bg=CARD)
-        wrap.pack(fill="x", padx=26, pady=(18, 4))
-        inner = tk.Frame(wrap, bg=CARD, padx=14, pady=12)
+        wrap.pack(fill="x", padx=px(26), pady=px((18, 4)))
+        inner = tk.Frame(wrap, bg=CARD, padx=px(14), pady=px(12))
         inner.pack(fill="x")
         tk.Label(inner, text="ON THIS PAGE", bg=CARD, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 7))
+                 font=theme.font("body_strong")).pack(anchor="w", pady=px((0, 7)))
         # Re-flow into rows on resize. Packed side="left" in one strip, the
         # rightmost chips fall off a narrower window silently — no scrollbar, no
         # sign that navigation is missing.
@@ -283,7 +286,7 @@ def _build_guide(parent, wheel) -> None:
         chips = []
         for label, key in entries:
             chip = tk.Label(strip, text=label, bg=BG, fg=FG, cursor="hand2",
-                            font=("Segoe UI", 9), padx=10, pady=4)
+                            font=theme.font("body"), padx=px(10), pady=px(4))
             chips.append(chip)
 
             def jump(_event, k=key):
@@ -311,7 +314,7 @@ def _build_guide(parent, wheel) -> None:
                 if used and used + need > width:
                     row += 1
                     col = used = 0
-                chip.grid(row=row, column=col, padx=(0, 7), pady=2, sticky="w")
+                chip.grid(row=row, column=col, padx=px((0, 7)), pady=px(2), sticky="w")
                 used += need
                 col += 1
 
@@ -469,7 +472,7 @@ def _build_guide(parent, wheel) -> None:
 
     head("Need a hand?", key="help")
     link("Pipevoice on GitHub — docs, issues, source  ↗", "github")
-    tk.Label(g, text="", bg=BG).pack(pady=6)  # bottom breathing room
+    tk.Label(g, text="", bg=BG).pack(pady=px(6))  # bottom breathing room
 
 
 def _build_voices_tab(parent, show_tab=None, wheel=None) -> None:
@@ -483,7 +486,7 @@ def _build_voices_tab(parent, show_tab=None, wheel=None) -> None:
     canvas.configure(yscrollcommand=sbar.set)
     sbar.pack(side="right", fill="y")
     canvas.pack(side="left", fill="both", expand=True)
-    wrap = tk.Frame(canvas, bg=BG, padx=34, pady=28)
+    wrap = tk.Frame(canvas, bg=BG, padx=px(34), pady=px(28))
     _wrap_window = canvas.create_window((0, 0), window=wrap, anchor="nw")
     winui.fit_scroll_body(canvas, _wrap_window)
     wrap.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -491,31 +494,31 @@ def _build_voices_tab(parent, show_tab=None, wheel=None) -> None:
         wheel(canvas)
 
     tk.Label(wrap, text="VOICES & APP PROFILES", bg=BG, fg=ACCENT,
-             font=("Segoe UI", 10, "bold")).pack(anchor="w")
+             font=theme.font("body_strong")).pack(anchor="w")
     tk.Label(wrap, text="One voice in. The right style out.", bg=BG, fg=FG,
-             font=("Segoe UI", 20, "bold")).pack(anchor="w", pady=(4, 6))
+             font=theme.font("title")).pack(anchor="w", pady=px((4, 6)))
     tk.Label(wrap, text="PipeVoice's signature feature: dictate the same way everywhere and your words come out "
                         "tailored to where they land — automatically per app, or on a key.",
-             bg=BG, fg=MUTED, font=("Segoe UI", 10), justify="left", wraplength=640).pack(anchor="w", pady=(0, 22))
+             bg=BG, fg=MUTED, font=theme.font("body"), justify="left", wraplength=px(736)).pack(anchor="w", pady=px((0, 22)))
 
     def feature(title, badge, desc, bullets, btn_text, arg):
-        card = tk.Frame(wrap, bg=CARD, padx=22, pady=18,
+        card = tk.Frame(wrap, bg=CARD, padx=px(22), pady=px(18),
                         highlightbackground=ACCENT, highlightthickness=1)
-        card.pack(fill="x", pady=(0, 16))
+        card.pack(fill="x", pady=px((0, 16)))
         top = tk.Frame(card, bg=CARD)
         top.pack(fill="x")
-        tk.Label(top, text=title, bg=CARD, fg=FG, font=("Segoe UI", 14, "bold")).pack(side="left")
+        tk.Label(top, text=title, bg=CARD, fg=FG, font=theme.font("subtitle")).pack(side="left")
         tk.Label(top, text=f" {badge} ", bg=ACCENT, fg="#1a0c0d",
-                 font=("Segoe UI", 8, "bold")).pack(side="left", padx=(10, 0))
-        tk.Label(card, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 10),
-                 justify="left", wraplength=600).pack(anchor="w", pady=(8, 10))
+                 font=theme.font("body_strong")).pack(side="left", padx=px((10, 0)))
+        tk.Label(card, text=desc, bg=CARD, fg=MUTED, font=theme.font("body"),
+                 justify="left", wraplength=px(690)).pack(anchor="w", pady=px((8, 10)))
         for b in bullets:
             r = tk.Frame(card, bg=CARD)
-            r.pack(anchor="w", fill="x", pady=1)
-            tk.Label(r, text="•", bg=CARD, fg=ACCENT, font=("Segoe UI", 10)).pack(side="left")
-            tk.Label(r, text="  " + b, bg=CARD, fg=FG, font=("Segoe UI", 9)).pack(side="left")
+            r.pack(anchor="w", fill="x", pady=px(1))
+            tk.Label(r, text="•", bg=CARD, fg=ACCENT, font=theme.font("body")).pack(side="left")
+            tk.Label(r, text="  " + b, bg=CARD, fg=FG, font=theme.font("body")).pack(side="left")
         ttk.Button(card, text=btn_text, style="Accent.TButton",
-                   command=lambda: _launch_child(arg)).pack(anchor="w", pady=(14, 0))
+                   command=lambda: _launch_child(arg)).pack(anchor="w", pady=px((14, 0)))
 
     feature("Voices", "PRESETS",
             "Named polish presets you build once and reuse. Each Voice decides how your words are cleaned up — "
@@ -537,7 +540,7 @@ def _build_voices_tab(parent, show_tab=None, wheel=None) -> None:
 
     tk.Label(wrap, text="Tip: bind a Voice to a hotkey (Settings → Voice hotkeys) to switch style mid-sentence. "
                         "A key always wins over the app's default.",
-             bg=BG, fg=MUTED, font=("Segoe UI", 9), justify="left", wraplength=640).pack(anchor="w", pady=(4, 0))
+             bg=BG, fg=MUTED, font=theme.font("body"), justify="left", wraplength=px(736)).pack(anchor="w", pady=px((4, 0)))
 
 
 VIDEO_FPS_OPTIONS = [
@@ -561,6 +564,7 @@ def main(first_run: bool = False) -> None:
 
     cfg = config.Config.load()
     root = tk.Tk()
+    theme.init(root)
     root.title("Set up Pipevoice" if first_run else "Pipevoice settings")
     root.configure(bg=BG)
     root.resizable(True, True)
@@ -573,7 +577,7 @@ def main(first_run: bool = False) -> None:
 
     style = winui.apply_theme(root)
 
-    pad = dict(padx=14, pady=8, sticky="w")
+    pad = dict(padx=px(14), pady=px(8), sticky="w")
 
     def _wheel(canvas):
         # Scroll whichever canvas the pointer is over (two scroll areas exist).
@@ -583,13 +587,13 @@ def main(first_run: bool = False) -> None:
 
     # Fixed footer (Save/Cancel always visible), then a tabbed body: the form
     # plus a Guide tab that explains engines, speed and polish options.
-    footer = ttk.Frame(root, padding=(16, 10))
+    footer = ttk.Frame(root, padding=px((16, 10)))
     footer.pack(side="bottom", fill="x")
 
     # Custom underline tab bar (ttk.Notebook tabs render poorly on clam).
     tabbar = tk.Frame(root, bg=BG)
-    tabbar.pack(side="top", fill="x", padx=22, pady=(12, 0))
-    tk.Frame(root, bg="#272b37", height=1).pack(side="top", fill="x")
+    tabbar.pack(side="top", fill="x", padx=px(22), pady=px((12, 0)))
+    tk.Frame(root, bg="#272b37", height=px(1)).pack(side="top", fill="x")
     body_wrap = tk.Frame(root, bg=BG)
     body_wrap.pack(side="top", fill="both", expand=True)
 
@@ -630,11 +634,11 @@ def main(first_run: bool = False) -> None:
 
     for _name, _frame in _tabs:
         w = tk.Frame(tabbar, bg=BG)
-        w.pack(side="left", padx=(0, 8))
-        lbl = tk.Label(w, text=_name, bg=BG, fg=MUTED, font=("Segoe UI", 11, "bold"),
-                       cursor="hand2", padx=10, pady=8)
+        w.pack(side="left", padx=px((0, 8)))
+        lbl = tk.Label(w, text=_name, bg=BG, fg=MUTED, font=theme.font("body_large_strong"),
+                       cursor="hand2", padx=px(10), pady=px(8))
         lbl.pack()
-        ul = tk.Frame(w, bg=BG, height=2)
+        ul = tk.Frame(w, bg=BG, height=px(2))
         ul.pack(fill="x")
         lbl.bind("<Button-1>", lambda e, n=_name: _show_tab(n))
         _tab_w[_name] = (lbl, ul)
@@ -645,7 +649,7 @@ def main(first_run: bool = False) -> None:
     _canvas.configure(yscrollcommand=_vbar.set)
     _vbar.pack(side="right", fill="y")
     _canvas.pack(side="left", fill="both", expand=True)
-    frm = ttk.Frame(_canvas, padding=26)
+    frm = ttk.Frame(_canvas, padding=px(26))
     _frm_window = _canvas.create_window((0, 0), window=frm, anchor="nw")
     frm.bind("<Configure>", lambda e: _canvas.configure(scrollregion=_canvas.bbox("all")))
 
@@ -702,43 +706,43 @@ def main(first_run: bool = False) -> None:
         # the Settings form. Same widgets, same StringVars, same Save — only the
         # frame differs, so nothing about persistence changes.
         wrap = tk.Frame(parent if parent is not None else frm, bg=BG)
-        wrap.pack(fill="x", pady=(0, 18), padx=18 if parent is not None else 0)
-        tk.Label(wrap, text=title, bg=BG, fg=FG, font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=3)
+        wrap.pack(fill="x", pady=px((0, 18)), padx=px(18) if parent is not None else 0)
+        tk.Label(wrap, text=title, bg=BG, fg=FG, font=theme.font("body_large_strong")).pack(anchor="w", padx=px(3))
         if subtitle:
             # anchor="w" and a wraplength both matter outside the Settings form:
             # that form caps its own width, a tab panel does not, so an unwrapped
             # subtitle grows past the window and a Label centres what it cannot
             # fit — clipping the text at BOTH edges.
-            sub = tk.Label(wrap, text=subtitle, bg=BG, fg=MUTED, font=("Segoe UI", 9),
-                           justify="left", anchor="w", wraplength=640)
-            sub.pack(fill="x", anchor="w", padx=3, pady=(2, 0))
+            sub = tk.Label(wrap, text=subtitle, bg=BG, fg=MUTED, font=theme.font("body"),
+                           justify="left", anchor="w", wraplength=px(736))
+            sub.pack(fill="x", anchor="w", padx=px(3), pady=px((2, 0)))
             if parent is not None:
                 wrap.bind("<Configure>",
-                          lambda e, w=sub: w.config(wraplength=max(320, e.width - 12)),
+                          lambda e, w=sub: w.config(wraplength=max(px(320), e.width - px(12))),
                           add="+")
         c = tk.Frame(wrap, bg=CARD)
-        c.pack(fill="x", pady=(9, 0))
+        c.pack(fill="x", pady=px((9, 0)))
         c._first = True
         return c
 
     def _divide(c):
         if not getattr(c, "_first", True):
-            tk.Frame(c, bg=DIV, height=1).pack(fill="x")
+            tk.Frame(c, bg=DIV, height=px(1)).pack(fill="x")
         c._first = False
 
 
     def row(c, text, desc=None):
         _divide(c)
-        r = tk.Frame(c, bg=CARD, padx=18, pady=13)
+        r = tk.Frame(c, bg=CARD, padx=px(18), pady=px(16))
         r.pack(fill="x")
         right = tk.Frame(r, bg=CARD)
         right.pack(side="right")
         left = tk.Frame(r, bg=CARD)
         left.pack(side="left", fill="x", expand=True)
-        tk.Label(left, text=text, bg=CARD, fg=FG, font=("Segoe UI", 10)).pack(anchor="w")
+        tk.Label(left, text=text, bg=CARD, fg=FG, font=theme.font("body")).pack(anchor="w")
         if desc:
-            tk.Label(left, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 8),
-                     wraplength=330, justify="left").pack(anchor="w", pady=(2, 0))
+            tk.Label(left, text=desc, bg=CARD, fg=MUTED, font=theme.font("caption"),
+                     wraplength=px(379), justify="left").pack(anchor="w", pady=px((2, 0)))
             # No tooltip here. The description is already printed above, in full
             # — wraplength wraps, it never truncates — so a popup repeating it
             # said nothing new and covered the next row while it did so.
@@ -746,25 +750,25 @@ def main(first_run: bool = False) -> None:
 
     def stack(c, text, desc=None):
         _divide(c)
-        r = tk.Frame(c, bg=CARD, padx=18, pady=13)
+        r = tk.Frame(c, bg=CARD, padx=px(18), pady=px(16))
         r.pack(fill="x")
-        tk.Label(r, text=text, bg=CARD, fg=FG, font=("Segoe UI", 10)).pack(anchor="w")
+        tk.Label(r, text=text, bg=CARD, fg=FG, font=theme.font("body")).pack(anchor="w")
         if desc:
-            tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 8),
-                     justify="left").pack(anchor="w", pady=(2, 0))
+            tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=theme.font("caption"),
+                     justify="left").pack(anchor="w", pady=px((2, 0)))
         body = tk.Frame(r, bg=CARD)
-        body.pack(fill="x", pady=(8, 0))
+        body.pack(fill="x", pady=px((8, 0)))
         return body
 
     def check(c, text, var, desc=None):
         _divide(c)
-        r = tk.Frame(c, bg=CARD, padx=18, pady=12)
+        r = tk.Frame(c, bg=CARD, padx=px(18), pady=px(12))
         r.pack(fill="x")
         box = ttk.Checkbutton(r, text=text, variable=var, style="Card.TCheckbutton")
         box.pack(anchor="w")
         if desc:
-            tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 8),
-                     wraplength=470, justify="left").pack(anchor="w", padx=(25, 0), pady=(3, 0))
+            tk.Label(r, text=desc, bg=CARD, fg=MUTED, font=theme.font("caption"),
+                     wraplength=px(540), justify="left").pack(anchor="w", padx=px((25, 0)), pady=px((3, 0)))
 
     # --- values ---
     # Show the current engine even if it's a legacy/hidden one (e.g. "openai"),
@@ -910,7 +914,7 @@ def main(first_run: bool = False) -> None:
     r = row(c, "Push-to-talk key", "Hold this to dictate into the focused window.")
     entry(r, hotkey_var, width=14)
     cap_btn = ttk.Button(r, text="Capture", width=8)
-    cap_btn.pack(side="left", padx=(8, 0))
+    cap_btn.pack(side="left", padx=px((8, 0)))
 
     def capture():
         cap_btn.config(text="Press keys…")
@@ -936,7 +940,7 @@ def main(first_run: bool = False) -> None:
     r = row(c, "Clipboard hotkey", "Hold to dictate to the clipboard instead of typing into the app.")
     entry(r, clip_hotkey_var, width=14)
     clip_cap_btn = ttk.Button(r, text="Capture", width=8)
-    clip_cap_btn.pack(side="left", padx=(8, 0))
+    clip_cap_btn.pack(side="left", padx=px((8, 0)))
 
     def clip_capture():
         clip_cap_btn.config(text="Press keys…")
@@ -979,7 +983,7 @@ def main(first_run: bool = False) -> None:
             knowledge_dir_var.set(chosen)
 
     ttk.Button(_kr, text="Browse", width=8,
-               command=_browse_knowledge).pack(side="left", padx=(8, 0))
+               command=_browse_knowledge).pack(side="left", padx=px((8, 0)))
     entry(row(c, "Docs web page", "One page, e.g. your pricing or FAQ. Optional."),
           knowledge_url_var, width=30)
     check(c, "Show answers during the call (Deepgram only)", live_answers_var,
@@ -1001,7 +1005,7 @@ def main(first_run: bool = False) -> None:
     )
     entry(r, meeting_hotkey_var, width=14)
     meeting_cap_btn = ttk.Button(r, text="Capture", width=8)
-    meeting_cap_btn.pack(side="left", padx=(8, 0))
+    meeting_cap_btn.pack(side="left", padx=px((8, 0)))
     meeting_cap_btn.config(
         command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
     )
@@ -1020,9 +1024,9 @@ def main(first_run: bool = False) -> None:
           meeting_video_fps_var, [label for label, _ in VIDEO_FPS_OPTIONS])
     check(c, "Send the video when the meeting ends, plus the transcript if it was transcribed automatically (uses the Screen recording destination)",
           meeting_video_send_var)
-    _video_dest_hint = tk.Label(c, text="", bg=CARD, fg=MUTED, font=("Segoe UI", 8),
-                                wraplength=470, justify="left")
-    _video_dest_hint.pack(anchor="w", padx=(43, 0), pady=(0, 8))
+    _video_dest_hint = tk.Label(c, text="", bg=CARD, fg=MUTED, font=theme.font("caption"),
+                                wraplength=px(540), justify="left")
+    _video_dest_hint.pack(anchor="w", padx=px((43, 0)), pady=px((0, 8)))
 
     def _sync_video_dest_hint(*_):
         empty = not screenrec_dest_var.get().strip()
@@ -1035,7 +1039,7 @@ def main(first_run: bool = False) -> None:
     r = row(c, "Bookmark hotkey", "Tap while recording to mark the current moment.")
     entry(r, bookmark_hotkey_var, width=14)
     bookmark_cap_btn = ttk.Button(r, text="Capture", width=8)
-    bookmark_cap_btn.pack(side="left", padx=(8, 0))
+    bookmark_cap_btn.pack(side="left", padx=px((8, 0)))
     bookmark_cap_btn.config(command=_mk_capture(bookmark_cap_btn, bookmark_hotkey_var))
 
     entry(row(c, "Say this to bookmark",
@@ -1054,9 +1058,9 @@ def main(first_run: bool = False) -> None:
           "Off by default. Watches the conversation live and speaks up only when something\nconcrete is drifting \u2014 an action item with nobody on it, a decision deferred again.\nAt most one nudge every few minutes, and it stays quiet when nothing is wrong.\nNeeds Deepgram, because it is the only engine that transcribes live; it simply\ndoes not run on the others. Uses your transcription and AI-polish keys while a\nmeeting records. Roughly 30 cents an hour of meeting on Deepgram's standard rate.")
     r = row(c, "Clap sensitivity", "Higher is more sensitive; use Test to calibrate your room.")
     _sens_scale = ttk.Scale(r, from_=0.0, to=1.0, variable=bookmark_sensitivity_var,
-                            orient="horizontal", length=130)
+                            orient="horizontal", length=px(130))
     _sens_scale.pack(side="left")
-    ttk.Label(r, textvariable=bookmark_sensitivity_var, width=5).pack(side="left", padx=(7, 0))
+    ttk.Label(r, textvariable=bookmark_sensitivity_var, width=5).pack(side="left", padx=px((7, 0)))
 
     def test_snap():
         import tkinter as tk
@@ -1067,11 +1071,11 @@ def main(first_run: bool = False) -> None:
         dialog.title("Test acoustic bookmarks")
         dialog.configure(bg=BG)
         tk.Label(dialog, text="Clap twice, or snap twice", bg=BG, fg=FG,
-                 font=("Segoe UI", 11, "bold")).pack(padx=18, pady=(16, 6))
-        level = ttk.Progressbar(dialog, maximum=1.0, length=260)
-        level.pack(padx=18, pady=8)
+                 font=theme.font("body_large_strong")).pack(padx=px(18), pady=px((16, 6)))
+        level = ttk.Progressbar(dialog, maximum=1.0, length=px(260))
+        level.pack(padx=px(18), pady=px(8))
         result = tk.Label(dialog, text="Listening…", bg=BG, fg=MUTED)
-        result.pack(padx=18, pady=(0, 12))
+        result.pack(padx=px(18), pady=px((0, 12)))
         detector = SnapDetector(16_000, sensitivity=float(bookmark_sensitivity_var.get()))
         stream = None
         # Name the device in every message. "No microphone showing" is impossible
@@ -1193,14 +1197,14 @@ def main(first_run: bool = False) -> None:
                                     blocksize=800, callback=callback,
                                     device=config.device_arg(cfg))
             stream.start()
-            ttk.Button(dialog, text="Close", command=close).pack(pady=(0, 16))
+            ttk.Button(dialog, text="Close", command=close).pack(pady=px((0, 16)))
             dialog.protocol("WM_DELETE_WINDOW", close)
             tick()
         except Exception as exc:
             result.config(text=f"Microphone unavailable: {exc}", fg=ACCENT)
-            ttk.Button(dialog, text="Close", command=close).pack(pady=(0, 16))
+            ttk.Button(dialog, text="Close", command=close).pack(pady=px((0, 16)))
     _test_btn = ttk.Button(r, text="Test", command=test_snap)
-    _test_btn.pack(side="left", padx=(8, 0))
+    _test_btn.pack(side="left", padx=px((8, 0)))
 
     # Acoustic bookmarks are OFF by default and blocked outright on many laptops, but
     # the sensitivity slider and Test button sat live regardless — so the Hotkeys tab
@@ -1225,13 +1229,13 @@ def main(first_run: bool = False) -> None:
         r = row(c, f"Voice key {_i + 1}", "Hold this to dictate using the chosen Voice.")
         entry(r, vk_vars[_i], width=14)
         _vcap = ttk.Button(r, text="Capture", width=8)
-        _vcap.pack(side="left", padx=(8, 0))
+        _vcap.pack(side="left", padx=px((8, 0)))
         _vcap.config(command=_mk_capture(_vcap, vk_vars[_i]))
         combo(r, vv_vars[_i], [l for _, l in voice_opts], width=18)
     r = row(c, "Picker key", "Hold to pop a numbered voice list on the overlay.")
     entry(r, picker_var, width=14)
     _pcap = ttk.Button(r, text="Capture", width=8)
-    _pcap.pack(side="left", padx=(8, 0))
+    _pcap.pack(side="left", padx=px((8, 0)))
     _pcap.config(command=_mk_capture(_pcap, picker_var))
 
     # --- Screen recordings: rendered into the Recordings tab, not this form ---
@@ -1247,7 +1251,7 @@ def main(first_run: bool = False) -> None:
             "Records that area plus your microphone.")
     entry(r, screenrec_hotkey_var, width=14)
     screenrec_cap_btn = ttk.Button(r, text="Capture", width=8)
-    screenrec_cap_btn.pack(side="left", padx=(8, 0))
+    screenrec_cap_btn.pack(side="left", padx=px((8, 0)))
     screenrec_cap_btn.config(command=_mk_capture(screenrec_cap_btn, screenrec_hotkey_var))
     entry(row(c, "Send to",
               "An scp destination, e.g. root@your-vps:/root/project/inbox/. Uses the "
@@ -1274,7 +1278,7 @@ def main(first_run: bool = False) -> None:
     r = row(c, "Read Aloud hotkey", "Blank turns the feature off.")
     entry(r, read_aloud_hotkey_var, width=14)
     ra_cap_btn = ttk.Button(r, text="Capture", width=8)
-    ra_cap_btn.pack(side="left", padx=(8, 0))
+    ra_cap_btn.pack(side="left", padx=px((8, 0)))
     ra_cap_btn.config(command=_mk_capture(ra_cap_btn, read_aloud_hotkey_var))
 
     combo(row(c, "Voice engine",
@@ -1290,9 +1294,9 @@ def main(first_run: bool = False) -> None:
              "even if you haven't saved yet.")
     preview_btn = ttk.Button(pr, text="Preview", width=10)
     preview_btn.pack(side="left")
-    preview_status = tk.Label(pr, text="", bg=CARD, fg=MUTED, font=("Segoe UI", 8),
-                               wraplength=220, justify="left")
-    preview_status.pack(side="left", padx=(10, 0))
+    preview_status = tk.Label(pr, text="", bg=CARD, fg=MUTED, font=theme.font("caption"),
+                               wraplength=px(253), justify="left")
+    preview_status.pack(side="left", padx=px((10, 0)))
 
     # Only the group matching the chosen engine is shown — a greyed-out field
     # still reads as "something I am supposed to fill in", and showing all
@@ -1328,7 +1332,7 @@ def main(first_run: bool = False) -> None:
                           "Saved" if config.elevenlabs_key() else "Not set")
     entry(_eleven_key_row, eleven_key_var, width=26, show="•")
     ttk.Button(_eleven_key_row, text="Get a key ↗",
-               command=lambda: webbrowser.open(_URLS["elevenlabs"])).pack(side="left", padx=(8, 0))
+               command=lambda: webbrowser.open(_URLS["elevenlabs"])).pack(side="left", padx=px((8, 0)))
     eleven_id_row = row(
         elevenlabs_group, "ElevenLabs voice ID",
         "Search the Voice Library for a character or accent, add it to your "
@@ -1338,7 +1342,7 @@ def main(first_run: bool = False) -> None:
     entry(eleven_id_row, read_aloud_elevenlabs_id_var, width=28)
     ttk.Button(eleven_id_row, text="Browse voices ↗",
                command=lambda: webbrowser.open(
-                   "https://elevenlabs.io/app/voice-library")).pack(side="left", padx=(8, 0))
+                   "https://elevenlabs.io/app/voice-library")).pack(side="left", padx=px((8, 0)))
 
     speed_row = row(c, "Speed", "0.5 (slow) to 2.0 (fast). 1.0 is normal.")
     # row() returns the RIGHT-hand frame, so .master is the row frame packed
@@ -1443,9 +1447,9 @@ def main(first_run: bool = False) -> None:
         dialog.title("Test my mic")
         dialog.configure(bg=BG)
         tk.Label(dialog, text="Keep talking while this runs…", bg=BG, fg=FG,
-                 font=("Segoe UI", 11, "bold")).pack(padx=18, pady=(16, 6))
-        result = tk.Label(dialog, text="", bg=BG, fg=MUTED, wraplength=320, justify="left")
-        result.pack(padx=18, pady=(0, 12))
+                 font=theme.font("body_large_strong")).pack(padx=px(18), pady=px((16, 6)))
+        result = tk.Label(dialog, text="", bg=BG, fg=MUTED, wraplength=px(368), justify="left")
+        result.pack(padx=px(18), pady=px((0, 12)))
         remedy_row = tk.Frame(dialog, bg=BG)
         remedy_row.pack()
 
@@ -1487,7 +1491,7 @@ def main(first_run: bool = False) -> None:
                 if verdict_text.startswith("Good"):
                     return
                 ttk.Button(remedy_row, text="Open Windows sound settings",
-                           command=_open_sound_settings).pack(pady=(0, 8))
+                           command=_open_sound_settings).pack(pady=px((0, 8)))
             try:
                 if remedy_row.winfo_exists():
                     remedy_row.after(0, apply)
@@ -1595,16 +1599,16 @@ def main(first_run: bool = False) -> None:
                 _show(f"Test failed: {exc}", ACCENT)
 
         btns = tk.Frame(dialog, bg=BG)
-        btns.pack(pady=(0, 8))
+        btns.pack(pady=px((0, 8)))
         single_btn = ttk.Button(btns, text="Test mic (3s)",
                                 command=lambda: _in_background(run_single))
-        single_btn.pack(side="left", padx=4)
+        single_btn.pack(side="left", padx=px(4))
         all_btn = ttk.Button(btns, text="Test all and pick the best",
                              command=lambda: _in_background(run_all))
-        all_btn.pack(side="left", padx=4)
-        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=(0, 16))
+        all_btn.pack(side="left", padx=px(4))
+        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=px((0, 16)))
 
-    ttk.Button(mic_row, text="Test my mic", command=test_mic).pack(side="left", padx=(8, 0))
+    ttk.Button(mic_row, text="Test my mic", command=test_mic).pack(side="left", padx=px((8, 0)))
 
     def _on_show_all(*_):
         nonlocal devices
@@ -1641,7 +1645,7 @@ def main(first_run: bool = False) -> None:
         r = row(c, name + " key", "Saved" if present else "Not set")
         entry(r, var, width=26, show="•")
         ttk.Button(r, text=link_text,
-                   command=lambda: webbrowser.open(_URLS[url_key])).pack(side="left", padx=(8, 0))
+                   command=lambda: webbrowser.open(_URLS[url_key])).pack(side="left", padx=px((8, 0)))
 
     key_row("Gemini", gem_key_var, config.gemini_key(), "gemini", "Get a free key ↗")
     key_row("Groq", groq_key_var, config.groq_key(), "groq", "Get a free key ↗")
@@ -1656,7 +1660,7 @@ def main(first_run: bool = False) -> None:
     _cleanup_row = row(c, "Cleanup with", "OpenAI, free Google Gemini, OpenRouter, or fully offline Ollama.")
     combo(_cleanup_row, cleanup_var, [l for _, l in CLEANUP_PROVIDERS])
     ttk.Button(_cleanup_row, text="Download Ollama ↗",
-               command=lambda: webbrowser.open(_URLS["ollama"])).pack(side="left", padx=(8, 0))
+               command=lambda: webbrowser.open(_URLS["ollama"])).pack(side="left", padx=px((8, 0)))
     entry(row(c, "Cleanup model", "Blank uses the provider's default."), cleanup_model_var, width=22)
     combo(row(c, "Polish style", "Tidy keeps your words; Prompt rewrites rambling into a clear AI instruction; Email/Code comment/Meeting actions reshape it for that context; Custom uses your own instruction."),
           cleanup_style_var, [l for _, l in STYLES])
@@ -1679,12 +1683,12 @@ def main(first_run: bool = False) -> None:
                             selectbackground=ACCENT, selectforeground="#1a0c0d",
                             highlightthickness=1, highlightbackground=DIV,
                             relief="flat", activestyle="none", exportselection=False,
-                            font=("Segoe UI", 9))
+                            font=theme.font("body"))
     vocab_list.pack(side="left", anchor="n")
     for _t in [t.strip() for t in (cfg.vocabulary or "").split(",") if t.strip()]:
         vocab_list.insert("end", _t)
     vside = tk.Frame(vb, bg=CARD)
-    vside.pack(side="left", padx=(8, 0), anchor="n")
+    vside.pack(side="left", padx=px((8, 0)), anchor="n")
     vocab_add_var = tk.StringVar()
     _vadd = ttk.Entry(vside, textvariable=vocab_add_var, width=16)
     _vadd.pack(anchor="w")
@@ -1738,23 +1742,23 @@ def main(first_run: bool = False) -> None:
         picker.configure(bg=BG)
         picker.transient(root)
         tk.Label(picker, text="Choose terms to add", bg=BG, fg=FG,
-                 font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=18, pady=(16, 4))
+                 font=theme.font("body_large_strong")).pack(anchor="w", padx=px(18), pady=px((16, 4)))
         tk.Label(picker, text="Nothing is added unless you tick it.", bg=BG, fg=MUTED,
-                 font=("Segoe UI", 9)).pack(anchor="w", padx=18, pady=(0, 10))
+                 font=theme.font("body")).pack(anchor="w", padx=px(18), pady=px((0, 10)))
         # Buttons pack to the BOTTOM first, so the expanding body can never starve
         # them: in the old order 21+ candidates left "Add selected" unrendered
         # entirely, and a realistic corpus produces 30+.
         buttons = tk.Frame(picker, bg=BG)
-        buttons.pack(side="bottom", fill="x", padx=18, pady=14)
+        buttons.pack(side="bottom", fill="x", padx=px(18), pady=px(14))
 
         outer = tk.Frame(picker, bg=CARD)
-        outer.pack(fill="both", expand=True, padx=18)
+        outer.pack(fill="both", expand=True, padx=px(18))
         canvas = tk.Canvas(outer, bg=CARD, highlightthickness=0, bd=0)
         bar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
-        body = tk.Frame(canvas, bg=CARD, padx=14, pady=8)
+        body = tk.Frame(canvas, bg=CARD, padx=px(14), pady=px(8))
         window = canvas.create_window((0, 0), window=body, anchor="nw")
         body.bind("<Configure>",
                   lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -1768,7 +1772,7 @@ def main(first_run: bool = False) -> None:
                      f"{candidate['sessions']} meeting{'s' if candidate['sessions'] != 1 else ''}")
             tk.Checkbutton(body, text=label, variable=selected, bg=CARD, fg=FG,
                            activebackground=CARD, activeforeground=FG, selectcolor=BG,
-                           anchor="w").pack(fill="x", pady=2)
+                           anchor="w").pack(fill="x", pady=px(2))
             choices.append((candidate, selected))
 
         def confirm():
@@ -1781,17 +1785,17 @@ def main(first_run: bool = False) -> None:
             picker.destroy()
 
         ttk.Button(buttons, text="Add selected", command=confirm).pack(side="right")
-        ttk.Button(buttons, text="Cancel", command=picker.destroy).pack(side="right", padx=(0, 8))
-        picker.geometry(f"520x{min(620, 150 + 30 * len(candidates))}")
+        ttk.Button(buttons, text="Cancel", command=picker.destroy).pack(side="right", padx=px((0, 8)))
+        picker.geometry(f"{px(520)}x{min(px(620), px(150) + px(30) * len(candidates))}")
         picker.grab_set()
 
     _vadd.bind("<Return>", _vocab_add)
     _vrow = tk.Frame(vside, bg=CARD)
-    _vrow.pack(anchor="w", pady=(6, 0))
+    _vrow.pack(anchor="w", pady=px((6, 0)))
     ttk.Button(_vrow, text="Add", command=_vocab_add, width=7).pack(side="left")
-    ttk.Button(_vrow, text="Remove", command=_vocab_remove, width=8).pack(side="left", padx=(6, 0))
+    ttk.Button(_vrow, text="Remove", command=_vocab_remove, width=8).pack(side="left", padx=px((6, 0)))
     ttk.Button(_vrow, text="From meetings", command=_vocab_from_meetings).pack(
-        side="left", padx=(6, 0)
+        side="left", padx=px((6, 0))
     )
 
     wf = stack(c, "Word fixes", "Corrections applied last, so they always win. Double-click a row to edit it.")
@@ -1799,16 +1803,16 @@ def main(first_run: bool = False) -> None:
                             selectbackground=ACCENT, selectforeground="#1a0c0d",
                             highlightthickness=1, highlightbackground=DIV,
                             relief="flat", activestyle="none", exportselection=False,
-                            font=("Segoe UI", 9))
+                            font=theme.font("body"))
     fixes_list.pack(side="left", anchor="n")
     for _line in fixes_to_lines(cfg.replacements):
         fixes_list.insert("end", _line)
     fside = tk.Frame(wf, bg=CARD)
-    fside.pack(side="left", padx=(8, 0), anchor="n")
+    fside.pack(side="left", padx=px((8, 0)), anchor="n")
     fix_wrong_var = tk.StringVar()
     fix_right_var = tk.StringVar()
     ttk.Entry(fside, textvariable=fix_wrong_var, width=16).pack(anchor="w")
-    tk.Label(fside, text="→", bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w")
+    tk.Label(fside, text="→", bg=CARD, fg=MUTED, font=theme.font("caption")).pack(anchor="w")
     fix_right_entry = ttk.Entry(fside, textvariable=fix_right_var, width=16)
     fix_right_entry.pack(anchor="w")
 
@@ -1865,13 +1869,13 @@ def main(first_run: bool = False) -> None:
     fix_right_entry.bind("<Return>", _fix_add)
     fixes_list.bind("<Double-Button-1>", _fix_edit)
     _frow = tk.Frame(fside, bg=CARD)
-    _frow.pack(anchor="w", pady=(6, 0))
+    _frow.pack(anchor="w", pady=px((6, 0)))
     ttk.Button(_frow, text="Add", command=_fix_add, width=7).pack(side="left")
-    ttk.Button(_frow, text="Remove", command=_fix_remove, width=8).pack(side="left", padx=(6, 0))
+    ttk.Button(_frow, text="Remove", command=_fix_remove, width=8).pack(side="left", padx=px((6, 0)))
     _frow2 = tk.Frame(fside, bg=CARD)
-    _frow2.pack(anchor="w", pady=(4, 0))
+    _frow2.pack(anchor="w", pady=px((4, 0)))
     ttk.Button(_frow2, text="Import CSV", command=_fix_import).pack(side="left")
-    ttk.Button(_frow2, text="Export CSV", command=_fix_export).pack(side="left", padx=(6, 0))
+    ttk.Button(_frow2, text="Export CSV", command=_fix_export).pack(side="left", padx=px((6, 0)))
 
     entry(row(c, "Speech notes", "Describe your accent, stutter or fillers to guide AI cleanup."),
           speech_notes_var, width=24)
@@ -1904,7 +1908,7 @@ def main(first_run: bool = False) -> None:
                      "is slow or returns nothing —\nit downloads again next time you "
                      "use it.")
     _cache_size = tk.StringVar(value="…")
-    ttk.Label(_cache_row, textvariable=_cache_size, width=9).pack(side="left", padx=(0, 8))
+    ttk.Label(_cache_row, textvariable=_cache_size, width=9).pack(side="left", padx=px((0, 8)))
     _clear_btn = ttk.Button(_cache_row, text="Clear", width=8)
     _clear_btn.pack(side="left")
 
@@ -1971,7 +1975,7 @@ def main(first_run: bool = False) -> None:
             meetings_dir_var.set(chosen)
 
     ttk.Button(_mr, text="Browse", width=8,
-               command=_browse_meetings).pack(side="left", padx=(8, 0))
+               command=_browse_meetings).pack(side="left", padx=px((8, 0)))
 
     # --- Save / Cancel (live in the fixed footer) ---
     def value_for(var, table):
@@ -2120,20 +2124,20 @@ def main(first_run: bool = False) -> None:
         root.after(1200, lambda: save_btn.config(text="Save"))
 
     save_btn.config(command=save_and_stay)
-    ttk.Button(footer, text="Close", command=root.destroy).pack(side="right", padx=(0, 8))
+    ttk.Button(footer, text="Close", command=root.destroy).pack(side="right", padx=px((0, 8)))
     ttk.Button(footer, text="⭐ Star on GitHub",
                command=lambda: webbrowser.open(_URLS["github"])).pack(side="left")
     ttk.Label(footer, text="Free & open-source — a star really helps.",
-              style="Muted.TLabel").pack(side="left", padx=(12, 0))
+              style="Muted.TLabel").pack(side="left", padx=px((12, 0)))
 
     root.update_idletasks()
-    cw = frm.winfo_reqwidth() + 22          # form width + scrollbar
+    cw = frm.winfo_reqwidth() + px(22)          # form width + scrollbar
     ch = frm.winfo_reqheight()
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-    win_w = max(cw, 760)                    # wider: descriptions sit clear of the controls
-    win_h = min(ch + 110, sh - 150)         # leave room for the taskbar so the footer is never cut off
+    win_w = max(cw, px(874))                    # wider: descriptions sit clear of the controls
+    win_h = min(ch + px(110), sh - px(150))         # leave room for the taskbar so the footer is never cut off
     x = max(0, (sw - win_w) // 2)
-    y = max(16, (sh - win_h) // 5)          # sit near the top so the bottom stays on-screen
+    y = max(px(16), (sh - win_h) // 5)          # sit near the top so the bottom stays on-screen
     root.geometry(f"{win_w}x{win_h}+{x}+{y}")
     # The Meetings tab is a two-pane layout with a transcript in it and is much
     # more usable with the whole screen. Maximise, but keep the geometry above as

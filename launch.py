@@ -11,9 +11,15 @@ builds misread as a WinRT failure. tests/test_entrypoints.py pins them together.
 
 import sys
 
+from wisprlite.theme import enable_dpi_awareness
+
+# The app branch (overlay, region pickers), --mcp and --winrt-selftest stay DPI-unaware:
+# their pixel maths must not change in this build.
 if "--settings" in sys.argv:
+    enable_dpi_awareness()
     from wisprlite.settings import main
 elif "--prep" in sys.argv:
+    enable_dpi_awareness()
     from wisprlite.prep_window import main as _prep_main
 
     def main() -> None:
@@ -21,20 +27,27 @@ elif "--prep" in sys.argv:
         if i + 1 < len(sys.argv):
             _prep_main(sys.argv[i + 1])
 elif "--history" in sys.argv:
+    enable_dpi_awareness()
     from wisprlite.history import main
 elif "--meetings" in sys.argv:
+    enable_dpi_awareness()
     from wisprlite.meetings_tab import main
 elif "--about" in sys.argv:
+    enable_dpi_awareness()
     from wisprlite.about import main
 elif "--profiles" in sys.argv:
+    enable_dpi_awareness()
     from wisprlite.profiles import main
 elif "--voices" in sys.argv:
+    enable_dpi_awareness()
     from wisprlite.voices_editor import main
 elif "--transcribe" in sys.argv:
+    enable_dpi_awareness()
     from wisprlite.transcribe_window import main
 elif "--mcp" in sys.argv:
     from wisprlite.mcp_shim import main
 elif "--feedback" in sys.argv:
+    enable_dpi_awareness()
     from wisprlite.feedback import main
 elif "--winrt-selftest" in sys.argv:
     from wisprlite.readaloud import main
