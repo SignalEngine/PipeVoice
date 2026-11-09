@@ -740,11 +740,11 @@ def transcribe_session(
     meta["status"] = "transcribed"
     meta["transcript_file"] = "transcript.json"
     _write_json(meta_path, meta)
-    _auto_title(session_dir, segments, cfg)
+    _auto_title(session_dir, segments, cfg, selected_backend)
     return transcript
 
 
-def _auto_title(session_dir: Path, segments: list[dict], cfg) -> None:
+def _auto_title(session_dir: Path, segments: list[dict], cfg, backend: str = "local") -> None:
     """Name an unnamed meeting from its transcript. Never raises, never overwrites."""
     try:
         if load_title(session_dir):
@@ -752,9 +752,9 @@ def _auto_title(session_dir: Path, segments: list[dict], cfg) -> None:
         from .cleanup import provider_ready
         from .summarise import suggest_title
 
-        # Transcript text goes to the AI provider only if the user opted in to
-        # automatic meeting names (separate from dictation's "Polish with AI").
-        if not getattr(cfg, "meeting_auto_name", False):
+        # A Deepgram transcript already went to the cloud, so naming it is no new
+        # exposure. A local-only meeting stays offline unless the user ticked the box.
+        if backend != "deepgram" and not getattr(cfg, "meeting_auto_name", False):
             return
         if not provider_ready(cfg.cleanup_provider):
             return

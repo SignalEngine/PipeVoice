@@ -1005,8 +1005,9 @@ def main(first_run: bool = False) -> None:
         command=_mk_capture(meeting_cap_btn, meeting_hotkey_var)
     )
 
-    check(c, "Name meetings automatically after transcription", meeting_auto_name_var,
-          "Sends the first part of the transcript to your AI provider to suggest a name.")
+    check(c, "Also name meetings transcribed on this computer", meeting_auto_name_var,
+          "Meetings transcribed with Deepgram are named automatically. Tick this to also "
+          "send the start of local transcripts to your AI provider for a name.")
     check(c, "Record the screen too (video)", meeting_video_var,
           "Records the screen your mouse is on when the meeting starts. "
           "Applies from the next meeting.")

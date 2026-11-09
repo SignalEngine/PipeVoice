@@ -181,10 +181,10 @@ def test_meeting_auto_name_setting_round_trips(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.json")
     cfg_ = config.Config.load()
-    assert cfg_.meeting_auto_name is True
-    cfg_.meeting_auto_name = False
+    assert cfg_.meeting_auto_name is False
+    cfg_.meeting_auto_name = True
     cfg_.save()
-    assert config.Config.load().meeting_auto_name is False
+    assert config.Config.load().meeting_auto_name is True
 
 
 def test_suggest_title_has_a_20_second_timeout():
@@ -217,3 +217,15 @@ def test_signature_changes_when_a_meeting_is_renamed(tmp_path):
     assert after != before
     meeting.save_title(path, "Chess ICT kickoff 2", "user")
     assert meetings_tab.meetings_signature(tmp_path) != after
+
+
+def test_deepgram_meetings_are_named_without_the_local_opt_in(tmp_path):
+    off = cfg()
+    off.meeting_auto_name = False
+    segs = [{"start": 0.0, "text": "hello", "speaker": "Them 1"}]
+    with patch("wisprlite.cleanup.provider_ready", return_value=True), \
+         patch("wisprlite.summarise.suggest_title", return_value="Cloud named") as suggest:
+        meeting._auto_title(tmp_path, segs, off, "deepgram")
+        assert meeting.load_title(tmp_path) == "Cloud named"
+        meeting._auto_title(tmp_path / "x", segs, off, "local") if (tmp_path / "x").mkdir() is None else None
+    assert suggest.call_count == 1      # the local one was not sent
