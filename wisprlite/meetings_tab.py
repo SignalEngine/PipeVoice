@@ -38,6 +38,7 @@ from .meeting import (
     save_speaker_map,
     save_title,
     save_title_if_empty,
+    session_transcribing,
     save_corrections,
     save_polished,
     transcribe_session,
@@ -275,6 +276,7 @@ def meetings_signature(base_dir: str | Path | None = None) -> tuple:
                 (path / "video.json").stat().st_mtime_ns if (path / "video.json").is_file() else None,
                 (path / f"{path.name}.mp4").is_file(),
                 transcript_mtime,
+                session_transcribing(path),
                 _stat_pair(path / "title.json"),
             )
         except OSError:
@@ -384,6 +386,7 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
 
     sessions = []
     for path in paths:
+        transcribing = session_transcribing(path)
         meta = _read_json(path / "meta.json")
         status = derive_status(path, meta)
         if status == "recorded" and not meta.get("stopped_at"):
@@ -435,8 +438,10 @@ def list_sessions(base_dir: str | Path | None = None) -> list[dict]:
                 "duration": format_duration(duration_seconds),
                 "status": status,
                 "can_transcribe": status != "recording"
+                and not transcribing
                 and _has_audio(path)
                 and not (path / "transcript.json").is_file(),
+                "transcribing": transcribing,
                 "speaker_count": len(speaker_names) or None,
                 "speaker_names": speaker_names,
                 "transcription_backend": _backend_label(
@@ -1317,6 +1322,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     # Right after Transcribe so a narrow window never clips it.
     export_btn = ttk.Button(actions, text="Export all", state="disabled")
     export_btn.pack(side="left", padx=(7, 0))
+    copy_ai_btn = ttk.Button(actions, text="Copy for AI", state="disabled")
+    copy_ai_btn.pack(side="left", padx=(7, 0))
     video_btn = ttk.Button(actions, text="Send video", state="disabled")
     video_btn.pack(side="left", padx=(7, 0))
     polish_btn = ttk.Button(actions, text="Polish", state="disabled")
@@ -1325,8 +1332,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     toggle_polish_btn.pack(side="left", padx=(7, 0))
     copy_btn = ttk.Button(actions, text="Copy", state="disabled")
     copy_btn.pack(side="left", padx=(7, 0))
+    # Not packed: the row overflowed with Copy for AI. Kept for its state; reached via the row's right-click menu.
     save_btn = ttk.Button(actions, text="Save as .txt", state="disabled")
-    save_btn.pack(side="left", padx=(7, 0))
     folder_btn = ttk.Button(actions, text="Open folder", state="disabled")
     folder_btn.pack(side="left", padx=(7, 0))
     delete_btn = ttk.Button(actions, text="Delete session", state="disabled")
@@ -2087,6 +2094,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         fallback = (
             "Recording in progress. Transcription is available after it stops."
             if session["status"] == "recording"
+            else "Transcribing in the background\u2026"
+            if session.get("transcribing")
             else "No transcript yet. Choose Transcribe to process this recording."
             if session["can_transcribe"]
             else "No transcript or usable audio was found for this session."
@@ -2152,6 +2161,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         # Export needs a transcript too. Even an empty "Export" button offers
         # the user no obvious next step, so we keep it in lockstep with Save.
         export_btn.config(state="normal" if body_text else "disabled")
+        copy_ai_btn.config(state="normal" if body_text else "disabled")
         folder_btn.config(state="normal")
         can_delete = session["status"] != "recording" and not state["busy"]
         delete_btn.config(state="normal" if can_delete else "disabled")
@@ -2298,6 +2308,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             secondary_bits.append(
                 "Recording in progress"
                 if session["status"] == "recording"
+                else "Transcribing\u2026"
+                if session.get("transcribing")
                 else "No transcript yet"
             )
         if name:
@@ -2519,6 +2531,19 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     def poll_sessions() -> None:
         if state["destroyed"]:
             return
+        waiting = state.get("answer_when_ready")
+        if waiting is not None and not state["busy"]:
+            if (waiting / "transcript.json").is_file():
+                state.pop("answer_when_ready")
+                refresh(preferred=waiting)
+                # The list may be filtered so another meeting got selected instead.
+                if selected_path() == waiting:
+                    do_answers()
+            elif not session_transcribing(waiting):
+                state.pop("answer_when_ready")
+                status_label.config(
+                    text="Transcription did not finish. Press Transcribe to try again.",
+                    fg=ACCENT)
         signature = meetings_signature()
         if signature != state["signature"] and not state["busy"]:
             selected = selected_path()
@@ -2581,6 +2606,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
             or selected is None
             or not selected["can_transcribe"]
             or state["busy"]
+            or session_transcribing(path)   # cached row may predate the app's marker
         ):
             return
         set_busy(True)
@@ -2892,6 +2918,27 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         copy_btn.config(text="Copied ✓" if ok else "Copy failed")
         root.after(1100, lambda: copy_btn.config(text="Copy"))
 
+    def do_copy_ai() -> None:
+        # The whole meeting as Markdown (title, speakers, notes, transcript): one
+        # paste into an AI chat. Follows Show raw, same as Export all.
+        path = selected_path()
+        if path is None:
+            return
+        try:
+            data = gather_session_export_data(path, polished=state["show_polished"])
+        except (OSError, ValueError) as exc:
+            status_label.config(text=f"Could not copy: {exc}", fg=ACCENT)
+            return
+        if not data.get("transcript"):
+            status_label.config(
+                text="Nothing to copy \u2014 this meeting has no transcript yet.",
+                fg=ACCENT,
+            )
+            return
+        ok = _copy_to_clipboard(root, export.build_markdown(data))
+        copy_ai_btn.config(text="Copied \u2713" if ok else "Copy failed")
+        root.after(1100, lambda: copy_ai_btn.config(text="Copy for AI"))
+
     def do_summary_copy() -> None:
         value = state["summaries"].get(selected_summary_mode(), "")
         ok = _copy_to_clipboard(root, value)
@@ -3159,6 +3206,10 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         menu.add_separator()
         menu.add_command(label="Open folder", command=do_open_folder)
         menu.add_command(label="Export all…", command=do_export)
+        menu.add_command(label="Copy for AI", command=do_copy_ai)
+        menu.add_command(
+            label="Save as .txt…", command=do_save,
+            state="normal" if str(save_btn.cget("state")) == "normal" else "disabled")
         menu.add_command(
             label="Send video", command=do_send_video,
             state=str(video_btn.cget("state")) if str(video_btn.cget("state")) in
@@ -3203,6 +3254,8 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
         (export_btn, "Write this meeting out as Markdown, a web page you can print to PDF, "
                      "or slides \u2014 with highlights, notes and named speakers. "
                      "Press Transcribe first, then Export all."),
+        (copy_ai_btn, "Copy the whole meeting as Markdown (title, speakers, notes and "
+                      "transcript) to paste into an AI chat."),
         (video_btn, "Send this meeting's screen video to your Screen recording destination."),
         (copy_btn, "Copy the transcript you are currently viewing to the clipboard."),
         (save_btn, "Save the transcript you are currently viewing as a .txt file."),
@@ -3227,6 +3280,7 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     copy_btn.config(command=do_copy)
     save_btn.config(command=do_save)
     export_btn.config(command=do_export)
+    copy_ai_btn.config(command=do_copy_ai)
     video_btn.config(command=do_send_video)
     folder_btn.config(command=do_open_folder)
     delete_btn.config(command=do_delete)
@@ -3239,7 +3293,13 @@ def build(container, root, wheel=None, on_replacements_changed=None, show_tab=No
     chosen_now = state["selected"]
     if (os.environ.get("PV_AUTO") == "answer" and wanted and chosen_now
             and chosen_now["path"] == Path(wanted)):
-        if chosen_now["can_transcribe"]:
+        if chosen_now.get("transcribing"):
+            # Already being transcribed in the background: never start a second run.
+            state["answer_when_ready"] = chosen_now["path"]
+            status_label.config(
+                text="Transcribing in the background \u2014 answers will start when it finishes.",
+                fg=MUTED)
+        elif chosen_now["can_transcribe"]:
             state["auto_answer"] = True
             do_transcribe()
         elif (chosen_now["path"] / "transcript.json").is_file():

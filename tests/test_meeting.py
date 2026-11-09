@@ -1064,3 +1064,44 @@ def test_a_loud_mic_block_resets_the_silent_clock():
         _feed(recorder, "mic", 0.02, 0.05)
         _interleave(recorder, 0.0003, 0.05, 15)
         assert recorder.mic_silent_suspected is False
+
+
+# ---- after-call: busy kinds + mic dead at start ------------------------------
+
+def test_hold_kinds_and_session_transcribing(tmp_path):
+    plain = meeting.hold_session(tmp_path)
+    assert meeting.session_busy(tmp_path) and not meeting.session_transcribing(tmp_path)
+    meeting.release_session(plain)
+    marker = meeting.hold_session(tmp_path, "transcribe")
+    assert marker.name.startswith(meeting.TRANSCRIBE_BUSY_PREFIX)
+    assert meeting.session_busy(tmp_path) and meeting.session_transcribing(tmp_path)
+    meeting.release_session(marker)
+    assert not meeting.session_busy(tmp_path)
+    assert not meeting.session_transcribing(tmp_path)
+
+
+def test_stale_transcribe_marker_is_ignored(tmp_path):
+    marker = meeting.hold_session(tmp_path, "transcribe")
+    old = time.time() - meeting.BUSY_STALE_SECONDS - 10
+    os.utime(marker, (old, old))
+    assert not meeting.session_transcribing(tmp_path)
+
+
+def test_mic_dead_at_start_after_3s_of_digital_silence(caplog):
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        _feed(recorder, "mic", 0.0, 2.5)
+        assert recorder.mic_dead_at_start is False      # too early to judge
+        _feed(recorder, "mic", 0.0, 0.7)
+        with caplog.at_level("WARNING", logger="wisprlite.meeting"):
+            assert recorder.mic_dead_at_start is True
+            assert recorder.mic_dead_at_start is True
+        assert sum("mic dead at start" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_mic_alive_block_keeps_dead_flag_false_forever():
+    with tempfile.TemporaryDirectory() as tmp:
+        recorder = MeetingRecorder(pathlib.Path(tmp))
+        _feed(recorder, "mic", 0.001, 0.05)
+        _feed(recorder, "mic", 0.0, 3.5)
+        assert recorder.mic_dead_at_start is False

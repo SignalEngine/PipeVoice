@@ -783,6 +783,7 @@ def main(first_run: bool = False) -> None:
     screenrec_keep_var = tk.BooleanVar(value=cfg.screenrec_keep_local)
     screenrec_fps_var = tk.StringVar(value=str(cfg.screenrec_fps))
     meeting_auto_name_var = tk.BooleanVar(value=cfg.meeting_auto_name)
+    meeting_auto_transcribe_var = tk.BooleanVar(value=cfg.meeting_auto_transcribe)
     meeting_video_var = tk.BooleanVar(value=cfg.meeting_video)
     meeting_video_send_var = tk.BooleanVar(value=cfg.meeting_video_send)
     video_fps_start = nearest_video_fps_label(cfg.meeting_video_fps)
@@ -1008,6 +1009,8 @@ def main(first_run: bool = False) -> None:
     check(c, "Also name meetings transcribed on this computer", meeting_auto_name_var,
           "Meetings transcribed with Deepgram are named automatically. Tick this to also "
           "send the start of local transcripts to your AI provider for a name.")
+    check(c, "Transcribe automatically when the meeting ends", meeting_auto_transcribe_var,
+          "Uses your transcription provider. You can still answer their questions after.")
     check(c, "Record the screen too (video)", meeting_video_var,
           "Records the screen your mouse is on when the meeting starts. "
           "Applies from the next meeting.")
@@ -1015,7 +1018,7 @@ def main(first_run: bool = False) -> None:
               "Higher is smoother but makes bigger files and uses more CPU. "
               "About 3x the size at 15 fps. Applies from the next meeting."),
           meeting_video_fps_var, [label for label, _ in VIDEO_FPS_OPTIONS])
-    check(c, "Send the video when the meeting ends (uses the Screen recording destination)",
+    check(c, "Send the video when the meeting ends, plus the transcript if it was transcribed automatically (uses the Screen recording destination)",
           meeting_video_send_var)
     _video_dest_hint = tk.Label(c, text="", bg=CARD, fg=MUTED, font=("Segoe UI", 8),
                                 wraplength=470, justify="left")
@@ -2014,6 +2017,7 @@ def main(first_run: bool = False) -> None:
         cfg.bookmark_hotkey = bookmark_hotkey_var.get().strip()
         cfg.bookmark_acoustic = bool(bookmark_acoustic_var.get())
         cfg.meeting_auto_name = bool(meeting_auto_name_var.get())
+        cfg.meeting_auto_transcribe = bool(meeting_auto_transcribe_var.get())
         cfg.meeting_video = bool(meeting_video_var.get())
         cfg.meeting_video_send = bool(meeting_video_send_var.get())
         cfg.meeting_video_fps = dict(VIDEO_FPS_OPTIONS).get(

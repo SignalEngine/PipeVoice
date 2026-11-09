@@ -386,6 +386,8 @@ MIC_SILENT_LEVEL = 0.002       # mic RMS below this is a dead/muted mic (a real 
 MIC_ALIVE_PEAK = 0.004         # any mic sample this loud (breath, keys, room) proves the mic is live;
                                # James's muted mic peaked at 0.0015 across a whole 31 min call
 MIC_ALARM_DESKTOP_LEVEL = 0.01  # remote audio this loud counts as "they are talking"
+MIC_DEAD_CHECK_SECONDS = 3.0   # judge the mic this long after the meeting starts
+MIC_DEAD_PEAK = 1e-4           # below this for the whole check = digital silence (mic held by another app, or muted at the driver)
 MIC_SILENT_SECONDS = 20.0      # of remote speech with that dead mic before warning
 BLEED_LIVE_RATIO = 0.75        # mic loud this often DURING remote speech = speakers
 
@@ -772,13 +774,15 @@ VIDEO_STATUS_FILE = "video.json"
 # One uniquely named file per hold, so overlapping holds never release each other;
 # hold and release happen on different threads, so the caller keeps the marker.
 BUSY_PREFIX = ".busy-"
+TRANSCRIBE_BUSY_PREFIX = ".busy-transcribe-"   # still matches BUSY_PREFIX*, so session_busy sees it
 BUSY_STALE_SECONDS = 6 * 3600   # a crash leaves its marker; never block Delete forever
 
 
-def hold_session(session_dir) -> Path | None:
+def hold_session(session_dir, kind: str = "") -> Path | None:
     import uuid
 
-    marker = Path(session_dir) / f"{BUSY_PREFIX}{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    tag = f"{kind}-" if kind else ""
+    marker = Path(session_dir) / f"{BUSY_PREFIX}{tag}{os.getpid()}-{uuid.uuid4().hex[:8]}"
     try:
         marker.touch()
         return marker
@@ -800,6 +804,15 @@ def session_busy(session_dir) -> bool:
     try:
         return any(now - m.stat().st_mtime < BUSY_STALE_SECONDS
                    for m in Path(session_dir).glob(BUSY_PREFIX + "*"))
+    except OSError:
+        return False
+
+
+def session_transcribing(session_dir) -> bool:
+    now = time.time()
+    try:
+        return any(now - m.stat().st_mtime < BUSY_STALE_SECONDS
+                   for m in Path(session_dir).glob(TRANSCRIBE_BUSY_PREFIX + "*"))
     except OSError:
         return False
 
@@ -970,6 +983,8 @@ class MeetingRecorder:
         self._bleed_both_loud = 0
         self._mic_silent_s = 0.0
         self._mic_silent_logged = False
+        self._mic_fed_s = 0.0
+        self._mic_dead_logged = False
         self._peaks = {"mic": 0.0, "desktop": 0.0}
         self.focus_session = None      # set by the app when PipeFocus is on
         self._mic_stream = None
@@ -1037,6 +1052,22 @@ class MeetingRecorder:
         return suspected
 
     @property
+    def mic_dead_at_start(self) -> bool:
+        """True when the mic gave pure digital silence for its first 3 s of audio.
+        Counted in mic audio seconds (= wall time while recording). Once any
+        sample peaks above MIC_DEAD_PEAK it stays False for the meeting."""
+        with self._state_lock:
+            dead = (self._mic_fed_s >= MIC_DEAD_CHECK_SECONDS
+                    and self._peaks["mic"] < MIC_DEAD_PEAK)
+            first = dead and not self._mic_dead_logged
+            if first:
+                self._mic_dead_logged = True
+        if first:
+            log.warning("meeting mic dead at start (mic=%s)",
+                        self.device if self.device is not None else "default")
+        return dead
+
+    @property
     def levels(self) -> dict[str, float]:
         with self._state_lock:
             return dict(self._levels)
@@ -1100,6 +1131,8 @@ class MeetingRecorder:
             self._bleed_both_loud = 0
             self._mic_silent_s = 0.0
             self._mic_silent_logged = False
+            self._mic_fed_s = 0.0
+            self._mic_dead_logged = False
             self._peaks = {"mic": 0.0, "desktop": 0.0}
             self._stop_reason = None
             self._video = None
@@ -1675,6 +1708,8 @@ class MeetingRecorder:
                 elif label == "desktop" and rms >= MIC_ALARM_DESKTOP_LEVEL:
                     self._mic_silent_s += data.size / SAMPLE_RATE
                 self._peaks[label] = max(self._peaks[label], peak)
+                if label == "mic":
+                    self._mic_fed_s += data.size / SAMPLE_RATE
             pcm = (np.clip(data, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
             # PipeFocus, if running. feed() only ENQUEUES and swallows its own
             # errors, so nothing here can stall or break the capture callback —

@@ -101,6 +101,8 @@ class App:
         # so the final message can never be overwritten by a late "Preparing…".
         self._video_msg_lock = threading.Lock()
         self._meeting_video_sender = None   # the thread scp-ing the finished video
+        self._meeting_auto_transcriber = None   # the thread transcribing a meeting that just ended
+        self._meeting_plans: dict[str, tuple] = {}   # session dir -> video send plan taken at its start
         self._meeting_active = False
         self._meeting_degraded = False
         self._meeting_errors_reported = set()
@@ -861,7 +863,7 @@ class App:
             "levels": self._meeting.levels,
             "errors": self._meeting.fatal_errors,
             "bleed": self._meeting.bleed_suspected,
-            "mic_silent": self._meeting.mic_silent_suspected,
+            "mic_silent": self._meeting.mic_silent_suspected or self._meeting.mic_dead_at_start,
             "video": self._meeting.video_state,
         }
 
@@ -1417,6 +1419,7 @@ class App:
                 self._set_icon("idle")
                 self.tray.update()
                 self._video_preparing_notice()
+                self._auto_transcribe(getattr(self._meeting, "session_dir", None))
             return
         if self.paused:
             return
@@ -1429,10 +1432,17 @@ class App:
             # Decided when the meeting STARTS: a settings change while the video
             # is still muxing must never send it somewhere the user did not pick.
             cfg = getattr(self, "cfg", None)
+            plan = None
             if cfg is not None:
-                self._meeting.video_send_plan = (
-                    bool(cfg.meeting_video_send), (cfg.screenrec_destination or "").strip())
+                # Sending (video, and transcript with it) needs the video ON: the send
+                # setting is consent for the meeting video, not for a lone transcript.
+                plan = (bool(cfg.meeting_video and cfg.meeting_video_send),
+                        (cfg.screenrec_destination or "").strip())
+                self._meeting.video_send_plan = plan
             self._meeting.start()
+            session = getattr(self._meeting, "session_dir", None)
+            if plan is not None and session:
+                self._meeting_plans[str(session)] = plan
         except Exception as exc:
             # Focus was started first, so it must be released here or it keeps a
             # billable stream open for a meeting that never began.
@@ -1617,6 +1627,79 @@ class App:
         self._fail(f"meeting stopped: {reason}")
         self.tray.update()
         self._video_preparing_notice()
+        self._auto_transcribe(getattr(self._meeting, "session_dir", None))
+
+    # ---- meeting auto-transcribe -----------------------------------------------
+
+    def _auto_transcribe(self, session_dir) -> None:
+        """Transcribe a meeting that just ended, if the user turned that on.
+
+        Runs on its own non-daemon thread so quitting mid-run does not cut it off.
+        The folder stays held (.busy-transcribe-*) the whole time: retention and
+        Delete skip it, and the Meetings tab shows "Transcribing…" instead of
+        offering a second transcription. Never raises.
+        """
+        try:
+            if not session_dir or not getattr(self.cfg, "meeting_auto_transcribe", False):
+                # Drop the plan saved at start, or one entry per meeting piles up forever.
+                if session_dir:
+                    self._meeting_plans.pop(str(session_dir), None)
+                return
+            from .meetings_tab import _has_audio
+            session_dir = Path(session_dir)
+            if not _has_audio(session_dir):
+                return
+            # Stop and the max-length timer can both land here for one meeting:
+            # only the first call transcribes (and only it holds the send plan).
+            with self._video_msg_lock:
+                done = self.__dict__.setdefault("_auto_transcribe_started", set())
+                if str(session_dir) in done:
+                    return
+                done.add(str(session_dir))
+            from . import meeting as meeting_mod
+
+            hold = meeting_mod.hold_session(session_dir, "transcribe")
+            # No plan saved at meeting start = never send: a later settings change
+            # must not upload a meeting recorded under the old choice.
+            plan = self._meeting_plans.pop(str(session_dir), None) or (False, "")
+            thread = threading.Thread(
+                target=self._auto_transcribe_work, args=(session_dir, hold, plan),
+                name="meeting-auto-transcribe", daemon=False)
+            self._meeting_auto_transcriber = thread
+            thread.start()
+        except Exception as exc:
+            log.warning("meeting auto-transcribe: could not start: %s", exc)
+
+    def _auto_transcribe_work(self, session_dir: Path, hold, plan) -> None:
+        from . import meeting as meeting_mod, screenrec
+        from .meetings_tab import gather_session_export_data
+        from . import export
+
+        try:
+            try:
+                meeting_mod.transcribe_session(session_dir, config.Config.load())
+            except Exception as exc:
+                log.warning("meeting auto-transcribe failed: %s", exc)
+                self._notify(f"Meeting transcription failed: {type(exc).__name__}: {exc}"[:80])
+                return
+            self._notify("\u2713 Meeting transcribed: "
+                         + (meeting_mod.load_title(session_dir) or session_dir.name))
+            send_on, destination = plan
+            if not (send_on and destination):
+                return
+            try:
+                md = session_dir / f"{session_dir.name}-transcript.md"   # own name: never overwrites a user export
+                export.write_export(gather_session_export_data(session_dir, polished=True), md)
+                ok, message = screenrec.send([md], destination)
+            except Exception as exc:
+                ok, message = False, f"{type(exc).__name__}: {exc}"
+            log.info("meeting transcript: sent=%s", ok)
+            self._notify("\u2713 Meeting transcript sent" if ok else
+                         f"Transcript kept locally \u2014 send failed: {message}"[:80])
+        except Exception as exc:   # a notify/log problem must never kill the thread silently
+            log.warning("meeting auto-transcribe: %s", exc)
+        finally:
+            meeting_mod.release_session(hold)
 
     # ---- meeting screen video ----------------------------------------------
 
