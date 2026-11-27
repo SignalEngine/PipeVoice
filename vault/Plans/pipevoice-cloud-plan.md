@@ -60,3 +60,10 @@ Estimate: one long session for server + app (steps 1–7), plus a short session 
 ## Not in v1
 
 Mac client, meeting mode, team plans, pay-per-minute billing.
+
+## Status (27 Nov, evening)
+
+- **Live (sandbox):** server PRs #21 and #22 merged; Vercel env set; Polar webhook created and checked with real signatures. App PR #128 merged and released as **v2.51.0 beta** (pre-release).
+- **External check (1) passed on Windows:** sandbox purchase → key activated in 2.51.0 → dictation typed text (log: no Deepgram connect, polish ran; server counter moved ~10 s). Caveat: James's `.env` was still present, so AI cleanup used his own Gemini key.
+- **Popup:** Cloud shows no live words (batch engine, like Groq/local). James: leave as is.
+- **Open:** (2) over-cap test against Groq usage page; (3) a real Polar revoke event; Deepgram key on Vercel for the fallback; steps 8–9 (site pricing/privacy copy, admin stats); production Polar org + token before any real sale.
