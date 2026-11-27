@@ -46,7 +46,7 @@ Lemon Squeezy closed to new stores (James's screenshot, 27 Nov). Polar replaces 
 6. ✅ **App: sync.** On start and after each Settings save: pull, compare `updated_at`, push. Off unless a licence is set.
 7. ✅ **App: offline fallback.** The existing `_fallback` to local Whisper already covers a Cloud outage. Check it fires for the new engine.
 8. **Site: pricing section (waits for the production Polar store: no public price for a product not on sale) + privacy page lines.** What Cloud sends (audio, to our server and to Groq/Deepgram, not stored) and what sync stores.
-9. **Admin page:** active licences, Cloud minutes this month, estimated Groq spend.
+9. ✅ **Admin page:** active licences, Cloud minutes this month, estimated Groq spend.
 
 Estimate: one long session for server + app (steps 1–7), plus a short session for site copy and admin (8–9). Product setup in Polar is done by Claude through the API with James's sandbox token.
 
