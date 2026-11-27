@@ -37,4 +37,6 @@ Scope: the desktop app side of PipeVoice Cloud v1. Bound to the code tree, not t
 - [ ] G7: James, on Windows with no .env, pastes a sandbox key and dictates
   EVIDENCE: pending
 
+ABANDON: G7 NOT RUN. Handoff to James: needs their Windows PC and a sandbox key; the builder has neither. This is not a pass.
+
 POSITIVE CONTROL: four planted bugs (size check off, HTTP error returns "", sync never pulls, licence path set to config.json) each made tests/test_cloud.py fail.
