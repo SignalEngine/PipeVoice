@@ -29,10 +29,10 @@ Scope: the desktop app side of PipeVoice Cloud v1. Bound to the code tree, not t
   EXPECT: passed
   EVIDENCE: automatic-evidence=v1; definition-sha256=c38427df4bf7b1ad033063321c1334789abd35689ab0c39c2479d5ad7affd22d; exit=0; EXPECT=matched; output-sha256=f1205614730c7960e512a0cc817983a4bf0f42d285c03c3cac52f18adfe93615; output-bytes=405; shell=/bin/sh; cwd=/root/wt-pv-cloud-app; path=bea4c23ec980/15 entries
 
-- [x] G6: the full suite failure count is not above main's baseline (main at 8ee8861: 15 failed, 790 passed, 114 skipped)
-  CHECK: o=$(run-limited python3 -m pytest -q -p no:cacheprovider --ignore=tests/test_transcribe_deepgram_e2e.py 2>&1 | tail -1); echo "$o"; n=$(echo "$o" | grep -oE '^[0-9]+ failed' | cut -d' ' -f1); echo "$o" | grep -q passed && [ "${n:-0}" -le 15 ] && echo BASELINE-OK
+- [x] G6: under a display, the full suite failure count is not above main's baseline (main at 8ee8861 under xvfb-run: 16 failed, 903 passed)
+  CHECK: log="$(git rev-parse --git-dir)/g6-suite.log"; run-limited xvfb-run -a python3 -m pytest -q -p no:cacheprovider -rf --ignore=tests/test_transcribe_deepgram_e2e.py > "$log" 2>&1; o=$(tail -1 "$log"); echo "$o"; n=$(echo "$o" | grep -oE '^[0-9]+ failed' | cut -d' ' -f1); echo "$o" | grep -q ' passed' && [ "${n:-0}" -le 16 ] && echo BASELINE-OK
   EXPECT: BASELINE-OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=4ab433716e902f80074c555ab4387bde14df4fec41ab0bc70fa9b4cf2cc15993; exit=0; EXPECT=matched; output-sha256=8bf48a99444e14ee43e9720a2b7e4e459510db5f870544fe9c580f7c822b6b29; output-bytes=68; shell=/bin/sh; cwd=/root/wt-pv-cloud-app; path=bea4c23ec980/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=ee9fd877632a1212b512865cd875d4d5b8d06619734f480c4c25160fa5b5638c; exit=0; EXPECT=matched; output-sha256=3c9813c7929120e126fa7dcae9061f424ed386cebfef56d96d6c7ad3c3f4760a; output-bytes=67; shell=/bin/sh; cwd=/root/wt-pv-cloud-app; path=bea4c23ec980/15 entries
 
 - [ ] G7: James, on Windows with no .env, pastes a sandbox key and dictates
   EVIDENCE: pending
