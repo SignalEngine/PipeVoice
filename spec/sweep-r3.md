@@ -9,3 +9,4 @@ REJECTED by design (see F1 above). Places checked:
 110:def activate(key: str) -> tuple:
 149:def _merge(local, remote) -> dict:
 174:def sync_now(cfg) -> None:
+- 2026-11-27 James decided (AskUserQuestion): keep this behaviour. Words stay on the PC and sync to the new key. Codex round 3 F1 is closed by owner decision.
