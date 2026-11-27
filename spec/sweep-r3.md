@@ -1,20 +1,4 @@
-## Authorization based on a stale configuration snapshot plus unsynchronised whole-file read/modify/write
-- Fixed at the source (3c08c47, 5ebeddb): usage.py no longer writes config.json at all (state moved to usage.json), and the switch is re-read raw from config.json on disk immediately before urlopen; unreadable/damaged/missing = no send.
-- The startup cfg check at maybe_send is only an early exit; it can never authorise a send by itself.
-
-### Every config read/write in usage.py:
-23:    return config.CONFIG_PATH.with_name("usage.json")
-26:def _read() -> dict:
-34:def _write(data: dict) -> None:
-44:        state = _read()
-45:        if not cfg.usage_count or state.get("last_count_day") == today:
-49:            _write(state)
-55:        # Raw read: Config.load() saves defaults (count on) over a damaged file.
-57:        if json.loads(config.CONFIG_PATH.read_text(encoding="utf-8")).get("usage_count", True) is not True:
-62:        _write(state)
-
-### Other privacy-switch readers in the app:
-wisprlite/settings.py:943:    usage_count_var = tk.BooleanVar(value=cfg.usage_count)
-wisprlite/settings.py:1862:    check(c, "Send an anonymous daily count", usage_count_var,
-wisprlite/settings.py:2189:        cfg.usage_count = bool(usage_count_var.get())
-wisprlite/config.py:171:    usage_count: bool = True         # send one anonymous daily count: version + random install id
+## Round 2 triage (brain, 2026-11-27)
+- F1 cross-licence words: REJECTED by design (second time). Vocabulary/replacements are PC data and sync with whichever licence is active on this PC. ARCHITECTURE.md states it. Same class, no new instance.
+- F2 bad replacement key disables working licence: FIXED. activate() now calls Polar activate for the new key first; only on success saves it and best-effort deactivates the old one. Class sweep: activate() is the only replacement path (settings.py:1626 calls it; remove() is a separate explicit user action). Tests: test_a_rejected_new_key_keeps_the_working_licence (404/403/network), ordering test.
+- F3 pre-digest state shape: REJECTED. No build with cloud.json lacking synced_digest was ever released (branch-only, never shipped), so no PC holds that shape.

@@ -527,33 +527,25 @@ def actions(sent):
     return [(r.full_url.rsplit("/", 1)[1], json.loads(r.data)["key"]) for r in sent]
 
 
-def test_replacing_the_key_frees_the_old_slot_first(monkeypatch):
+def test_replacing_the_key_frees_the_old_slot_after_the_new_one_works(monkeypatch):
     cloud.save({"key": "OLD", "activation_id": "a0", "synced_at": 5})
-    sent = stub(monkeypatch, (200, None), (200, {"id": "a2"}))
+    sent = stub(monkeypatch, (200, {"id": "a2"}), (200, None))
     assert cloud.activate(KEY) == (True, "Active on this PC")
-    assert actions(sent) == [("deactivate", "OLD"), ("activate", KEY)]
-    assert json.loads(sent[0].data)["activation_id"] == "a0"
+    assert actions(sent) == [("activate", KEY), ("deactivate", "OLD")]
+    assert json.loads(sent[1].data)["activation_id"] == "a0"
     assert cloud.load()["key"] == KEY and "synced_at" not in cloud.load()
 
 
 def test_replacing_the_key_continues_when_freeing_fails(monkeypatch):
     cloud.save({"key": "OLD", "activation_id": "a0"})
-    stub(monkeypatch, urllib.error.URLError("x"), (200, {"id": "a2"}))
+    stub(monkeypatch, (200, {"id": "a2"}), urllib.error.URLError("x"))
     assert cloud.activate(KEY)[0] and cloud.load()["key"] == KEY
 
 
-def test_old_slot_freed_but_new_key_rejected_forgets_the_old_licence(monkeypatch):
-    # Keeping it would make "activate OLD" report Active with a dead activation.
-    cloud.save({"key": "OLD", "activation_id": "a0"})
-    stub(monkeypatch, (200, None), (404, {}))
-    ok, message = cloud.activate(KEY)
-    assert not ok and message.startswith("Key not found") and "previous key" in message
-    assert not cloud.has_licence()
-
-
-def test_both_calls_failing_keeps_the_old_licence(monkeypatch):
+@pytest.mark.parametrize("reply", [(404, {}), (403, {}), urllib.error.URLError("x")])
+def test_a_rejected_new_key_keeps_the_working_licence(monkeypatch, reply):
     old = {"key": "OLD", "activation_id": "a0"}
     cloud.save(old)
-    stub(monkeypatch, urllib.error.URLError("x"), urllib.error.URLError("x"))
-    ok, message = cloud.activate(KEY)
-    assert not ok and "previous key" not in message and cloud.load() == old
+    sent = stub(monkeypatch, reply)
+    assert not cloud.activate(KEY)[0]
+    assert cloud.load() == old and actions(sent) == [("activate", KEY)]

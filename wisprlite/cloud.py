@@ -115,23 +115,21 @@ def activate(key: str) -> tuple:
     state = load()
     if state.get("key") == key and state.get("activation_id"):
         return True, "Active on this PC"  # another activate would use another slot
-    lost = ""
-    if state.get("key") != key and deactivate(state):  # replacing: free the old slot first
-        clear()  # its activation is gone, so we must not keep calling it active
-        lost = ". Your previous key was removed from this PC"
     label = platform.node() or "PC"
-    try:
+    try:  # activate the new key first so a mistyped key never costs the working one
         data = _polar("activate", {"key": key, "organization_id": ORG_ID, "label": label})
-        save({"key": key, "activation_id": data["id"], "label": label})
     except urllib.error.HTTPError as exc:
         if exc.code == 403:
-            return False, "This key is already on 3 PCs, or it was cancelled" + lost
+            return False, "This key is already on 3 PCs, or it was cancelled"
         if exc.code == 404:
-            return False, "Key not found" + lost
-        return False, f"Activation failed (error {exc.code}). Try again later" + lost
+            return False, "Key not found"
+        return False, f"Activation failed (error {exc.code}). Try again later"
     except Exception as exc:
         log.debug("cloud activation failed: %s", type(exc).__name__)
-        return False, "Could not reach the licence server. Check your internet and try again" + lost
+        return False, "Could not reach the licence server. Check your internet and try again"
+    save({"key": key, "activation_id": data["id"], "label": label})
+    if state.get("key") != key:
+        deactivate(state)  # replacing: free the old key's slot (best effort)
     return True, "Active on this PC"
 
 
