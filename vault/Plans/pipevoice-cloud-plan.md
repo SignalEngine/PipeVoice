@@ -1,6 +1,6 @@
 # PipeVoice Cloud v1 — build plan
 
-*27 Nov 2026 · brain-written (Fable is off) · status: decisions made, payment provider switched to Polar, waiting for the Polar token*
+*27 Nov 2026 · brain-written (Fable is off) · status: decisions made, payment provider switched to Polar, sandbox products created, waiting for a test purchase*
 
 **Goal:** a paid tier, £3/month or £25/year. A payer types a licence key into Settings and dictation works with no API key of their own. Their settings and vocabulary follow them to another PC.
 
@@ -55,7 +55,7 @@ Estimate: one long session for server + app (steps 1–7), plus a short session 
 - **A. Beta updates stay free.** Cloud v1 = no-key setup + settings sync. Early-access is not a Cloud perk.
 - **B. Monthly cap: 600 minutes (10 hours).** Groq lists turbo at about $0.04 per audio hour (from memory, to check on Groq's pricing page), so the worst case is about $0.40 per user per month.
 - **C. Clips longer than about 2 min 20 s go to local Whisper** with a short notice. Long-clip upload is not in v1.
-- **D. Keys:** `GROQ_API_KEY` received and tested (27 Nov, models call = 200). Payment provider = **Polar** (Lemon Squeezy closed). Needed: a Polar sandbox organization access token. Later: the production token and the webhook secret, and a Deepgram key on Vercel if one is not there yet.
+- **D. Keys:** `GROQ_API_KEY` received and tested (27 Nov, models call = 200). Payment provider = **Polar** (Lemon Squeezy closed). Sandbox token received 27 Nov. Created in the sandbox by API (read back and checked): licence-key benefit `165a8f38-4512-4d7f-adf4-4e0b66a6635b` (prefix PV, 3 PCs), products monthly £3 `582caa71-1214-4449-885e-5fb87387c2d0` and yearly £25 `2d8be9bc-2ef7-438e-b536-b8e95b232162`, organization `7ddf99c5-d60b-4e36-8b8f-cd7618fbadb8`, plus a sandbox checkout link. Note: Polar's API firewall blocks Python's default user agent (Cloudflare 1010); send a `User-Agent`. Later: the production token and the webhook secret, and a Deepgram key on Vercel if one is not there yet.
 
 ## Not in v1
 
