@@ -52,16 +52,16 @@ def test_same_day_makes_no_second_call(calls):
 
 
 def test_first_call_sends_exactly_the_contract_and_persists(calls):
-    cfg = config.Config(update_channel="beta")
+    cfg = config.Config()
     assert usage.maybe_send(cfg) is True
     req, timeout = calls[0]
     assert req.full_url == "https://pipevoice.app/api/ping"
     assert req.get_method() == "POST"
     assert dict(req.header_items()) == {
-        "Content-type": "application/json", "User-agent": "Pipevoice-updater"}
+        "Content-type": "application/json", "User-agent": "Pipevoice-usage"}
     assert timeout == 5
     assert re.fullmatch(r"[0-9a-f]{32}", cfg.install_id)
-    assert json.loads(req.data) == {"id": cfg.install_id, "v": __version__, "ch": "beta"}
+    assert json.loads(req.data) == {"id": cfg.install_id, "v": __version__}
     saved = config.Config.load()
     assert saved.install_id == cfg.install_id
     assert saved.last_count_day == cfg.last_count_day != ""
@@ -83,3 +83,9 @@ def test_network_error_is_swallowed_and_day_unchanged(calls, monkeypatch):
     assert usage.maybe_send(cfg) is False
     assert cfg.last_count_day == "2000-01-01"
     assert config.Config.load().last_count_day != usage.date.today().isoformat()
+
+
+def test_save_round_trips_and_leaves_no_tmp_file(calls):
+    config.Config(hotkey="f9").save()
+    assert config.Config.load().hotkey == "f9"
+    assert not config.CONFIG_PATH.with_suffix(".tmp").exists()

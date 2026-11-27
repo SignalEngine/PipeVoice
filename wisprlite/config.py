@@ -344,7 +344,9 @@ class Config:
 
     def save(self) -> None:
         try:
-            CONFIG_PATH.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+            tmp = CONFIG_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+            os.replace(tmp, CONFIG_PATH)
         except Exception:
             pass
 

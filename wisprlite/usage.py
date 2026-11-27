@@ -36,10 +36,10 @@ def maybe_send(cfg) -> bool:
             return False
         if not cfg.install_id:
             _save(cfg, install_id=uuid.uuid4().hex)
-        body = {"id": cfg.install_id, "v": __version__, "ch": cfg.update_channel}
+        body = {"id": cfg.install_id, "v": __version__}
         req = urllib.request.Request(
             URL, data=json.dumps(body).encode(), method="POST",
-            headers={"Content-Type": "application/json", "User-Agent": "Pipevoice-updater"})
+            headers={"Content-Type": "application/json", "User-Agent": "Pipevoice-usage"})
         with urllib.request.urlopen(req, timeout=5):
             pass
         _save(cfg, last_count_day=today)
