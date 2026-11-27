@@ -202,7 +202,7 @@ def test_sync_409_applies_the_returned_data(monkeypatch):
 
 
 def test_sync_apply_keeps_settings_saved_while_the_request_was_in_flight(monkeypatch):
-    licence()
+    licence(synced_at=1)
     stale = config.Config(hotkey="f8")
     newer = config.Config(hotkey="f9")
     newer.save()
@@ -237,3 +237,156 @@ def test_remove_during_sync_is_not_undone(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     cloud.sync_now(config.Config())
     assert not cloud.has_licence()
+
+
+# --- brain rulings 2026-11-27 -------------------------------------------------
+
+@pytest.mark.parametrize("env,stt,sync", [
+    (None, "https://pipevoice.app/api/stt", "https://pipevoice.app/api/sync"),
+    ("https://preview.example/api/stt", "https://preview.example/api/stt",
+     "https://preview.example/api/sync"),
+    ("https://stt.example/stt/api/stt", "https://stt.example/stt/api/stt",
+     "https://stt.example/stt/api/sync")])
+def test_one_override_variable_moves_stt_and_sync(monkeypatch, env, stt, sync):
+    if env:
+        monkeypatch.setenv("WISPRLITE_CLOUD_URL", env)
+    assert (cloud.stt_url(), cloud.sync_url()) == (stt, sync)
+
+
+def test_remove_resets_the_engine_and_frees_the_slot(monkeypatch):
+    licence()
+    config.Config(engine="cloud", hotkey="f9").save()
+    sent = []
+
+    def urlopen(req, timeout=None):
+        sent.append(req)
+        return _Resp(b"")  # 204: no body
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    state = cloud.remove()
+    saved = config.Config.load()
+    assert not cloud.has_licence()
+    assert (saved.engine, saved.hotkey) == (config.Config().engine, "f9")
+    assert cloud.deactivate(state) is True
+    assert sent[0].full_url == "https://sandbox-api.polar.sh/v1/customer-portal/license-keys/deactivate"
+    assert json.loads(sent[0].data) == {"key": KEY, "organization_id": cloud.ORG_ID,
+                                        "activation_id": "a1"}
+    assert sent[0].get_header("User-agent")
+
+
+def test_remove_leaves_another_engine_alone():
+    licence()
+    config.Config(engine="local").save()
+    cloud.remove()
+    assert config.Config.load().engine == "local"
+
+
+@pytest.mark.parametrize("reply", [(404, {}), urllib.error.URLError("offline")])
+def test_deactivate_failure_is_swallowed(monkeypatch, reply):
+    stub(monkeypatch, reply)
+    assert cloud.deactivate({"key": KEY, "activation_id": "a1"}) is False
+
+
+def test_deactivate_without_an_activation_makes_no_call(monkeypatch):
+    sent = stub(monkeypatch)
+    cloud.deactivate({})
+    assert sent == []
+
+
+def test_reactivating_the_same_key_uses_no_new_slot(monkeypatch):
+    licence(synced_at=7)
+    sent = stub(monkeypatch)
+    assert cloud.activate(" " + KEY) == (True, "Active on this PC")
+    assert sent == [] and cloud.load()["synced_at"] == 7
+
+
+@pytest.mark.parametrize("state", [{"key": KEY}, {"key": "OTHER", "activation_id": "a0"}])
+def test_activate_still_calls_polar_for_an_incomplete_or_different_licence(monkeypatch, state):
+    cloud.save(state)
+    sent = stub(monkeypatch, (200, {"id": "a2"}))
+    assert cloud.activate(KEY)[0] and len(sent) == 1
+
+
+def test_first_sync_merges_then_pushes_the_merge(monkeypatch):
+    licence()
+    config.Config(vocabulary="Convex, Polar", replacements={"teh": "the", "Gh": "GitHub"},
+                  starter_vocab_seeded=True).save()
+    cfg = config.Config.load()
+    remote = {"vocabulary": "polar, Groq,, groq, Tailscale",
+              "replacements": {"teh": "TEH", "gh": "remote", "k8": "k8s"}}
+    sent = stub(monkeypatch, (200, {"data": remote, "updated_at": 500}), (200, {"ok": True}))
+    cloud.sync_now(cfg)
+    words = "Convex, Polar, Groq, Tailscale"
+    # "gh" clashes with the local "Gh": word fixes ignore case, so only local stays.
+    fixes = {"teh": "the", "Gh": "GitHub", "k8": "k8s"}
+    body = json.loads(sent[1].data)
+    assert body["data"] == {"vocabulary": words, "replacements": fixes}
+    saved = config.Config.load()
+    assert (saved.vocabulary, saved.replacements) == (words, fixes)
+    assert cloud.load()["synced_at"] == body["updated_at"] > 500
+
+
+def test_first_sync_push_is_newer_than_a_server_clock_that_runs_ahead(monkeypatch):
+    licence()
+    ahead = 10 ** 14
+    sent = stub(monkeypatch, (200, {"data": {"vocabulary": "a", "replacements": {}},
+                                    "updated_at": ahead}), (200, {"ok": True}))
+    cloud.sync_now(config.Config())
+    assert json.loads(sent[1].data)["updated_at"] == ahead + 1
+
+
+@pytest.mark.parametrize("failure", [
+    (409, {"error": "stale", "data": {"vocabulary": "theirs", "replacements": {}},
+           "updated_at": 10 ** 15}),
+    urllib.error.URLError("offline")])
+def test_failed_first_push_keeps_local_words_and_merges_again_later(monkeypatch, failure):
+    licence()
+    config.Config(vocabulary="mine", starter_vocab_seeded=True).save()
+    stub(monkeypatch, (200, {"data": {"vocabulary": "server", "replacements": {}},
+                             "updated_at": 5}), failure)
+    cloud.sync_now(config.Config.load())
+    assert config.Config.load().vocabulary == "mine, server"
+    assert "synced_at" not in cloud.load()
+
+
+def test_later_syncs_stay_newer_wins(monkeypatch):
+    licence(synced_at=100)
+    stub(monkeypatch, (200, {"data": {"vocabulary": "server", "replacements": {}},
+                             "updated_at": 200}))
+    cfg = config.Config(vocabulary="mine")
+    cloud.sync_now(cfg)
+    assert cfg.vocabulary == "server"
+
+
+def test_voices_editor_offers_cloud():
+    from wisprlite import voices_editor
+
+    assert ("cloud", "PipeVoice Cloud") in voices_editor.ENGINES
+
+
+def test_tray_offers_cloud(monkeypatch):
+    import sys
+    import types
+
+    from wisprlite.tray import Tray
+
+    labels = []
+
+    class Item:
+        def __init__(self, label, *a, **k):
+            labels.append(label)
+
+    class Menu:
+        SEPARATOR = None
+
+        def __init__(self, *items):
+            pass
+
+    fake = types.ModuleType("pystray")
+    fake.Menu, fake.MenuItem = Menu, Item
+    fake.Icon = lambda *a: type("I", (), {"run_detached": lambda s: None})()
+    monkeypatch.setitem(sys.modules, "pystray", fake)
+    monkeypatch.setattr(Tray, "_state_image", lambda self, state: None)
+    tray = Tray(types.SimpleNamespace())
+    tray.start()
+    assert tray.ok and "PipeVoice Cloud" in labels

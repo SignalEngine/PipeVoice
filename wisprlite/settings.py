@@ -1635,8 +1635,14 @@ def main(first_run: bool = False) -> None:
         threading.Thread(target=work, daemon=True).start()
 
     def _cloud_remove():
-        cloud.clear()
+        state = cloud.remove()
+        if cfg.engine == "cloud":
+            cfg.engine = config.Config().engine
+        if value_for(engine_var, engine_opts) == "cloud":
+            engine_var.set(dict(engine_opts)[cfg.engine])
         cloud_status.config(text="Not set up")
+        # Not a daemon: closing Settings must not cut off freeing the slot.
+        threading.Thread(target=cloud.deactivate, args=(state,)).start()
 
     cloud_activate_btn.config(command=_cloud_activate)
     cloud_remove_btn.config(command=_cloud_remove)
