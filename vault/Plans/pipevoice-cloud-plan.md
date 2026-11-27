@@ -1,6 +1,6 @@
 # PipeVoice Cloud v1 — build plan
 
-*27 Nov 2026 · brain-written (Fable is off) · status: DRAFT, waiting for James on the open decisions*
+*27 Nov 2026 · brain-written (Fable is off) · status: decisions made, waiting for keys*
 
 **Goal:** a paid tier, £3/month or £25/year. A payer types a licence key into Settings and dictation works with no API key of their own. Their settings and vocabulary follow them to another PC.
 
@@ -40,12 +40,12 @@ Decisions behind this: [monetization plan](monetization-2026-11-27.md).
 
 Estimate: one long session for server + app (steps 1–7), plus a short session for site copy and admin (8–9). External wait: Lemon Squeezy store approval for live payments (test mode works before that).
 
-## Open decisions for James
+## Decisions (James, 27 Nov)
 
-- **A. Early-access updates.** The beta channel is already free. Making it paid would take away a free feature, against the monetization decisions. Recommendation: keep it free; Cloud v1 = no-key setup + sync.
-- **B. Monthly cap.** Recommendation: 600 minutes (10 hours) a month. Groq lists turbo at about $0.04 per audio hour (from memory, to check on Groq's pricing page), so the worst case is about $0.40 per user per month.
-- **C. Clips longer than about 2 min 20 s.** Recommendation for v1: refuse with a clear message and fall back to local Whisper. Later: upload FLAC, or send audio straight to Groq.
-- **D. What James must supply:** a Lemon Squeezy store (test mode is enough to build), a Groq API key, and a Deepgram key on Vercel if one is not there yet.
+- **A. Beta updates stay free.** Cloud v1 = no-key setup + settings sync. Early-access is not a Cloud perk.
+- **B. Monthly cap: 600 minutes (10 hours).** Groq lists turbo at about $0.04 per audio hour (from memory, to check on Groq's pricing page), so the worst case is about $0.40 per user per month.
+- **C. Clips longer than about 2 min 20 s go to local Whisper** with a short notice. Long-clip upload is not in v1.
+- **D. Keys:** one-tap links sent 27 Nov for `GROQ_API_KEY` and `LEMONSQUEEZY_API_KEY`. Still needed later: Lemon Squeezy store id + product variant ids, and a Deepgram key on Vercel if one is not there yet.
 
 ## Not in v1
 
