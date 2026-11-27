@@ -64,3 +64,9 @@ wisprlite/app.py:2389:            config.Config.load()  # write config.json with
 wisprlite/app.py:2398:    log.info("Pipevoice starting (engine=%s)", config.Config.load().engine)
 wisprlite/usage.py:25:    fresh = config.Config.load()
 wisprlite/usage.py:28:    fresh.save()
+
+## Unsynchronised full-file configuration read/modify/write across concurrent processes, allowing a privacy preference to be bypassed or reverted
+- usage.py `_save` re-loads the file right before writing and only sets install_id / last_count_day, so it carries the CURRENT usage_count from disk; it can revert "off" only if Settings saves inside the few-ms load→replace window.
+- `maybe_send` reads usage_count from the cfg passed at startup; Settings applies live via the 1 s reload watcher. A user who switches it off sends at most the one count already in flight that day.
+- Tray/app `self.cfg.save()` sites above can write a stale whole file in the ≤1 s before the watcher reloads; this is pre-existing for every setting (not new), and atomic save removes the half-file → defaults case that could wipe settings.
+- Decision: accepted residual (ms/≤1 s windows, impact ≤1 extra count). A full file lock is out of scope for this PR.
