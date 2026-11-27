@@ -6,6 +6,7 @@ Contract: vault/Plans/cloud-build-contract.md.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -24,6 +25,7 @@ log = logging.getLogger("wisprlite")
 POLAR_API = "https://sandbox-api.polar.sh"
 ORG_ID = "7ddf99c5-d60b-4e36-8b8f-cd7618fbadb8"
 USER_AGENT = "Pipevoice-cloud"  # Polar's Cloudflare rejects Python's default
+ENGINE_AFTER_REMOVE = "local"  # needs no key, so dictation keeps working
 
 _sync_lock = threading.Lock()
 
@@ -87,7 +89,7 @@ def remove() -> dict:
     clear()
     cfg = config.Config.load()
     if cfg.engine == "cloud":
-        cfg.engine = config.Config().engine
+        cfg.engine = ENGINE_AFTER_REMOVE
         cfg.save()
     return state
 
@@ -113,19 +115,23 @@ def activate(key: str) -> tuple:
     state = load()
     if state.get("key") == key and state.get("activation_id"):
         return True, "Active on this PC"  # another activate would use another slot
+    lost = ""
+    if state.get("key") != key and deactivate(state):  # replacing: free the old slot first
+        clear()  # its activation is gone, so we must not keep calling it active
+        lost = ". Your previous key was removed from this PC"
     label = platform.node() or "PC"
     try:
         data = _polar("activate", {"key": key, "organization_id": ORG_ID, "label": label})
         save({"key": key, "activation_id": data["id"], "label": label})
     except urllib.error.HTTPError as exc:
         if exc.code == 403:
-            return False, "This key is already on 3 PCs, or it was cancelled"
+            return False, "This key is already on 3 PCs, or it was cancelled" + lost
         if exc.code == 404:
-            return False, "Key not found"
-        return False, f"Activation failed (error {exc.code}). Try again later"
+            return False, "Key not found" + lost
+        return False, f"Activation failed (error {exc.code}). Try again later" + lost
     except Exception as exc:
         log.debug("cloud activation failed: %s", type(exc).__name__)
-        return False, "Could not reach the licence server. Check your internet and try again"
+        return False, "Could not reach the licence server. Check your internet and try again" + lost
     return True, "Active on this PC"
 
 
@@ -137,8 +143,13 @@ def _words_and_fixes(remote) -> tuple:
     return words, fixes
 
 
+def _digest(cfg) -> str:
+    data = json.dumps([cfg.vocabulary, cfg.replacements], sort_keys=True)
+    return hashlib.sha256(data.encode()).hexdigest()
+
+
 def _merge(local, remote) -> dict:
-    """First sync on this PC: keep both sides. Local comes first and wins clashes."""
+    """Both sides changed (or never synced): keep both. Local comes first and wins clashes."""
     words, fixes = _words_and_fixes(remote)
     terms = {}
     for term in (local.vocabulary + "," + words).split(","):
@@ -165,7 +176,8 @@ def _apply(cfg, remote) -> None:
 def sync_now(cfg) -> None:
     """Sync vocabulary and replacements. Never raises.
 
-    The first sync on this PC merges both sides; after that the newer side wins.
+    One side changed since the last sync: it wins. Both changed, or this PC has
+    never synced: merge them.
     """
     try:
         with _sync_lock:
@@ -175,32 +187,32 @@ def sync_now(cfg) -> None:
                 return
             auth = {"Authorization": "Bearer " + key}
             remote = _request(sync_url(), "GET", headers=auth)
+            # Read after the GET, so words saved meanwhile count as local.
+            local = config.Config.load() if config.CONFIG_PATH.exists() else cfg
             first = "synced_at" not in state
-            merging = first and bool(remote["data"])
-            if not merging and remote["updated_at"] > state.get("synced_at", 0):
-                _apply(cfg, remote["data"])
-                stamp = remote["updated_at"]
-            else:
-                stamp = int(time.time() * 1000)
-                if merging:
-                    # Read after the GET, so words saved meanwhile are in the merge.
-                    local = config.Config.load() if config.CONFIG_PATH.exists() else cfg
+            remote_changed = (bool(remote["data"]) if first
+                              else remote["updated_at"] > state["synced_at"])
+            local_changed = first or _digest(local) != state.get("synced_digest")
+            if local_changed:
+                if remote_changed:
                     _apply(cfg, _merge(local, remote["data"]))
-                    stamp = max(stamp, remote["updated_at"] + 1)  # other PC's clock ahead
-                body = {"data": {"vocabulary": cfg.vocabulary, "replacements": cfg.replacements},
+                    local = cfg
+                # Past the server's stamp even if another PC's clock runs ahead.
+                stamp = max(int(time.time() * 1000), remote["updated_at"] + 1)
+                body = {"data": {"vocabulary": local.vocabulary,
+                                 "replacements": local.replacements},
                         "updated_at": stamp}
-                try:
-                    _request(sync_url(), "PUT", body, auth)
-                except urllib.error.HTTPError as exc:
-                    # Never synced: applying the 409 data would drop local words.
-                    # Fail instead, so the next sync merges again.
-                    if exc.code != 409 or first:
-                        raise
-                    newer = json.loads(exc.read())
-                    _apply(cfg, newer["data"])
-                    stamp = newer["updated_at"]
+                # A 409 (someone wrote since the GET) raises like any failure: nothing
+                # local is overwritten or recorded, so the next sync merges.
+                _request(sync_url(), "PUT", body, auth)
+                digest = _digest(local)
+            elif remote_changed:
+                _apply(cfg, remote["data"])
+                stamp, digest = remote["updated_at"], _digest(cfg)
+            else:
+                return
             current = load()
             if current.get("key") == key:  # not removed or replaced meanwhile
-                save({**current, "synced_at": stamp})
+                save({**current, "synced_at": stamp, "synced_digest": digest})
     except Exception as exc:
         log.debug("cloud sync failed: %s", exc)

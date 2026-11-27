@@ -220,7 +220,8 @@ class App:
             from .engines.cloud_engine import CloudEngine
 
             if not cloud.has_licence():
-                raise RuntimeError("No Cloud licence")
+                log.warning("Cloud engine selected but there is no licence; using local")
+                return self._get_engine("local")
             return CloudEngine(language=lang, prompt=vocab)
         if name == "openai":  # legacy: dropped from the UI, kept for existing configs
             from .engines.openai_engine import OpenAIEngine
@@ -252,6 +253,14 @@ class App:
 
     def _get_engine(self, name: str | None = None):
         name = name or self.cfg.engine
+        if name == "cloud":
+            from . import cloud
+
+            # Checked on every use, before the cache: Activate and Remove happen in
+            # another process and need not change any setting that clears it.
+            if not cloud.has_licence():
+                log.warning("Cloud engine selected but there is no licence; using local")
+                name = "local"
         eng = self._engines.get(name)
         if eng is None:
             eng = self._build_engine(name)

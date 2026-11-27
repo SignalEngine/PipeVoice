@@ -57,6 +57,11 @@ def licence(**extra):
     cloud.save({"key": KEY, "activation_id": "a1", "label": "pc", **extra})
 
 
+def synced(cfg, at):
+    """A PC whose words have not changed since its last successful sync at `at`."""
+    licence(synced_at=at, synced_digest=cloud._digest(cfg))
+
+
 def transcribe(audio=None, **kw):
     audio = np.zeros(1600, dtype=np.float32) if audio is None else audio
     return cloud_engine.CloudEngine(**kw).start_session().finish(audio)
@@ -128,17 +133,6 @@ def test_cloud_failure_falls_back_to_local_whisper(monkeypatch, failure):
         pytest.fail("cloud did not raise")
 
 
-def test_app_builds_cloud_only_with_a_licence():
-    from wisprlite.app import App
-
-    app = App.__new__(App)
-    app.cfg = config.Config(engine="cloud")
-    with pytest.raises(RuntimeError, match="No Cloud licence"):
-        app._build_engine()
-    licence()
-    assert app._build_engine().name == "cloud"
-
-
 def test_activate_saves_licence_outside_config_json(monkeypatch, isolated):
     config.Config().save()
     sent = stub(monkeypatch, (200, {"id": "act-9"}))
@@ -166,8 +160,8 @@ def test_activate_failures_save_nothing(monkeypatch, reply, message):
 
 
 def test_sync_applies_newer_remote_and_saves_config(monkeypatch):
-    licence(synced_at=100)
     cfg = config.Config(vocabulary="old")
+    synced(cfg, 100)
     sent = stub(monkeypatch, (200, {"data": {"vocabulary": "new", "replacements": {"a": "b"}},
                                     "updated_at": 200}))
     cloud.sync_now(cfg)
@@ -191,18 +185,21 @@ def test_sync_pushes_local_when_remote_is_not_newer(monkeypatch):
     assert cloud.load()["synced_at"] == body["updated_at"] > 200
 
 
-def test_sync_409_applies_the_returned_data(monkeypatch):
-    licence(synced_at=200)
-    cfg = config.Config(vocabulary="mine")
-    stub(monkeypatch, (200, {"data": None, "updated_at": 0}),
-         (409, {"error": "stale", "data": {"vocabulary": "won", "replacements": {}},
-                "updated_at": 999}))
+def test_sync_409_keeps_local_words_and_merges_next_time(monkeypatch):
+    cfg = config.Config(vocabulary="old")
+    synced(cfg, 200)
+    cfg.vocabulary = "mine"
+    theirs = {"data": {"vocabulary": "theirs", "replacements": {}}, "updated_at": 10 ** 15}
+    stub(monkeypatch, (200, {"data": None, "updated_at": 0}), (409, {"error": "stale", **theirs}))
     cloud.sync_now(cfg)
-    assert cfg.vocabulary == "won" and cloud.load()["synced_at"] == 999
+    assert cfg.vocabulary == "mine" and cloud.load()["synced_at"] == 200
+    sent = stub(monkeypatch, (200, theirs), (200, {"ok": True}))
+    cloud.sync_now(cfg)
+    assert json.loads(sent[1].data)["data"]["vocabulary"] == "mine, theirs"
 
 
 def test_sync_apply_keeps_settings_saved_while_the_request_was_in_flight(monkeypatch):
-    licence(synced_at=1)
+    synced(config.Config(), 1)
     stale = config.Config(hotkey="f8")
     newer = config.Config(hotkey="f9")
     newer.save()
@@ -266,7 +263,7 @@ def test_remove_resets_the_engine_and_frees_the_slot(monkeypatch):
     state = cloud.remove()
     saved = config.Config.load()
     assert not cloud.has_licence()
-    assert (saved.engine, saved.hotkey) == (config.Config().engine, "f9")
+    assert (saved.engine, saved.hotkey) == ("local", "f9")
     assert cloud.deactivate(state) is True
     assert sent[0].full_url == "https://sandbox-api.polar.sh/v1/customer-portal/license-keys/deactivate"
     assert json.loads(sent[0].data) == {"key": KEY, "organization_id": cloud.ORG_ID,
@@ -300,7 +297,7 @@ def test_reactivating_the_same_key_uses_no_new_slot(monkeypatch):
     assert sent == [] and cloud.load()["synced_at"] == 7
 
 
-@pytest.mark.parametrize("state", [{"key": KEY}, {"key": "OTHER", "activation_id": "a0"}])
+@pytest.mark.parametrize("state", [{"key": KEY}, {"key": "OTHER"}])
 def test_activate_still_calls_polar_for_an_incomplete_or_different_licence(monkeypatch, state):
     cloud.save(state)
     sent = stub(monkeypatch, (200, {"id": "a2"}))
@@ -350,10 +347,10 @@ def test_failed_first_push_keeps_local_words_and_merges_again_later(monkeypatch,
 
 
 def test_later_syncs_stay_newer_wins(monkeypatch):
-    licence(synced_at=100)
+    cfg = config.Config(vocabulary="mine")
+    synced(cfg, 100)
     stub(monkeypatch, (200, {"data": {"vocabulary": "server", "replacements": {}},
                              "updated_at": 200}))
-    cfg = config.Config(vocabulary="mine")
     cloud.sync_now(cfg)
     assert cfg.vocabulary == "server"
 
@@ -390,3 +387,173 @@ def test_tray_offers_cloud(monkeypatch):
     tray = Tray(types.SimpleNamespace())
     tray.start()
     assert tray.ok and "PipeVoice Cloud" in labels
+
+
+# --- review round 1 -----------------------------------------------------------
+
+def words(vocabulary, fixes=None):
+    return {"vocabulary": vocabulary, "replacements": fixes or {}}
+
+
+def first_push(monkeypatch, **cfg_fields):
+    """A real first sync of this PC's words, saved to disk like the app's."""
+    licence()
+    config.Config(starter_vocab_seeded=True, **cfg_fields).save()
+    stub(monkeypatch, (200, {"data": None, "updated_at": 0}), (200, {"ok": True}))
+    cloud.sync_now(config.Config.load())
+    return cloud.load()["synced_at"]
+
+
+def edit_words(vocabulary, fixes=None):
+    cfg = config.Config.load()
+    cfg.vocabulary, cfg.replacements = vocabulary, fixes or {}
+    cfg.save()
+
+
+def test_offline_edit_survives_a_newer_remote(monkeypatch):
+    at = first_push(monkeypatch, vocabulary="a", replacements={"x": "1"})
+    edit_words("a, offline", {"x": "mine"})
+    sent = stub(monkeypatch, (200, {"data": words("a, other", {"x": "theirs", "y": "2"}),
+                                    "updated_at": at + 10}), (200, {"ok": True}))
+    cloud.sync_now(config.Config.load())
+    merged = words("a, offline, other", {"x": "mine", "y": "2"})
+    assert json.loads(sent[1].data)["data"] == merged
+    assert config.Config.load().vocabulary == merged["vocabulary"]
+    assert config.Config.load().replacements == merged["replacements"]
+
+
+def test_only_remote_changed_applies_it_including_deletions(monkeypatch):
+    at = first_push(monkeypatch, vocabulary="a, b")
+    sent = stub(monkeypatch, (200, {"data": words("a"), "updated_at": at + 10}))
+    cloud.sync_now(config.Config.load())
+    assert len(sent) == 1 and config.Config.load().vocabulary == "a"
+    # ...and the applied words are the new baseline, not a local change.
+    sent = stub(monkeypatch, (200, {"data": words("z"), "updated_at": at + 20}))
+    cloud.sync_now(config.Config.load())
+    assert len(sent) == 1 and config.Config.load().vocabulary == "z"
+
+
+def test_only_local_changed_pushes_it_even_if_another_clock_ran_ahead(monkeypatch):
+    first_push(monkeypatch, vocabulary="a, b")
+    ahead = 10 ** 14
+    cloud.save({**cloud.load(), "synced_at": ahead})
+    edit_words("a")
+    sent = stub(monkeypatch, (200, {"data": words("a, b"), "updated_at": ahead}),
+                (200, {"ok": True}))
+    cloud.sync_now(config.Config.load())
+    body = json.loads(sent[1].data)
+    assert body == {"data": words("a"), "updated_at": ahead + 1}
+
+
+def test_nothing_changed_pushes_nothing(monkeypatch):
+    # A no-op push would look "newer" to other PCs and merge deleted words back.
+    at = first_push(monkeypatch, vocabulary="a")
+    before = cloud.load()
+    sent = stub(monkeypatch, (200, {"data": words("a"), "updated_at": at}))
+    cloud.sync_now(config.Config.load())
+    assert len(sent) == 1 and cloud.load() == before
+
+
+def test_an_edit_saved_during_the_get_counts_as_a_local_change(monkeypatch):
+    at = first_push(monkeypatch, vocabulary="a")
+    stale = config.Config.load()
+    sent = []
+
+    def urlopen(req, timeout=None):
+        sent.append(req)
+        if len(sent) == 1:
+            edit_words("a, during")
+            return _Resp(json.dumps({"data": words("remote"), "updated_at": at + 10}).encode())
+        return _Resp(b'{"ok": true}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    cloud.sync_now(stale)
+    assert config.Config.load().vocabulary == "a, during, remote"
+
+
+@pytest.fixture
+def fake_local(monkeypatch):
+    import sys
+    import types
+
+    module = types.ModuleType("wisprlite.engines.local_engine")
+
+    class LocalEngine:
+        name, streaming = "local", False
+
+        def __init__(self, **kw):
+            pass
+
+    module.LocalEngine = LocalEngine
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    return LocalEngine
+
+
+def bare_app(engine="cloud"):
+    from wisprlite.app import App
+
+    app = App.__new__(App)
+    app.cfg, app._engines = config.Config(engine=engine), {}
+    return app
+
+
+def test_building_cloud_without_a_licence_gives_the_local_engine(fake_local, caplog):
+    app = bare_app()
+    with caplog.at_level("WARNING", logger="wisprlite"):
+        engine = app._build_engine("cloud")
+    assert isinstance(engine, fake_local)
+    assert "no licence" in caplog.text.lower()
+    assert app._get_engine("local") is engine  # one Whisper model, not two
+
+
+@pytest.mark.parametrize("name", [None, "cloud"])  # the setting, and a Voice override
+def test_the_engine_cache_follows_the_licence(fake_local, name):
+    app = bare_app()
+    assert isinstance(app._get_engine(name), fake_local)
+    licence()  # activated while the app runs
+    assert app._get_engine(name).name == "cloud"
+    cloud.clear()  # removed while the cloud engine is cached
+    assert isinstance(app._get_engine(name), fake_local)
+
+
+def test_a_cloud_session_open_during_remove_uploads_nothing(monkeypatch):
+    sent = stub(monkeypatch)
+    with pytest.raises(RuntimeError, match="Cloud licence not valid"):
+        transcribe()
+    assert sent == []
+
+
+def actions(sent):
+    return [(r.full_url.rsplit("/", 1)[1], json.loads(r.data)["key"]) for r in sent]
+
+
+def test_replacing_the_key_frees_the_old_slot_first(monkeypatch):
+    cloud.save({"key": "OLD", "activation_id": "a0", "synced_at": 5})
+    sent = stub(monkeypatch, (200, None), (200, {"id": "a2"}))
+    assert cloud.activate(KEY) == (True, "Active on this PC")
+    assert actions(sent) == [("deactivate", "OLD"), ("activate", KEY)]
+    assert json.loads(sent[0].data)["activation_id"] == "a0"
+    assert cloud.load()["key"] == KEY and "synced_at" not in cloud.load()
+
+
+def test_replacing_the_key_continues_when_freeing_fails(monkeypatch):
+    cloud.save({"key": "OLD", "activation_id": "a0"})
+    stub(monkeypatch, urllib.error.URLError("x"), (200, {"id": "a2"}))
+    assert cloud.activate(KEY)[0] and cloud.load()["key"] == KEY
+
+
+def test_old_slot_freed_but_new_key_rejected_forgets_the_old_licence(monkeypatch):
+    # Keeping it would make "activate OLD" report Active with a dead activation.
+    cloud.save({"key": "OLD", "activation_id": "a0"})
+    stub(monkeypatch, (200, None), (404, {}))
+    ok, message = cloud.activate(KEY)
+    assert not ok and message.startswith("Key not found") and "previous key" in message
+    assert not cloud.has_licence()
+
+
+def test_both_calls_failing_keeps_the_old_licence(monkeypatch):
+    old = {"key": "OLD", "activation_id": "a0"}
+    cloud.save(old)
+    stub(monkeypatch, urllib.error.URLError("x"), urllib.error.URLError("x"))
+    ok, message = cloud.activate(KEY)
+    assert not ok and "previous key" not in message and cloud.load() == old

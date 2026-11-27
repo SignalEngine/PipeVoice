@@ -1637,7 +1637,7 @@ def main(first_run: bool = False) -> None:
     def _cloud_remove():
         state = cloud.remove()
         if cfg.engine == "cloud":
-            cfg.engine = config.Config().engine
+            cfg.engine = cloud.ENGINE_AFTER_REMOVE
         if value_for(engine_var, engine_opts) == "cloud":
             engine_var.set(dict(engine_opts)[cfg.engine])
         cloud_status.config(text="Not set up")

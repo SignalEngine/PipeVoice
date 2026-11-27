@@ -34,10 +34,13 @@ class _CloudSession(Session):
         wav = _wav_bytes(audio)
         if len(wav) > MAX_WAV_BYTES:
             raise RuntimeError("Clip too long for Cloud")
+        key = cloud.load().get("key")
+        if not key:  # removed during this utterance: upload nothing
+            raise RuntimeError("Cloud licence not valid")
         url = cloud.stt_url()
         if self._engine.language:
             url += "?" + urllib.parse.urlencode({"lang": self._engine.language})
-        headers = {"Authorization": "Bearer " + cloud.load().get("key", ""),
+        headers = {"Authorization": "Bearer " + key,
                    "Content-Type": "audio/wav", "User-Agent": cloud.USER_AGENT}
         if self._engine.prompt:
             headers["X-Prompt"] = urllib.parse.quote(self._engine.prompt[:MAX_PROMPT_CHARS], safe="")
