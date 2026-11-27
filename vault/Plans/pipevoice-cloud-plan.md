@@ -32,20 +32,20 @@ Lemon Squeezy closed to new stores (James's screenshot, 27 Nov). Polar replaces 
 
 ## Build (in order)
 
-1. **Server: `/api/stt`** (pipevoice-site, `wisprlitevercel/api/stt.js`).
+1. ✅ **Server: `/api/stt`** (pipevoice-site, `wisprlitevercel/api/stt.js`).
    - Reads `Authorization: Bearer <licence key>` and the WAV body.
    - Licence check: Upstash cache `lic:<sha256(key)>` (valid for 6 h). On a miss, call Polar `validate` with `POLAR_ORGANIZATION_ID`. Store only the hash, never the key.
    - Cap check: `secs:<hash>:<YYYY-MM>` against `CLOUD_MONTHLY_SECONDS` (36,000). Seconds = WAV length from the header, counted *before* the Groq call.
    - Forward to Groq `whisper-large-v3-turbo`. On a Groq error, retry once with Deepgram (pre-recorded API).
    - Kill switch: `CLOUD_ENABLED=0` returns 503 with a plain message.
    - Body limit: Vercel functions take at most 4.5 MB, about 2 min 20 s of WAV. Longer clips: the app sends them to local Whisper (decision C).
-2. **Server: `/api/polar-webhook`.** Verify the signature. On `subscription.revoked` / `benefit_grant.revoked`, delete the licence cache entry so the next call checks again.
-3. **Server: `/api/sync`.** `GET` / `PUT` one JSON blob per licence hash: `vocabulary`, `replacements`, Voices/profiles. Size cap 64 KB. Last write wins, with `updated_at` so the app can tell which side is newer.
-4. **App: `engines/cloud_engine.py`** (~20 lines, subclass of `GroqEngine`). New engine name `cloud` in `App._build_engine`. The key comes from the licence, not `.env`.
-5. **App: licence box in Settings.** Paste key → Polar `activate` with the PC name as `label` → store the key and activation id outside `config.json` (same rule as API keys). Show plan status and "minutes used this month" (a header from `/api/stt`).
-6. **App: sync.** On start and after each Settings save: pull, compare `updated_at`, push. Off unless a licence is set.
-7. **App: offline fallback.** The existing `_fallback` to local Whisper already covers a Cloud outage. Check it fires for the new engine.
-8. **Site: pricing section + privacy page lines.** What Cloud sends (audio, to our server and to Groq/Deepgram, not stored) and what sync stores.
+2. ✅ **Server: `/api/polar-webhook`.** Verify the signature. On `subscription.revoked` / `benefit_grant.revoked`, delete the licence cache entry so the next call checks again.
+3. ✅ **Server: `/api/sync`.** `GET` / `PUT` one JSON blob per licence hash: `vocabulary`, `replacements`, Voices/profiles. Size cap 64 KB. Last write wins, with `updated_at` so the app can tell which side is newer.
+4. ✅ **App: `engines/cloud_engine.py`** (~20 lines, subclass of `GroqEngine`). New engine name `cloud` in `App._build_engine`. The key comes from the licence, not `.env`.
+5. ✅ **App: licence box in Settings.** Paste key → Polar `activate` with the PC name as `label` → store the key and activation id outside `config.json` (same rule as API keys). Show plan status and "minutes used this month" (a header from `/api/stt`).
+6. ✅ **App: sync.** On start and after each Settings save: pull, compare `updated_at`, push. Off unless a licence is set.
+7. ✅ **App: offline fallback.** The existing `_fallback` to local Whisper already covers a Cloud outage. Check it fires for the new engine.
+8. **Site: pricing section (waits for the production Polar store: no public price for a product not on sale) + privacy page lines.** What Cloud sends (audio, to our server and to Groq/Deepgram, not stored) and what sync stores.
 9. **Admin page:** active licences, Cloud minutes this month, estimated Groq spend.
 
 Estimate: one long session for server + app (steps 1–7), plus a short session for site copy and admin (8–9). Product setup in Polar is done by Claude through the API with James's sandbox token.
