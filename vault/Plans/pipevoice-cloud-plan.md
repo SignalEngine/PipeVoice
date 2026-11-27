@@ -67,3 +67,11 @@ Mac client, meeting mode, team plans, pay-per-minute billing.
 - **External check (1) passed on Windows:** sandbox purchase → key activated in 2.51.0 → dictation typed text (log: no Deepgram connect, polish ran; server counter moved ~10 s). Caveat: James's `.env` was still present, so AI cleanup used his own Gemini key.
 - **Popup:** Cloud shows no live words (batch engine, like Groq/local). James: leave as is.
 - **Open:** (2) over-cap test against Groq usage page; (3) a real Polar revoke event; Deepgram key on Vercel for the fallback; production Polar org + token, then the site pricing section, before any real sale. Steps 8 (privacy) and 9 (admin panel) done; Deepgram fallback key on Vercel (27 Nov).
+
+## Production switch (27 Nov, late)
+
+- James created the production Polar org "PipeVoice" and sent its token. Created by API: licence-key benefit `a5799eb9-1dcf-4f20-9b47-433cf3da2de3` (PV, 3 PCs), monthly £3 `6a96c87e-8d17-4633-9f85-ad04eacf1afe`, yearly £25 `27b27750-58d2-43c5-8e4a-aec597efebeb`, org `c041fdaa-adf3-449f-81ed-aa10140070b2`, webhook `0eef0db4-…` (same events as sandbox).
+- Checkout link: https://buy.polar.sh/polar_cl_Nnzu2K90SyW4oORnlZydgfwt4y29fLgjIyGSZ1HIRYK
+- Vercel now on production Polar (POLAR_API, org, benefit, webhook secret). App PR #129 → v2.52.0 beta (production URL + org).
+- Sandbox keys stop working once their 6 h licence cache runs out.
+- **Next:** James buys a real £3 month → key in 2.52.0 → dictation works (then refund). Then the site pricing section with the checkout link.
