@@ -138,7 +138,7 @@ def test_activate_saves_licence_outside_config_json(monkeypatch, isolated):
     sent = stub(monkeypatch, (200, {"id": "act-9"}))
     ok, _ = cloud.activate("  " + KEY + " ")
     assert ok and cloud.has_licence()
-    assert sent[0].full_url == "https://sandbox-api.polar.sh/v1/customer-portal/license-keys/activate"
+    assert sent[0].full_url == "https://api.polar.sh/v1/customer-portal/license-keys/activate"
     body = json.loads(sent[0].data)
     assert body["key"] == KEY and body["organization_id"] == cloud.ORG_ID and "label" in body
     assert sent[0].get_header("User-agent")
@@ -265,7 +265,7 @@ def test_remove_resets_the_engine_and_frees_the_slot(monkeypatch):
     assert not cloud.has_licence()
     assert (saved.engine, saved.hotkey) == ("local", "f9")
     assert cloud.deactivate(state) is True
-    assert sent[0].full_url == "https://sandbox-api.polar.sh/v1/customer-portal/license-keys/deactivate"
+    assert sent[0].full_url == "https://api.polar.sh/v1/customer-portal/license-keys/deactivate"
     assert json.loads(sent[0].data) == {"key": KEY, "organization_id": cloud.ORG_ID,
                                         "activation_id": "a1"}
     assert sent[0].get_header("User-agent")

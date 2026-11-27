@@ -21,9 +21,8 @@ from . import config
 
 log = logging.getLogger("wisprlite")
 
-# shortcut: sandbox default, switch to https://api.polar.sh and the production org id before the paid launch
-POLAR_API = "https://sandbox-api.polar.sh"
-ORG_ID = "7ddf99c5-d60b-4e36-8b8f-cd7618fbadb8"
+POLAR_API = "https://api.polar.sh"  # production store (sandbox: https://sandbox-api.polar.sh)
+ORG_ID = "c041fdaa-adf3-449f-81ed-aa10140070b2"
 USER_AGENT = "Pipevoice-cloud"  # Polar's Cloudflare rejects Python's default
 ENGINE_AFTER_REMOVE = "local"  # needs no key, so dictation keeps working
 
