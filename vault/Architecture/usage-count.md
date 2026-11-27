@@ -17,6 +17,8 @@ Shipped: website 27 Nov 2026 (pipevoice-site PR #20, merge 4575645). App side: P
 - One ping per app start: a PC left running for days is counted only on the day it started, so the daily number reads low. Use the 7- and 30-day numbers.
 - If Upstash env vars are missing on Vercel, the ping still returns 204 but nothing is stored. Check `/admin` ("not configured").
 
+- Accepted risk (James, 27 Nov; Codex round 3 P1): any whole-file settings save from an older in-memory copy (startup `last_version` save, tray saves within the 1 s reload) can undo a just-saved "off". The startup window is the instant of app launch. This risk is the same for every setting and is older than this PR. Worst case: 1 extra anonymous count. A full fix means saves that write only changed fields.
+
 ## Privacy copy
 - Every "zero telemetry / nothing phones home" claim on the site, README, welcome screen and winget listing was rewritten to describe this count.
 - privacy.html also now says dictation history (`history.jsonl`) and meeting recordings are saved locally (it wrongly said "never on disk").
