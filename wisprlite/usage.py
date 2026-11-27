@@ -52,7 +52,9 @@ def maybe_send(cfg) -> bool:
             URL, data=json.dumps(body).encode(), method="POST",
             headers={"Content-Type": "application/json", "User-Agent": "Pipevoice-usage"})
         # From disk: the user may have switched it off since cfg was loaded.
-        if not config.Config.load().usage_count:
+        # Raw read: Config.load() saves defaults (count on) over a damaged file.
+        # Anything unreadable raises, and so does not send.
+        if json.loads(config.CONFIG_PATH.read_text(encoding="utf-8")).get("usage_count", True) is not True:
             return False
         with urllib.request.urlopen(req, timeout=5):
             pass

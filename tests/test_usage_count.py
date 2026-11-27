@@ -60,6 +60,26 @@ def test_off_on_disk_beats_a_stale_cfg(calls):
     assert calls == []
 
 
+@pytest.mark.parametrize("content", ['{"usage_count": false, BROKEN', "[]", None])
+def test_damaged_or_missing_config_makes_no_call(calls, content):
+    cfg = config.Config.load()
+    if content is None:
+        config.CONFIG_PATH.unlink()
+    else:
+        config.CONFIG_PATH.write_text(content, encoding="utf-8")
+    assert usage.maybe_send(cfg) is False
+    assert calls == []
+    if content is not None:
+        assert config.CONFIG_PATH.read_text(encoding="utf-8") == content
+
+
+def test_missing_key_sends(calls):
+    cfg = config.Config.load()
+    config.CONFIG_PATH.write_text("{}", encoding="utf-8")
+    assert usage.maybe_send(cfg) is True
+    assert len(calls) == 1
+
+
 def test_same_day_makes_no_second_call(calls):
     cfg = config.Config.load()
     assert usage.maybe_send(cfg) is True
