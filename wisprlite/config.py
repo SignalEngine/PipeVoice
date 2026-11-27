@@ -169,8 +169,6 @@ class Config:
     sounds: bool = False
     auto_update: bool = True         # check GitHub for a newer release on startup and install it
     usage_count: bool = True         # send one anonymous daily count: version + random install id
-    install_id: str = ""             # random id for that count; made on first send
-    last_count_day: str = ""         # local ISO date of the last count sent
     min_seconds: float = 0.35       # ignore taps shorter than this
     ai_cleanup: bool = True         # polish transcript with an LLM
     cleanup_provider: str = "gemini"  # gemini(free) | openai | openrouter | ollama (all OpenAI-compatible)

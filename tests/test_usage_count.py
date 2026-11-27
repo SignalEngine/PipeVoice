@@ -34,44 +34,64 @@ def calls(monkeypatch, tmp_path):
         return _Resp()
 
     monkeypatch.setattr(usage.urllib.request, "urlopen", fake)
+    config.Config.load()  # as at app startup: config.json exists and is migrated
     return seen
 
 
+def _state():
+    return json.loads(config.CONFIG_PATH.with_name("usage.json").read_text(encoding="utf-8"))
+
+
 def test_off_switch_makes_no_call(calls):
-    cfg = config.Config(usage_count=False)
+    config.Config(usage_count=False, starter_vocab_seeded=True,
+                  paste_default_migrated=True, meeting_hotkey_migrated=True).save()
+    assert usage.maybe_send(config.Config.load()) is False
+    assert calls == []
+    assert not config.CONFIG_PATH.with_name("usage.json").exists()
+
+
+def test_off_on_disk_beats_a_stale_cfg(calls):
+    cfg = config.Config.load()
+    off = config.Config.load()
+    off.usage_count = False
+    off.save()  # the Settings window, after the app loaded cfg
+    assert cfg.usage_count is True
     assert usage.maybe_send(cfg) is False
     assert calls == []
-    assert cfg.install_id == ""
 
 
 def test_same_day_makes_no_second_call(calls):
-    cfg = config.Config()
+    cfg = config.Config.load()
     assert usage.maybe_send(cfg) is True
     assert usage.maybe_send(cfg) is False
     assert len(calls) == 1
 
 
 def test_first_call_sends_exactly_the_contract_and_persists(calls):
-    cfg = config.Config()
-    assert usage.maybe_send(cfg) is True
+    assert usage.maybe_send(config.Config.load()) is True
     req, timeout = calls[0]
     assert req.full_url == "https://pipevoice.app/api/ping"
     assert req.get_method() == "POST"
     assert dict(req.header_items()) == {
         "Content-type": "application/json", "User-agent": "Pipevoice-usage"}
     assert timeout == 5
-    assert re.fullmatch(r"[0-9a-f]{32}", cfg.install_id)
-    assert json.loads(req.data) == {"id": cfg.install_id, "v": __version__}
-    saved = config.Config.load()
-    assert saved.install_id == cfg.install_id
-    assert saved.last_count_day == cfg.last_count_day != ""
+    state = _state()
+    assert re.fullmatch(r"[0-9a-f]{32}", state["install_id"])
+    assert state["last_count_day"] == usage.date.today().isoformat()
+    assert json.loads(req.data) == {"id": state["install_id"], "v": __version__}
+    assert not config.CONFIG_PATH.with_name("usage.json.tmp").exists()
 
 
-def test_save_keeps_settings_written_after_startup(calls):
-    cfg = config.Config()
-    config.Config(hotkey="f9").save()  # the Settings window, a separate process
-    assert usage.maybe_send(cfg) is True
-    assert config.Config.load().hotkey == "f9"
+def test_a_send_leaves_config_json_unchanged(calls):
+    before = config.CONFIG_PATH.read_bytes()
+    assert usage.maybe_send(config.Config.load()) is True
+    assert config.CONFIG_PATH.read_bytes() == before
+
+
+def test_unreadable_state_file_counts_as_empty(calls):
+    config.CONFIG_PATH.with_name("usage.json").write_text("{broken", encoding="utf-8")
+    assert usage.maybe_send(config.Config.load()) is True
+    assert re.fullmatch(r"[0-9a-f]{32}", _state()["install_id"])
 
 
 def test_network_error_is_swallowed_and_day_unchanged(calls, monkeypatch):
@@ -79,10 +99,10 @@ def test_network_error_is_swallowed_and_day_unchanged(calls, monkeypatch):
         raise urllib.error.URLError("offline")
 
     monkeypatch.setattr(usage.urllib.request, "urlopen", boom)
-    cfg = config.Config(last_count_day="2000-01-01")
-    assert usage.maybe_send(cfg) is False
-    assert cfg.last_count_day == "2000-01-01"
-    assert config.Config.load().last_count_day != usage.date.today().isoformat()
+    path = config.CONFIG_PATH.with_name("usage.json")
+    path.write_text(json.dumps({"last_count_day": "2000-01-01"}), encoding="utf-8")
+    assert usage.maybe_send(config.Config.load()) is False
+    assert _state()["last_count_day"] == "2000-01-01"
 
 
 def test_save_round_trips_and_leaves_no_tmp_file(calls):

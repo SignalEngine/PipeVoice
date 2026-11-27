@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import urllib.request
 import uuid
 from datetime import date
@@ -18,31 +19,45 @@ log = logging.getLogger("wisprlite")
 URL = "https://pipevoice.app/api/ping"
 
 
-def _save(cfg, **values) -> None:
-    for k, v in values.items():
-        setattr(cfg, k, v)
-    # Write onto a fresh load: saving a stale cfg would undo what Settings wrote meanwhile.
-    fresh = config.Config.load()
-    for k, v in values.items():
-        setattr(fresh, k, v)
-    fresh.save()
+def _path():
+    return config.CONFIG_PATH.with_name("usage.json")
+
+
+def _read() -> dict:
+    try:
+        data = json.loads(_path().read_text(encoding="utf-8"))
+        return {k: v for k, v in data.items() if isinstance(v, str)}
+    except Exception:
+        return {}
+
+
+def _write(data: dict) -> None:
+    tmp = _path().with_name("usage.json.tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(tmp, _path())
 
 
 def maybe_send(cfg) -> bool:
     """Send today's count if it is on and not yet sent. True only if sent."""
     try:
         today = date.today().isoformat()
-        if not cfg.usage_count or cfg.last_count_day == today:
+        state = _read()
+        if not cfg.usage_count or state.get("last_count_day") == today:
             return False
-        if not cfg.install_id:
-            _save(cfg, install_id=uuid.uuid4().hex)
-        body = {"id": cfg.install_id, "v": __version__}
+        if not state.get("install_id"):
+            state["install_id"] = uuid.uuid4().hex
+            _write(state)
+        body = {"id": state["install_id"], "v": __version__}
         req = urllib.request.Request(
             URL, data=json.dumps(body).encode(), method="POST",
             headers={"Content-Type": "application/json", "User-Agent": "Pipevoice-usage"})
+        # From disk: the user may have switched it off since cfg was loaded.
+        if not config.Config.load().usage_count:
+            return False
         with urllib.request.urlopen(req, timeout=5):
             pass
-        _save(cfg, last_count_day=today)
+        state["last_count_day"] = today
+        _write(state)
         return True
     except Exception as exc:
         log.debug("usage count not sent: %s", exc)

@@ -2187,12 +2187,6 @@ def main(first_run: bool = False) -> None:
         cfg.sounds = bool(sounds_var.get())
         cfg.auto_update = bool(auto_update_var.get())
         cfg.usage_count = bool(usage_count_var.get())
-        # The app writes these while this window is open; keep its values.
-        try:
-            disk = config.Config.load()
-            cfg.install_id, cfg.last_count_day = disk.install_id, disk.last_count_day
-        except Exception:
-            pass
         cfg.update_channel = "beta" if beta_channel_var.get() else "stable"
         cfg.pipefocus = bool(pipefocus_var.get())
         cfg.voice_commands = bool(voice_commands_var.get())
