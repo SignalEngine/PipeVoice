@@ -37,6 +37,7 @@ MAP = {
             "Local: device", "Local: compute type",
             "App", "Show live overlay", "Play start/stop sounds", "Start on Windows login",
             "Automatic updates", "Get updates early (beta)",
+            "Send an anonymous daily count",
             "Read Aloud", "Read Aloud hotkey", "Voice engine", "Preview voice",
             "Get better Windows voices", "Voice / model", "Speed", "OCR language",
             "Also copy the recognized text to the clipboard",

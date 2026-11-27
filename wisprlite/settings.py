@@ -363,7 +363,7 @@ def _build_guide(parent, wheel) -> None:
          badge="FAST · ACCURATE", badge_color=GOOD)
     item("Deepgram", "Streams text as you talk, so it feels instant. Best for long dictation. "
          "$200 free credit on signup (no card) — about 430 hours.", badge="FASTEST · LIVE", badge_color=GOOD)
-    item("Local Whisper", "Runs entirely on your PC — nothing leaves the machine, no key needed. "
+    item("Local Whisper", "Runs entirely on your PC — your audio and text never leave your PC, no key needed. "
          "It is the slowest, especially on bigger models. Start on base.en to test, then raise the "
          "model size to medium.en for much better accuracy if your PC can handle it.",
          badge="PRIVATE · FREE", badge_color=MUTED)
@@ -383,7 +383,7 @@ def _build_guide(parent, wheel) -> None:
     item("OpenAI", "Uses your OpenAI key — same one as the transcription engine.")
     item("OpenRouter", "Free community models via a single key.")
     item("Ollama", "For 100% private polish, install Ollama and pull a small model "
-         "(e.g. llama3.2). Nothing leaves your PC.", badge="OFFLINE", badge_color=MUTED)
+         "(e.g. llama3.2). Your audio and text never leave your PC.", badge="OFFLINE", badge_color=MUTED)
     link("Get a free Gemini key  ↗", "gemini")
     link("Get an OpenRouter key  ↗", "openrouter")
     link("Install Ollama  ↗", "ollama")
@@ -940,6 +940,7 @@ def main(first_run: bool = False) -> None:
     sounds_var = tk.BooleanVar(value=cfg.sounds)
     autostart_var = tk.BooleanVar(value=autostart.is_enabled())
     auto_update_var = tk.BooleanVar(value=cfg.auto_update)
+    usage_count_var = tk.BooleanVar(value=cfg.usage_count)
     beta_channel_var = tk.BooleanVar(value=(cfg.update_channel or "").lower() == "beta")
     pipefocus_var = tk.BooleanVar(value=cfg.pipefocus)
     live_answers_var = tk.BooleanVar(value=cfg.live_answers)
@@ -1858,6 +1859,8 @@ def main(first_run: bool = False) -> None:
     check(c, "Automatic updates", auto_update_var, "Check for a newer version on startup and install it silently.")
     check(c, "Get updates early (beta)", beta_channel_var,
           "Receive new versions a few days before everyone else, so problems are found\non a handful of machines instead of all of them. Slightly more likely to hit a\nrough edge — untick to go back to normal releases.")
+    check(c, "Send an anonymous daily count", usage_count_var,
+          "Only the app version and a random ID, once a day, so we know how many people use PipeVoice. Never audio or text.")
 
     # --- Read Aloud: press the hotkey, have the screen read to you ---
     c = card(
@@ -1874,8 +1877,8 @@ def main(first_run: bool = False) -> None:
     ra_cap_btn.config(command=_mk_capture(ra_cap_btn, read_aloud_hotkey_var))
 
     combo(row(c, "Voice engine",
-              "Windows is free, offline, no key — nothing ever leaves this "
-              "machine. Deepgram and ElevenLabs send the recognized text to "
+              "Windows is free, offline, no key — your text never leaves "
+              "your PC. Deepgram and ElevenLabs send the recognized text to "
               "their servers to speak it; only pick those on purpose. Any "
               "cloud failure (dead key, no network) falls back to Windows and "
               "says why."),
@@ -2183,6 +2186,13 @@ def main(first_run: bool = False) -> None:
         cfg.overlay = bool(overlay_var.get())
         cfg.sounds = bool(sounds_var.get())
         cfg.auto_update = bool(auto_update_var.get())
+        cfg.usage_count = bool(usage_count_var.get())
+        # The app writes these while this window is open; keep its values.
+        try:
+            disk = config.Config.load()
+            cfg.install_id, cfg.last_count_day = disk.install_id, disk.last_count_day
+        except Exception:
+            pass
         cfg.update_channel = "beta" if beta_channel_var.get() else "stable"
         cfg.pipefocus = bool(pipefocus_var.get())
         cfg.voice_commands = bool(voice_commands_var.get())
