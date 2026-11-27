@@ -14,6 +14,8 @@ PipeVoice is a free Windows voice-typing app: hold a hotkey, speak, and the tran
 | `engines/openai_engine.py` | OpenAI Whisper batch engine + shared `_OpenAISession` base; `_wav_bytes` helper. |
 | `engines/groq_engine.py` | Groq batch engine — subclass of `OpenAIEngine` repointed at `GROQ_BASE_URL`. |
 | `engines/deepgram_engine.py` | The only **streaming** engine (live websocket). |
+| `engines/cloud_engine.py` | PipeVoice Cloud batch engine (stdlib `urllib`, licence key as bearer token); every failure raises so the local fallback runs. |
+| `cloud.py` | Cloud licence (Polar activate, stored in `cloud.json`, never `config.json`) + vocabulary/replacements sync. |
 | `engines/local_engine.py` | Offline `faster-whisper` batch engine; also the cloud-failure fallback. |
 | `engines/transcribe.py` | Numpy-free file transcription (path in, `{text,…,segments}` out): local faster-whisper, plus `transcribe_file_deepgram` (cloud, diarized) behind the same shape. |
 | `cleanup.py` | LLM "Flow mode" polish over an OpenAI-compatible client (OpenAI/Gemini/OpenRouter/Ollama). |

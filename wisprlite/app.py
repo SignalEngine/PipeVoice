@@ -215,6 +215,13 @@ class App:
             if not config.groq_key():
                 raise RuntimeError("GROQ_API_KEY is not set")
             return GroqEngine(model=self.cfg.groq_model, language=lang, prompt=vocab)
+        if name == "cloud":
+            from . import cloud
+            from .engines.cloud_engine import CloudEngine
+
+            if not cloud.has_licence():
+                raise RuntimeError("No Cloud licence")
+            return CloudEngine(language=lang, prompt=vocab)
         if name == "openai":  # legacy: dropped from the UI, kept for existing configs
             from .engines.openai_engine import OpenAIEngine
 
@@ -262,6 +269,19 @@ class App:
                 self._get_engine()
             except Exception as exc:
                 print("engine warm-up:", exc, file=sys.stderr)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _sync_cloud(self) -> None:
+        def work():
+            try:
+                from . import cloud
+
+                if cloud.has_licence():
+                    # A fresh copy: the sync thread must not mutate the live cfg.
+                    cloud.sync_now(config.Config.load())
+            except Exception:
+                log.debug("cloud sync not run", exc_info=True)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -2228,6 +2248,7 @@ class App:
             self._start_voice_hotkeys()
 
         self.tray.update()
+        self._sync_cloud()
 
     # ---- helpers ----------------------------------------------------------
     def _release(self) -> None:
@@ -2343,6 +2364,7 @@ class App:
             threading.Thread(target=usage.maybe_send, args=(self.cfg,), daemon=True).start()
         except Exception:
             log.debug("usage count not started", exc_info=True)
+        self._sync_cloud()
         if self.cfg.auto_update:
             self.check_for_updates(manual=False)
 
