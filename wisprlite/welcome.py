@@ -139,7 +139,7 @@ def show_welcome() -> bool:
                 "Text appears as you speak. Best for long dictation. $200 free credit, no card — about 430 hours.",
                 DEEPGRAM_URL)
     engine_card("Local Whisper", "PRIVATE · FREE · NO KEY", MUTED,
-                "Runs entirely on your PC, nothing leaves the machine. Slowest — raise the model size for accuracy.")
+                "Runs entirely on your PC, your audio and text never leave your PC. Slowest — raise the model size for accuracy.")
 
     # --- optional polish ---
     tk.Label(wrap, text="OPTIONAL: AI POLISH", bg=BG, fg=ACCENT,

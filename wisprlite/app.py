@@ -2338,6 +2338,11 @@ class App:
                 self.cfg.save()
             except Exception:
                 pass
+        try:
+            from . import usage
+            threading.Thread(target=usage.maybe_send, args=(self.cfg,), daemon=True).start()
+        except Exception:
+            log.debug("usage count not started", exc_info=True)
         if self.cfg.auto_update:
             self.check_for_updates(manual=False)
 

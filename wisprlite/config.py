@@ -168,6 +168,7 @@ class Config:
     overlay: bool = True
     sounds: bool = False
     auto_update: bool = True         # check GitHub for a newer release on startup and install it
+    usage_count: bool = True         # send one anonymous daily count: version + random install id
     min_seconds: float = 0.35       # ignore taps shorter than this
     ai_cleanup: bool = True         # polish transcript with an LLM
     cleanup_provider: str = "gemini"  # gemini(free) | openai | openrouter | ollama (all OpenAI-compatible)
@@ -341,7 +342,9 @@ class Config:
 
     def save(self) -> None:
         try:
-            CONFIG_PATH.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+            tmp = CONFIG_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+            os.replace(tmp, CONFIG_PATH)
         except Exception:
             pass
 

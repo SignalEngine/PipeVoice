@@ -12,7 +12,7 @@
 ### Talk faster than you type.
 
 **Free, open-source, push-to-talk voice typing for Windows that lands in any app — your terminal, editor, browser, chat box.**
-Cloud with your own key, free AI polish with Gemini, or go 100% offline so nothing leaves your PC.
+Cloud with your own key, free AI polish with Gemini, or go 100% offline so your audio and text never leave your PC.
 
 **No account. No subscription. Ever.**
 
@@ -47,7 +47,7 @@ It's the **free, open-source, Windows-first alternative to paid dictation SaaS l
 
 - **Bring your own key** (Deepgram / OpenAI) for fast, accurate cloud transcription at pennies a day, **or**
 - **Polish free with Gemini** — clean up filler words and punctuation with Google's free tier, **or**
-- **Run 100% offline** with local Whisper + Ollama, so nothing ever leaves your PC.
+- **Run 100% offline** with local Whisper + Ollama, so your audio and text never leave your PC.
 
 > *"The tool hears what I'm saying exactly, but the AI will take over in a sec and make sense of it."* — from the demo
 
@@ -89,7 +89,7 @@ One-click install · auto-updates itself · bring your own key, polish free with
 - 🕘 **Local dictation history** (last 50, saved on your PC, opened from the tray) with Copy per entry.
 - 🗂️ **Per-app profiles** — give a specific app its own engine, cleanup, output and Enter behaviour. *Terminal: raw + Enter. Chat: polished + auto-send. Editor: no AI cleanup.*
 - 🎚️ **Advanced tuning** — Min seconds, Deepgram wait, Paste speed.
-- 🔓 **Open source (MIT).** No account, no telemetry, no lock-in.
+- 🔓 **Open source (MIT).** No account. Your audio and text are never sent to us. One anonymous daily count (version + random ID), switch it off in Settings. No lock-in.
 
 ---
 
@@ -235,7 +235,7 @@ Yes — free forever, MIT-licensed, open source. No account, no subscription, no
 Yes. PipeVoice is a free, open-source voice typing tool for Windows that types into any app. It's a strong alternative if you want dictation without a subscription or account.
 
 **Does it work offline?**
-Yes — choose the **Local Whisper** engine and (optionally) **Ollama** for AI cleanup, and nothing leaves your PC. No internet, no cloud, no API key.
+Yes — choose the **Local Whisper** engine and (optionally) **Ollama** for AI cleanup, and your audio and text never leave your PC. No internet needed, no cloud, no API key.
 
 **Do I need a GPU?**
 No. The cloud engines need no GPU at all and download nothing. Local Whisper runs on CPU out of the box (and auto-uses CUDA if you happen to have it).
@@ -250,7 +250,7 @@ Only if you want it to. By default text lands at your cursor so you can review/e
 Pick your accent/language for better accuracy, and use **Speech notes** to describe your accent, stutter or fillers — the AI cleanup uses it to make sense of your speech. *If you talk like the creator: always use AI cleanup. 😄*
 
 **Is my data private?**
-API keys are stored locally in your `.env` and never uploaded. Dictation history is saved only on your PC. Go fully offline with Local Whisper + Ollama for zero cloud involvement.
+API keys are stored locally in your `.env` and never uploaded. Dictation history is saved only on your PC. Go fully offline with Local Whisper + Ollama and your audio and text never leave your PC. No account. Your audio and text are never sent to us. One anonymous daily count (version + random ID), switch it off in Settings.
 
 **Which Windows versions?**
 Windows 10 and Windows 11.
@@ -259,7 +259,9 @@ Windows 10 and Windows 11.
 
 ## ⭐ Support PipeVoice
 
-PipeVoice is free, open source, and has zero telemetry — so it grows entirely by word of mouth. If it saves your wrists (or your sleep), three things help, in order:
+No account. Your audio and text are never sent to us. One anonymous daily count (version + random ID), switch it off in Settings.
+
+PipeVoice is free and open source — so it grows entirely by word of mouth. If it saves your wrists (or your sleep), three things help, in order:
 
 1. **[Star the repo](https://github.com/Powleads/PipeVoice)** — the single biggest signal that helps other people find a free, no-account voice typing tool for Windows.
 2. **[Leave an honest review on Product Hunt](https://www.producthunt.com/products/pipevoice/reviews)** — it tells people weighing the download whether it's worth it.

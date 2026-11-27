@@ -22,7 +22,8 @@ Description: |-
   with the microphone and system audio as separate streams, and screen recordings
   with a narration transcript.
 
-  No account, no telemetry, no subscription.
+  No account. Your audio and text are never sent to us. One anonymous daily count
+  (version + random ID), switch it off in Settings. No subscription.
 Moniker: pipevoice
 Tags:
   - dictation
