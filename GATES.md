@@ -1,128 +1,42 @@
-# Gates — Read Aloud long text (`vault/Plans/pipevoice-read-aloud-long-text.md`)
+# Gates: PipeVoice Cloud v1, desktop app (vault/Plans/cloud-build-app.md)
 
-Bound to the code tree (`wisprlite/`, `tests/`), not to a commit id.
+OWNS: wisprlite/**, tests/**, ARCHITECTURE.md, GATES.md
 
-1. A 5,000-character text produces multiple chunks, none over the engine
-   limit, and concatenating them returns the original words in order.
-   CHECK: `python3 -m pytest -q tests/test_readaloud.py -k "long_text or chunks_concatenate"`
-   EXPECT: pass.
-   RESULT: PASS. `readaloud.split_into_chunks(text, limit)`
-   (`wisprlite/readaloud.py`) splits on sentence boundaries first, packs
-   sentences greedily under the limit, and `" ".join(chunks)` reproduces the
-   whitespace-normalized original exactly — verified directly for a
-   400-sentence (~15,000-char) text against `DEEPGRAM_MAX_CHARS` (1900).
+Scope: the desktop app side of PipeVoice Cloud v1. Bound to the code tree, not to a commit id.
 
-2. A single 3,000-character sentence still produces speakable chunks.
-   CHECK: `python3 -m pytest -q tests/test_readaloud.py::test_a_single_sentence_over_the_limit_still_produces_speakable_chunks tests/test_readaloud.py::test_a_single_word_longer_than_the_limit_is_hard_cut_not_dropped`
-   EXPECT: pass.
-   RESULT: PASS. `_split_long_piece` falls back to clause punctuation
-   (`,;:`), then whitespace, then a hard per-character cut for a single
-   word/clause still over the limit — every level is exercised, never
-   dropping a chunk.
+- [x] G1: 200 returns the text (and the request matches the contract)
+  CHECK: run-limited python3 -m pytest -p no:cacheprovider tests/test_cloud.py -k "test_200_returns" 2>&1
+  EXPECT: passed
+  EVIDENCE: automatic-evidence=v1; definition-sha256=bf2e6bb9ac218172372a268ed6768c2b4af874cfb006969c8fc20c345be23b03; exit=0; EXPECT=matched; output-sha256=9aa79746d45cca29213b3817e79afc55f4f873eb0927d71f821d7fcf9cd29fe8; output-bytes=405; shell=/bin/sh; cwd=/root/wt-pv-cloud-app; path=bea4c23ec980/15 entries
 
-3. Stopping during chunk 1 of 4 never starts chunk 2.
-   CHECK: `python3 -m pytest -q tests/test_readaloud.py::test_stopping_during_chunk_one_of_four_never_starts_chunk_two`
-   EXPECT: pass.
-   RESULT: PASS. `Speaker.speak_chunks` (`wisprlite/readaloud.py`) checks the
-   same `_stopped` latch `speak()` already uses, both before building each
-   chunk's player and again before assigning it as the live player — a stop
-   mid-chunk-1 returns before chunk 2's `player_builder` is ever called.
+- [x] G2: 402 / 413 / 401 / 503 / network error raise, so _fallback runs local Whisper
+  CHECK: run-limited python3 -m pytest -p no:cacheprovider tests/test_cloud.py -k "http_errors or network_error or falls_back" 2>&1
+  EXPECT: passed
+  EVIDENCE: automatic-evidence=v1; definition-sha256=58ce42762483a320bd3cde7b9635ccc4175fca550c42dfb8fad7c4ddef9cb674; exit=0; EXPECT=matched; output-sha256=569c9e88c7dc78d9a12cb4199415aa67863e5b0ea0d55d78d4822fc9b2cd6614; output-bytes=406; shell=/bin/sh; cwd=/root/wt-pv-cloud-app; path=bea4c23ec980/15 entries
 
-4. The duration estimate appears above ~1,000 characters and not below.
-   CHECK: `python3 -m pytest -q tests/test_readaloud.py::test_duration_estimate_is_silent_below_1000_characters tests/test_readaloud.py::test_duration_estimate_appears_above_1000_characters`
-   EXPECT: pass.
-   RESULT: PASS. `readaloud.duration_estimate(n)` returns `""` at/under 1,000
-   chars, else `"Reading {n:,} characters — about {n/5/150} min"`. Wired into
-   `App._ask_read_mode_in_pill`, shown on the Read all/Summarise pill before
-   speech starts.
+- [x] G3: WAV over 4,400,000 bytes: no HTTP call, exception
+  CHECK: run-limited python3 -m pytest -p no:cacheprovider tests/test_cloud.py -k "oversize_wav" 2>&1
+  EXPECT: passed
+  EVIDENCE: automatic-evidence=v1; definition-sha256=e0d9018fe1fe097faaf52168244cfe3abe93c24b95aeb90802bf1a900033bcc9; exit=0; EXPECT=matched; output-sha256=58406fa6700119c084c89dc0e9808eb46f968ee883c0fb5d5ea153a12c719139; output-bytes=405; shell=/bin/sh; cwd=/root/wt-pv-cloud-app; path=bea4c23ec980/15 entries
 
-5. Choosing Summarise calls `cleanup.clean()` once and speaks its output; a
-   failure speaks the FULL text and shows a reason.
-   CHECK: `python3 -m pytest -q tests/test_readaloud.py -k summaris`
-   EXPECT: pass.
-   RESULT: PASS. `App._read_aloud_speak` (`wisprlite/app.py`) calls
-   `cleanup.clean(text, ..., style="summarise")` exactly once when
-   `mode == "summarise"`; on a falsy return it uses `cleanup.last_error()` as
-   the reason, keeps `spoken_text = text` (the ORIGINAL, never the summary),
-   and prefixes the pill text with `"Summarise failed (<reason>) — reading
-   full text."`. Read all never calls `clean()` at all.
+- [x] G4: Licence file is written outside config.json
+  CHECK: run-limited python3 -m pytest -p no:cacheprovider tests/test_cloud.py -k "outside_config_json" 2>&1
+  EXPECT: passed
+  EVIDENCE: automatic-evidence=v1; definition-sha256=0f05611be927318f62a718f472e974122e8b8a6793de707b1e175d5b642ec4c3; exit=0; EXPECT=matched; output-sha256=8be85fa435c0c1a9f05578000abf7768d88545c8f1a8407c5a44968b046c142b; output-bytes=405; shell=/bin/sh; cwd=/root/wt-pv-cloud-app; path=bea4c23ec980/15 entries
 
-6. The pill states which mode was read.
-   CHECK: `python3 -m pytest -q tests/test_readaloud.py::test_the_pill_states_which_mode_was_read`
-   EXPECT: pass.
-   RESULT: PASS. The "reading" pill text is prefixed `"Read all: "` or
-   `"Summary: "` (or the failure note above, which already says it fell back
-   to the full text).
+- [x] G5: Sync picks the newer side
+  CHECK: run-limited python3 -m pytest -p no:cacheprovider tests/test_cloud.py -k "sync_applies or sync_pushes or sync_409" 2>&1
+  EXPECT: passed
+  EVIDENCE: automatic-evidence=v1; definition-sha256=c38427df4bf7b1ad033063321c1334789abd35689ab0c39c2479d5ad7affd22d; exit=0; EXPECT=matched; output-sha256=8e8c585c9b8d7924ea64fe3dfef35f8806b25af681dd5458de3bc1af066c4f81; output-bytes=405; shell=/bin/sh; cwd=/root/wt-pv-cloud-app; path=bea4c23ec980/15 entries
 
-7. Full suite under xvfb, baseline `main` first: 15 pre-existing failures, do
-   not add a sixteenth.
-   CHECK: `python3 -m pytest -q --ignore=tests/test_transcribe_deepgram_e2e.py`
-          `xvfb-run -a python3 -m pytest -q --ignore=tests/test_transcribe_deepgram_e2e.py --ignore=tests/test_screenrec.py`
-   EXPECT: same 15 pre-existing failures (test_env_precedence.py x8,
-   test_transcribe_window.py x7), 0 new failures.
-   RESULT: PASS. Non-xvfb: 15 failed (identical set), 508 passed, 32 skipped.
-   Xvfb (excluding `test_screenrec.py` — same PyAV/xvfb crash on this VPS
-   documented in the prior Read Aloud PRs' gates, unrelated to this diff):
-   15 failed (identical set), 489 passed, 0 new failures.
+- [x] G6: under a display, the full suite failure count is not above main's baseline (main at 8ee8861 under xvfb-run: 16 failed, 903 passed)
+  CHECK: log="$(git rev-parse --git-dir)/g6-suite.log"; run-limited xvfb-run -a python3 -m pytest -q -p no:cacheprovider -rf --ignore=tests/test_transcribe_deepgram_e2e.py > "$log" 2>&1; o=$(tail -1 "$log"); echo "$o"; n=$(echo "$o" | grep -oE '^[0-9]+ failed' | cut -d' ' -f1); echo "$o" | grep -q ' passed' && [ "${n:-0}" -le 16 ] && echo BASELINE-OK
+  EXPECT: BASELINE-OK
+  EVIDENCE: automatic-evidence=v1; definition-sha256=ee9fd877632a1212b512865cd875d4d5b8d06619734f480c4c25160fa5b5638c; exit=0; EXPECT=matched; output-sha256=d11fcb4551fc2273bd52ee9860a1064c93874541ba42a0d544fd77a33a5fc20f; output-bytes=67; shell=/bin/sh; cwd=/root/wt-pv-cloud-app; path=bea4c23ec980/15 entries
 
-## What was built
+- [ ] G7: James, on Windows with no .env, pastes a sandbox key and dictates
+  EVIDENCE: pending
 
-- `wisprlite/tts_cloud.py`: `DEEPGRAM_MAX_CHARS = 1900`,
-  `ELEVENLABS_MAX_CHARS = 5000` — per-engine caps, not one shared guess.
-- `wisprlite/readaloud.py`: `split_into_chunks(text, limit)` (sentence
-  boundaries first, clause punctuation then whitespace then a hard cut for a
-  single piece still over the limit, `None` limit = one chunk for the
-  uncapped Windows voice); `duration_estimate(n)`; `Speaker.speak_chunks`
-  (speaks an ordered list of pieces through one Speaker so Stop/Pause govern
-  the whole read); `build_chunked_speaker(text, cfg)` — the chunked sibling
-  of `build_speaker` (which is untouched, still used by the Settings preview's
-  one fixed sentence), synthesizing the first chunk eagerly to catch a dead
-  key/no-network before anything plays and falling back the WHOLE read to the
-  Windows voice on that failure, exactly like `build_speaker` already does.
-- `wisprlite/cleanup.py`: a `"summarise"` fixed style (`_SUMMARISE` prompt),
-  reusing the existing `clean()`/provider/failure machinery — no second LLM
-  path.
-- `wisprlite/config.py`: `read_aloud_last_mode` (`"read_all"` default) —
-  remembered and highlighted, never overriding the Enter/hotkey fast path.
-- `wisprlite/overlay.py`: a new `ra_choice` pill state — caption + duration
-  estimate, two buttons (`ra_read_all` / `ra_summarise`), the remembered
-  choice highlighted — drawn/hit-tested the same way the existing `reading`
-  pill is (`_draw_ra_choice`, `_ra_choice_hit`, wired into `_pill_click` and
-  the draw/resize dispatch).
-- `wisprlite/app.py`: `_ask_read_mode_in_pill` shows the choice pill and waits
-  (15s timeout, falls back to `read_all`) via a `threading.Event`;
-  `_ra_choice_watch_hotkey` resolves to `read_all` the instant Enter or the
-  read-aloud hotkey is pressed again, regardless of the remembered default;
-  `_ra_choice_answer` (also reached from the two new pill buttons via
-  `_screenrec_action`) sets the result, remembers it in config, and unblocks
-  the wait; `_read_aloud_speak` now takes a `mode` and speaks through
-  `build_chunked_speaker`/`speak_chunks` instead of one whole-text
-  `speaker.speak()` call; `_read_aloud_restart` replays the SAME mode
-  (never re-asks).
-- `tests/test_readaloud.py`: chunking (gates 1-2), `speak_chunks` stop
-  behaviour (gate 3), `duration_estimate` (gate 4), the Read all/Summarise
-  choice and its pill text (gates 5-6), plus `build_chunked_speaker`'s
-  tier-dispatch/fallback/single-fetch-per-chunk behaviour.
-- Updated `tests/test_readaloud.py::test_ra_restart_speaks_again_without_re_running_ocr`
-  for `_read_aloud_speak`'s new second argument (the mode restart replays).
+ABANDON: G7 NOT RUN. Handoff to James: needs their Windows PC and a sandbox key; the builder has neither. This is not a pass.
 
-## Explicitly not built (per the plan)
-
-- Any OCR change — blocked on James pasting the clipboard capture to confirm
-  whether OCR itself is also dropping lines. Nothing here touches
-  `readaloud.ocr_png`.
-- Streaming synthesis — chunking already fixes the hard failure; the plan
-  calls streaming a latency optimization to revisit only with evidence the
-  pause between chunks matters.
-
-## Not verifiable on this VPS
-
-- Real Deepgram/ElevenLabs network calls during an actual long read (no
-  network keys configured here) — `build_chunked_speaker` and `speak_chunks`
-  are exercised with the HTTP layer and WinRT player mocked, matching how
-  `build_speaker` was already tested before this plan.
-- Real Windows voice playback, the actual pill rendering pixels, and real
-  keyboard input for the Enter/hotkey fast path (no Windows, no WinRT, no
-  physical keyboard on this box) — the hit-test/dispatch/state-machine logic
-  is covered directly; `keyboard.is_pressed`/`_all_pressed` themselves are
-  exercised elsewhere in this suite, not here.
+POSITIVE CONTROL: four planted bugs (size check off, HTTP error returns "", sync never pulls, licence path set to config.json) each made tests/test_cloud.py fail.

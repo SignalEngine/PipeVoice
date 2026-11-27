@@ -26,7 +26,7 @@ STYLES = [("tidy", "Tidy — clean up"),
           ("meeting_actions", "Meeting actions — bullet the action items"),
           ("custom", "Custom…")]
 ENGINES = [("", "(leave as-is)"), ("gemini", "Gemini"), ("groq", "Groq"),
-           ("deepgram", "Deepgram"), ("local", "Local")]
+           ("deepgram", "Deepgram"), ("local", "Local"), ("cloud", "PipeVoice Cloud")]
 OUTPUTS = [("", "(leave as-is)"), ("paste", "Paste"),
            ("clipboard", "Clipboard")]
 AUTO = [("leave", "(leave as-is)"), ("yes", "Yes"), ("no", "No")]

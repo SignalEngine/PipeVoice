@@ -32,6 +32,7 @@ MAP = {
             "Screen recording and sending", "Voice keys",
             "General", "Engine", "Accent / language",
             "Microphone", "Show all endpoints",
+            "PipeVoice Cloud", "Licence key",
             "API keys", "Gemini key", "Groq key", "Deepgram key", "OpenAI key", "OpenRouter key",
             "Models", "Gemini model", "Groq model", "Deepgram model", "Local model size",
             "Local: device", "Local: compute type",

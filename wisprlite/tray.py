@@ -73,6 +73,7 @@ class Tray:
                 engine_item("groq", "Groq Whisper  (fast, cheap)"),
                 engine_item("deepgram", "Deepgram  (streaming)"),
                 engine_item("local", "Local Whisper  (offline)"),
+                engine_item("cloud", "PipeVoice Cloud"),
             )),
             Item("Mode", Menu(
                 mode_item("ptt", "Push-to-talk"),

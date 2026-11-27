@@ -25,7 +25,8 @@ from . import (about, autostart, cleanup, config, history, meeting, meetings_tab
 ENGINES = [("gemini", "Gemini — free, one key does it all"),
            ("groq", "Groq Whisper — fast & cheap, top accuracy"),
            ("deepgram", "Deepgram — fastest, live streaming"),
-           ("local", "Local Whisper — private & free, slower")]
+           ("local", "Local Whisper — private & free, slower"),
+           ("cloud", "PipeVoice Cloud")]
 MODES = [("ptt", "Push-to-talk (hold)"), ("toggle", "Toggle (tap on/off)")]
 PASTE_SPEEDS = [("fast", "Fast"), ("normal", "Normal"), ("slow", "Slow")]
 CLEANUP_PROVIDERS = [("openai", "OpenAI"), ("gemini", "Google Gemini (free tier)"),
@@ -1593,6 +1594,58 @@ def main(first_run: bool = False) -> None:
               "10-15 is realistic at 1080p. Higher costs CPU on the machine you are "
               "recording, which is the same one running what you are showing."),
           screenrec_fps_var, width=6)
+
+    # --- PipeVoice Cloud ---
+    from . import cloud
+    c = card("PipeVoice Cloud", "Dictation with one licence key instead of your own API keys.")
+    cloud_key_var = tk.StringVar()
+    _cr = row(c, "Licence key", "Activating uses one of the 3 PCs on your key.")
+    entry(_cr, cloud_key_var, width=26, show="•")
+    cloud_activate_btn = ttk.Button(_cr, text="Activate")
+    cloud_activate_btn.pack(side="left", padx=px((8, 0)))
+    cloud_remove_btn = ttk.Button(_cr, text="Remove")
+    cloud_remove_btn.pack(side="left", padx=px((8, 0)))
+    cloud_status = tk.Label(c, text="Active on this PC" if cloud.has_licence() else "Not set up",
+                            bg=CARD, fg=MUTED, font=theme.font("caption"),
+                            wraplength=px(540), justify="left")
+    cloud_status.pack(anchor="w", padx=px(18), pady=px((0, 12)))
+
+    def _cloud_done(ok, message):
+        cloud_activate_btn.config(state="normal")
+        cloud_remove_btn.config(state="normal")
+        cloud_status.config(text=message)
+        if not ok:
+            return
+        cloud_key_var.set("")
+        # Only the engine goes to disk, so unsaved edits in this form stay unsaved.
+        disk = config.Config.load()
+        disk.engine = cfg.engine = "cloud"
+        disk.save()
+        engine_var.set(dict(engine_opts)["cloud"])
+
+    def _cloud_activate():
+        key = cloud_key_var.get()
+        cloud_activate_btn.config(state="disabled")
+        cloud_remove_btn.config(state="disabled")
+        cloud_status.config(text="Activating…")
+
+        def work():
+            result = cloud.activate(key)
+            root.after(0, lambda: _cloud_done(*result))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _cloud_remove():
+        state = cloud.remove()
+        if cfg.engine == "cloud":
+            cfg.engine = cloud.ENGINE_AFTER_REMOVE
+        if value_for(engine_var, engine_opts) == "cloud":
+            engine_var.set(dict(engine_opts)[cfg.engine])
+        cloud_status.config(text="Not set up")
+        # Not a daemon: closing Settings must not cut off freeing the slot.
+        threading.Thread(target=cloud.deactivate, args=(state,)).start()
+
+    cloud_activate_btn.config(command=_cloud_activate)
+    cloud_remove_btn.config(command=_cloud_remove)
 
     # --- API keys ---
     c = card("API keys", "Stored locally in your .env, never uploaded. Leave a field blank to keep its current key.")
