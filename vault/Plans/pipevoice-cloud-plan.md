@@ -45,7 +45,7 @@ Lemon Squeezy closed to new stores (James's screenshot, 27 Nov). Polar replaces 
 5. ✅ **App: licence box in Settings.** Paste key → Polar `activate` with the PC name as `label` → store the key and activation id outside `config.json` (same rule as API keys). Show plan status and "minutes used this month" (a header from `/api/stt`).
 6. ✅ **App: sync.** On start and after each Settings save: pull, compare `updated_at`, push. Off unless a licence is set.
 7. ✅ **App: offline fallback.** The existing `_fallback` to local Whisper already covers a Cloud outage. Check it fires for the new engine.
-8. **Site: pricing section (waits for the production Polar store: no public price for a product not on sale) + privacy page lines.** What Cloud sends (audio, to our server and to Groq/Deepgram, not stored) and what sync stores.
+8. ✅ **Site: privacy page lines (site PR #24, live 27 Nov). Pricing section moved to the launch list: it waits for the production Polar store (James: privacy now, price later).** What Cloud sends (audio, to our server and to Groq/Deepgram, not stored) and what sync stores.
 9. ✅ **Admin page:** active licences, Cloud minutes this month, estimated Groq spend.
 
 Estimate: one long session for server + app (steps 1–7), plus a short session for site copy and admin (8–9). Product setup in Polar is done by Claude through the API with James's sandbox token.
@@ -66,4 +66,4 @@ Mac client, meeting mode, team plans, pay-per-minute billing.
 - **Live (sandbox):** server PRs #21 and #22 merged; Vercel env set; Polar webhook created and checked with real signatures. App PR #128 merged and released as **v2.51.0 beta** (pre-release).
 - **External check (1) passed on Windows:** sandbox purchase → key activated in 2.51.0 → dictation typed text (log: no Deepgram connect, polish ran; server counter moved ~10 s). Caveat: James's `.env` was still present, so AI cleanup used his own Gemini key.
 - **Popup:** Cloud shows no live words (batch engine, like Groq/local). James: leave as is.
-- **Open:** (2) over-cap test against Groq usage page; (3) a real Polar revoke event; Deepgram key on Vercel for the fallback; steps 8–9 (site pricing/privacy copy, admin stats); production Polar org + token before any real sale.
+- **Open:** (2) over-cap test against Groq usage page; (3) a real Polar revoke event; Deepgram key on Vercel for the fallback; production Polar org + token, then the site pricing section, before any real sale. Steps 8 (privacy) and 9 (admin panel) done; Deepgram fallback key on Vercel (27 Nov).
